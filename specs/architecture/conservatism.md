@@ -135,8 +135,12 @@ bound would otherwise make the result depend on host load — see
 [ADR-0012](../decisions/0012-race-advisory-parse-budget.md). Either way a stop,
 timeout or internal failure becomes `Program.Top = true` with a `Reason`, and
 `Lower` then emits ⊤ and nothing else; the parser's deterministic
-iteration/node/depth limits still bound the parse. `ps.Lower` also treats a nil
-program as ⊤ (`front/ps/lower.go`).
+iteration/node/depth limits still bound the parse. The 250 ms budget is also far
+above one tick of any host clock, so it is observable everywhere; only a
+sub-tick budget is not, because gotreesitter's deadline poll compares
+`time.Now()` and Windows advances it on the system timer tick (≥ 1 ms) — see
+[ADR-0013](../decisions/0013-windows-clock-tick-parse-budget.md). `ps.Lower` also
+treats a nil program as ⊤ (`front/ps/lower.go`).
 
 ## No-silent-miss invariant
 

@@ -25,7 +25,7 @@ For formats and update rules, see [META.md](META.md). For how to use the system,
 | Understand the end-to-end pipeline | [Data Flow](architecture/data-flow.md) |
 | Understand the layering / import rules | [Layer Architecture](architecture/layers.md) |
 | Understand degrade-to-⊤ semantics | [Conservatism](architecture/conservatism.md) |
-| Understand why the IR is frozen / the KB is embedded / ⊤ is used / one module / the tool is named `flowsh` / a public embedding API exists | [Decisions](decisions/_template.md) (ADR-0001 … ADR-0011) |
+| Understand why the IR is frozen / the KB is embedded / ⊤ is used / one module / the tool is named `flowsh` / a public embedding API exists | [Decisions](decisions/_template.md) (ADR-0001 … ADR-0013) |
 | Add a new spec document | [META.md](META.md), [WORKFLOW.md](WORKFLOW.md) |
 
 ## Dependency Graph
@@ -66,7 +66,8 @@ Spec-level view of the layered system (arrows point from a layer to what it depe
   decisions/  0001 frozen-IR   0002 one-way-dep   0003 conservative-top
               0004 embedded-KB 0005 two-frontends 0006 bounded-exec
               0007 lattice-model 0008 single-module 0009 rename-identity
-              0010 public-api
+              0010 public-api 0011 ci-load-budget 0012 race-parse-budget
+              0013 windows-clock-tick
 ```
 
 ## Directory Listing
@@ -117,7 +118,8 @@ specs/
     ├── 0009-rename-identity-to-flowsh.md
     ├── 0010-public-embedding-api.md
     ├── 0011-ci-tolerant-load-budget.md
-    └── 0012-race-advisory-parse-budget.md
+    ├── 0012-race-advisory-parse-budget.md
+    └── 0013-windows-clock-tick-parse-budget.md
 ```
 
 ## Full File List
@@ -147,6 +149,7 @@ Every spec file, by path relative to `specs/`:
 - `decisions/0010-public-embedding-api.md`
 - `decisions/0011-ci-tolerant-load-budget.md`
 - `decisions/0012-race-advisory-parse-budget.md`
+- `decisions/0013-windows-clock-tick-parse-budget.md`
 - `domains/analysis-report.md`
 - `domains/bash-frontend/README.md`
 - `domains/bash-frontend/abstract-exec.md`

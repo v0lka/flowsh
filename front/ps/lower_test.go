@@ -3,6 +3,7 @@ package ps
 import (
 	"bytes"
 	"encoding/json"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -230,16 +231,48 @@ func TestOpaqueConstructsAreTop(t *testing.T) {
 // AC 4: a parse timeout yields ⊤ without error or panic
 // ---------------------------------------------------------------------------
 
+// coarseMonotonicClock reports whether this host's monotonic clock is coarser
+// than the sub-millisecond parse budget the test below pins.
+//
+// Parse trips its deadline only when a poll reads time.Now() at or past
+// start+budget. Linux and macOS resolve the monotonic clock to nanoseconds, so
+// a 1 µs budget trips on even a one-line source. Windows does not:
+// runtime.nanotime reads the OS interrupt time (runtime/sys_windows_*.s), a
+// value the kernel advances only on the system timer tick — 1 ms at best, 15.6
+// ms by default — so every poll inside one tick reads the same value as start
+// and a source whose whole parse fits inside a tick can never trip, however
+// often the parser polls. This is the same "a wall-clock budget is not
+// meaningful on this host" rule ADR-0012 applies to the race detector, here
+// applied to a coarse clock; see ADR-0013.
+const coarseMonotonicClock = runtime.GOOS == "windows"
+
 func TestParseTimeoutYieldsTop(t *testing.T) {
-	cases := []string{
-		`Get-Content x`,
-		strings.Repeat("Get-Content a; ", 5000),
-		"if($true){rm -Force x}",
+	// 1 µs is far below the cost of even a tiny parse, so where the host clock
+	// can resolve it the deadline trips deterministically.
+	const budgetMicros = 1
+
+	// shortParse marks a source whose entire parse is shorter than one clock
+	// tick: it can pin the 1 µs deadline only where the clock resolves the
+	// budget (see coarseMonotonicClock). The repeated-statement source spans
+	// many ticks on every host — its parse is ~250 ms on a developer machine,
+	// ~16x the coarsest default Windows tick — so the timeout→⊤ path is still
+	// exercised end to end on Windows.
+	cases := []struct {
+		src        string
+		shortParse bool
+	}{
+		{`Get-Content x`, true},
+		{strings.Repeat("Get-Content a; ", 20000), false},
+		{`if($true){rm -Force x}`, true},
 	}
-	for _, src := range cases {
-		// 1 µs is far below the cost of even a tiny parse, so the timeout trips
-		// deterministically.
-		p := ParseTimeout("t", src, 1)
+	for _, tc := range cases {
+		if tc.shortParse && coarseMonotonicClock {
+			t.Logf("%q: skipped — a sub-tick parse cannot observe a %d µs budget on a host whose monotonic clock ticks at ≥1 ms",
+				trim(tc.src), budgetMicros)
+			continue
+		}
+		src := tc.src
+		p := ParseTimeout("t", src, budgetMicros)
 		if !p.Top {
 			t.Fatalf("%q: expected ⊤ on timeout, got a parsed program", trim(src))
 		}
