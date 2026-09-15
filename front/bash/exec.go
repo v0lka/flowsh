@@ -268,9 +268,6 @@ func Exec(v Variant, name, src string, r Resolver) (res *ExecResult) {
 // ExecBash is Exec for the bash dialect.
 func ExecBash(src string, r Resolver) *ExecResult { return Exec(Bash, "script", src, r) }
 
-// ExecPOSIX is Exec for the POSIX shell (a.k.a. sh) dialect.
-func ExecPOSIX(src string, r Resolver) *ExecResult { return Exec(POSIX, "script", src, r) }
-
 // topResult builds a fully-⊤ result.
 func topResult(v Variant, name, src, reason string) *ExecResult {
 	rep := engine.NewReport()

@@ -24,14 +24,14 @@
 | `func (e Effect) EngineEffect(target engine.Scope, taint engine.Taint, c engine.Certainty) engine.Effect` | `kb` (`schema.go`) | `bind.lowerParam` | Lower a KB effect into the core IR (kind, mode, default reversibility). |
 | `type Destructive struct{ Command string; Spec string; Class DestructiveClass; Reason string }` | `kb` (`schema.go`) | `bind.Result.Destructive` | One entry of the destructive-flags table. |
 | `type DestructiveClass string` (`ClassNone`="A" … `ClassCritical`="E") + `func (c DestructiveClass) Severity() engine.Destructiveness` | `kb` (`schema.go`) | `bind.normalizeResult` | Lettered class folded into the core `Destructiveness` lattice (A↔None … E↔Critical). |
-| `func Load() (*KB, error)` / `func Default() (*KB, error)` / `func MustLoad() *KB` | `kb` (`loader.go`) | `bind.New`, `bind.NewDefault`, `bind.MustDefault` | Parse the embedded (`//go:embed data/*.yaml`) KB, memoised for hot paths. |
-| `func New(k *KB) *Binder` / `func NewDefault() (*Binder, error)` / `func (b *Binder) KB() *kb.KB` | `bind` (`bind.go`) | `internal/analysis` | Construct the binder over an explicit or embedded KB. |
+| `func Load() (*KB, error)` / `func Default() (*KB, error)` | `kb` (`loader.go`) | `bind.NewDefault` | Parse the embedded (`//go:embed data/*.yaml`) KB, memoised for hot paths. |
+| `func NewDefault() (*Binder, error)` | `bind` (`bind.go`) | `internal/analysis` | Construct the binder over the embedded KB. |
 | `func (b *Binder) Bind(c *Call) *Result` / `func (b *Binder) BindBash(cmd *bash.Command, prog *bash.Program) *Result` | `bind` (`bind.go`) | `internal/analysis` | Bind one call and return effects + resolution + matched destructive entries. |
 | `type Result struct{ … Destructive []kb.Destructive … }` | `bind` (`bind.go`) | `internal/analysis` | Binding outcome, surfaced including the matched destructive-table entries. |
 
 ## Initialization
 
-The KB is compiled into the binary: `kb/loader.go` embeds `data/*.yaml` via `//go:embed data/*.yaml` and `Load` parses it without touching the filesystem. `Default` memoises the parse with a `sync.Once`, and `MustLoad` panics on failure for start-up wiring. `bind.New(k)` wraps an explicit `*kb.KB`; `bind.NewDefault`/`bind.MustDefault` call `kb.Default` for the embedded KB. The composition layer (`internal/analysis.NewAnalyzer`) is the only place that calls `bind.NewDefault`, and it holds the resulting binder as reusable, concurrency-safe state so the one-time KB load is paid once per process.
+The KB is compiled into the binary: `kb/loader.go` embeds `data/*.yaml` via `//go:embed data/*.yaml` and `Load` parses it without touching the filesystem. `Default` memoises the parse with a `sync.Once`. `bind.NewDefault` calls `kb.Default` for the embedded KB; the composition layer (`internal/analysis.NewAnalyzer`) is the only place that calls it, and it holds the resulting binder as reusable, concurrency-safe state so the one-time KB load is paid once per process.
 
 ## Data Flow Across Boundary
 
@@ -62,7 +62,7 @@ Only plain values cross the boundary: `bind` never calls into `kb` mutably, and 
 
 ## Error Propagation
 
-KB problems are start-up errors, not per-call errors. `Load`/`Default` return a Go `error` when a document declares a missing or unknown `version` (`Known` rejects anything but `effect-kb/v2`), when YAML is malformed, or when `KB.Validate` finds a destructive entry that names an undeclared parameter or unknown command — `MustLoad` converts that into a panic at wiring time. Once a KB is loaded, binding is total and error-free per call: an unrecognized flag is recorded in `Result.Notes` ("unrecognized flag(s): …"), not returned as an error; a name that matches no builtin/function/alias/command sets `ResolveUnknown` and yields the ⊤ effect with `Conservative=true`. `Bind` never returns nil and never panics on a well-formed `Call`.
+KB problems are start-up errors, not per-call errors. `Load`/`Default` return a Go `error` when a document declares a missing or unknown `version` (`Known` rejects anything but `effect-kb/v2`), when YAML is malformed, or when `KB.Validate` finds a destructive entry that names an undeclared parameter or unknown command; the composition layer surfaces that as a start-up error. Once a KB is loaded, binding is total and error-free per call: an unrecognized flag is recorded in `Result.Notes` ("unrecognized flag(s): …"), not returned as an error; a name that matches no builtin/function/alias/command sets `ResolveUnknown` and yields the ⊤ effect with `Conservative=true`. `Bind` never returns nil and never panics on a well-formed `Call`.
 
 ## Breaking Change Checklist
 

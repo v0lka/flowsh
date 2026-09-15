@@ -168,7 +168,7 @@ Parse(name, src) / ParseTimeout(name, src, micros)
                   Result
 ```
 
-`Analyze(src)` is the one-call convenience: `Lower(Parse("", src))`.
+`Lower`/`LowerWith` are the entry points; the composition facade pairs them with `Parse` (there is no one-call convenience wrapper).
 
 ### Providers / drives (`driveOf`)
 

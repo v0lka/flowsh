@@ -324,22 +324,33 @@ func TestCoreDoesNotImportFrontends(t *testing.T) {
 	mod := modulePath(t, dir)
 
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, dir, nil, parser.ImportsOnly)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("parse package dir: %v", err)
+		t.Fatalf("read package dir: %v", err)
 	}
 
 	imports := map[string]bool{}
-	for _, pkg := range pkgs {
-		for _, file := range pkg.Files {
-			for _, imp := range file.Imports {
-				p, uerr := strconv.Unquote(imp.Path.Value)
-				if uerr != nil {
-					t.Fatalf("bad import path %q: %v", imp.Path.Value, uerr)
-				}
-				imports[p] = true
-			}
+	parsed := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+			continue
 		}
+		path := filepath.Join(dir, e.Name())
+		file, perr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+		if perr != nil {
+			t.Fatalf("parse %s: %v", path, perr)
+		}
+		parsed++
+		for _, imp := range file.Imports {
+			p, uerr := strconv.Unquote(imp.Path.Value)
+			if uerr != nil {
+				t.Fatalf("bad import path %q: %v", imp.Path.Value, uerr)
+			}
+			imports[p] = true
+		}
+	}
+	if parsed == 0 {
+		t.Fatalf("no Go files found in %s — did the parse succeed?", dir)
 	}
 	if len(imports) == 0 {
 		t.Fatalf("no imports found in %s — did the parse succeed?", dir)

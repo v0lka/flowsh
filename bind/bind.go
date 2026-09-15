@@ -61,9 +61,6 @@ type Arg struct {
 	Pos engine.SourceLoc `json:"-"`
 }
 
-// Lit returns a literal argument.
-func Lit(v string) Arg { return Arg{Value: v, Literal: true} }
-
 // EnvAssign is a NAME=value environment assignment that applies to the
 // invocation. Via is empty for an assignment written directly on the command
 // and otherwise names the wrapper that introduced it ("env", "sudo").
@@ -115,9 +112,6 @@ type Binder struct {
 	k *kb.KB
 }
 
-// New returns a binder over k.
-func New(k *kb.KB) *Binder { return &Binder{k: k} }
-
 // NewDefault returns a binder over the embedded knowledge base.
 func NewDefault() (*Binder, error) {
 	k, err := kb.Default()
@@ -126,18 +120,6 @@ func NewDefault() (*Binder, error) {
 	}
 	return &Binder{k: k}, nil
 }
-
-// MustDefault is NewDefault but panics on failure, for wiring at start-up.
-func MustDefault() *Binder {
-	b, err := NewDefault()
-	if err != nil {
-		panic("bind: " + err.Error())
-	}
-	return b
-}
-
-// KB exposes the binder's knowledge base.
-func (b *Binder) KB() *kb.KB { return b.k }
 
 // Result is the outcome of binding one normalized call.
 type Result struct {
@@ -172,7 +154,6 @@ func (b *Binder) Bind(c *Call) *Result {
 	r := &Result{Style: c.Style}
 	var raw []engine.Effect
 	var ders []engine.Derivation
-	var specs []string
 
 	// Environment assignments (VAR=x cmd, env VAR=x cmd) mutate the environment.
 	for _, a := range c.Env {
@@ -207,7 +188,6 @@ func (b *Binder) Bind(c *Call) *Result {
 			eff, ds, ms, unknown := b.bindCommand(res.command, res.args, c.StdinTaint, c.Pos)
 			raw = append(raw, eff...)
 			ders = append(ders, ds...)
-			specs = append(specs, ms...)
 			r.Destructive = destructiveEntries(b.k, res.command.Name, ms)
 			if len(unknown) > 0 {
 				r.Notes = append(r.Notes, "unrecognized flag(s): "+strings.Join(dedup(unknown), " "))
@@ -628,10 +608,10 @@ func fileRefPath(value Arg) (path string, fromStdin, ok bool) {
 		return "", false, false
 	}
 	rest := v[1:]
-	switch {
-	case rest == "-":
+	switch rest {
+	case "-":
 		return "", true, true
-	case rest == "":
+	case "":
 		return "", false, false
 	default:
 		return rest, false, true
@@ -920,111 +900,6 @@ func wordArg(w *bash.Word) Arg {
 	}
 	return Arg{Value: w.Value, Literal: w.Literal, Taint: w.Taint,
 		Pos: engine.SourceLoc{Line: w.Pos.Line, Col: w.Pos.Col}}
-}
-
-// BindScript parses src as bash and binds every command it invokes.
-func (b *Binder) BindScript(src string) []*Result {
-	return b.BindProgram(bash.Parse(bash.Bash, "script", src))
-}
-
-// BindProgram binds every command invocation in a normalized program: the
-// simple commands at every nesting level plus the commands inside command and
-// process substitutions. Control-flow is not interpreted here (that is the
-// abstract-execution layer), so the union of all branches is bound. A function
-// *body* is not bound, because defining a function does not execute it.
-func (b *Binder) BindProgram(prog *bash.Program) []*Result {
-	if prog == nil {
-		return nil
-	}
-	if prog.Top {
-		return []*Result{conservativeResult(StyleBash, "program is ⊤: "+prog.Reason, engine.ModeDirect)}
-	}
-	var out []*Result
-	out = append(out, b.bindStmts(prog.Stmts, prog)...)
-	return out
-}
-
-func (b *Binder) bindStmts(ss []*bash.Stmt, prog *bash.Program) []*Result {
-	var out []*Result
-	for _, s := range ss {
-		out = append(out, b.bindStmt(s, prog)...)
-	}
-	return out
-}
-
-func (b *Binder) bindStmt(s *bash.Stmt, prog *bash.Program) []*Result {
-	if s == nil {
-		return nil
-	}
-	var out []*Result
-
-	if s.Cmd != nil {
-		out = append(out, b.BindBash(s.Cmd, prog))
-		// Commands nested in the name and arguments (command substitutions).
-		out = append(out, b.bindWords(append([]*bash.Word{s.Cmd.NameWord}, s.Cmd.Args...), prog)...)
-	}
-	if s.Kind == bash.KindDecl && s.Decl != "" {
-		out = append(out, b.Bind(&Call{
-			Style:       StyleBash,
-			Name:        s.Decl,
-			NameOK:      true,
-			NamePresent: true,
-			Args:        wordsToArgs(s.Words),
-		}))
-	}
-	for _, rd := range s.Redirs {
-		if rd != nil {
-			out = append(out, b.bindWords([]*bash.Word{rd.Word, rd.Hdoc}, prog)...)
-		}
-	}
-	for _, it := range s.Items {
-		if it != nil {
-			out = append(out, b.bindStmts(it.Body, prog)...)
-			out = append(out, b.bindWords(it.Patterns, prog)...)
-		}
-	}
-	out = append(out, b.bindWords(s.Words, prog)...)
-	out = append(out, b.bindStmts(s.Cond, prog)...)
-	out = append(out, b.bindStmts(s.Body, prog)...)
-	out = append(out, b.bindStmts(s.Else, prog)...)
-	if s.Left != nil {
-		out = append(out, b.bindStmt(s.Left, prog)...)
-	}
-	if s.Right != nil {
-		out = append(out, b.bindStmt(s.Right, prog)...)
-	}
-	return out
-}
-
-func (b *Binder) bindWords(ws []*bash.Word, prog *bash.Program) []*Result {
-	var out []*Result
-	for _, w := range ws {
-		if w == nil {
-			continue
-		}
-		out = append(out, b.bindParts(w.Parts, prog)...)
-	}
-	return out
-}
-
-func (b *Binder) bindParts(parts []bash.Part, prog *bash.Program) []*Result {
-	var out []*Result
-	for _, p := range parts {
-		switch p.Kind {
-		case bash.PartCmdSubst, bash.PartProcSubst:
-			out = append(out, b.bindStmts(p.Stmts, prog)...)
-		}
-		out = append(out, b.bindParts(p.Parts, prog)...)
-	}
-	return out
-}
-
-func wordsToArgs(ws []*bash.Word) []Arg {
-	var out []Arg
-	for _, w := range ws {
-		out = append(out, wordArg(w))
-	}
-	return out
 }
 
 // ===========================================================================

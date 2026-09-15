@@ -152,7 +152,7 @@ Covered() == len(Effects) > 0 || Top || Conservative
 ```
 
 A report that has neither an effect nor a ⊤ flag is a *miss*. The corpus classes
-(`internal/analysis/corpus.go`) name the evasion families this is designed
+(`internal/corpus/corpus.go`) name the evasion families this is designed
 against: A quoting/escaping fragments, B separator injection (`$IFS`), C
 indirection (command substitution, dynamically-named programs), D encoded
 payloads fed to an interpreter (`base64|sh`, `eval`, `sh -c`), E unbounded/opaque

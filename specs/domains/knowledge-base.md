@@ -7,7 +7,7 @@ The knowledge base (`kb`) is the effect dataset of the analysis: a hand-verified
 ## Key Files
 
 - `kb/schema.go` — the frozen document schema and its types: `SchemaVersion`, `KnownVersions`, `Dialect`, `ParamKind`, `ValueSource`, `Effect`, `Param`, `Command`, `DestructiveClass`, `Destructive`, `KB`, and the validation methods.
-- `kb/loader.go` — the loader: `go:embed data/*.yaml`, `Load`/`loadFS`/`documentNames`, `EmbeddedFiles` (the sorted names of the embedded documents), the decode/merge/build/validate pipeline, `Default`/`MustLoad`, and a dependency-free minimal YAML reader.
+- `kb/loader.go` — the loader: `go:embed data/*.yaml`, `Load`/`loadFS`/`documentNames`, `EmbeddedFiles` (the sorted names of the embedded documents), the decode/merge/build/validate pipeline, `Default`, and a dependency-free minimal YAML reader.
 
 The `kb/data/` directory holds one YAML document per command tradition (discovery is automatic, so the set grows by adding files):
 
@@ -212,10 +212,10 @@ kb/data/*.yaml  (embedded via //go:embed data/*.yaml)
                                    every destructive entry references a declared param
         │
         ▼
-      *KB  (cached by Default()/MustLoad())
+      *KB  (cached by Default())
 ```
 
-`Load` reads only from the embedded filesystem, so it works from any working directory with no external files present. `Default()` parses the embedded KB at most once (`sync.Once`); `MustLoad()` panics on error for start-up wiring.
+`Load` reads only from the embedded filesystem, so it works from any working directory with no external files present. `Default()` parses the embedded KB at most once (`sync.Once`).
 
 ## Invariants
 

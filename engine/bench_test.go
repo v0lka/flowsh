@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/v0lka/flowsh/internal/analysis"
+	"github.com/v0lka/flowsh/internal/corpus"
 )
 
 const (
@@ -62,13 +63,13 @@ func loadBaseline(tb testing.TB) latencyBaseline {
 	return b
 }
 
-func mustCorpus(tb testing.TB) []analysis.Case {
+func mustCorpus(tb testing.TB) []corpus.Case {
 	tb.Helper()
-	dir, err := analysis.CorpusDir()
+	dir, err := corpus.CorpusDir()
 	if err != nil {
 		tb.Fatalf("CorpusDir: %v", err)
 	}
-	cases, err := analysis.LoadCorpus(dir)
+	cases, err := corpus.LoadCorpus(dir)
 	if err != nil {
 		tb.Fatalf("LoadCorpus(%s): %v", dir, err)
 	}
@@ -87,9 +88,9 @@ func mustAnalyzer(tb testing.TB) *analysis.Analyzer {
 	return a
 }
 
-func analyze(tb testing.TB, a *analysis.Analyzer, c analysis.Case) *analysis.Report {
+func analyze(tb testing.TB, a *analysis.Analyzer, c corpus.Case) *analysis.Report {
 	tb.Helper()
-	lang, err := c.Dialect()
+	lang, err := analysis.ParseLang(c.Lang)
 	if err != nil {
 		tb.Fatalf("case %s: %v", c.ID, err)
 	}
@@ -99,9 +100,9 @@ func analyze(tb testing.TB, a *analysis.Analyzer, c analysis.Case) *analysis.Rep
 // measureP95Ms returns the p95 wall-clock cost, in milliseconds, of analysing
 // one corpus case: warmupRuns warm-up iterations followed by measuredRuns timed
 // ones.
-func measureP95Ms(tb testing.TB, a *analysis.Analyzer, c analysis.Case) float64 {
+func measureP95Ms(tb testing.TB, a *analysis.Analyzer, c corpus.Case) float64 {
 	tb.Helper()
-	lang, err := c.Dialect()
+	lang, err := analysis.ParseLang(c.Lang)
 	if err != nil {
 		tb.Fatalf("case %s: %v", c.ID, err)
 	}
@@ -216,7 +217,7 @@ func BenchmarkCorpusPerCommand(b *testing.B) {
 	cases := mustCorpus(b)
 	langs := make([]analysis.Lang, len(cases))
 	for i, c := range cases {
-		l, err := c.Dialect()
+		l, err := analysis.ParseLang(c.Lang)
 		if err != nil {
 			b.Fatalf("case %s: %v", c.ID, err)
 		}

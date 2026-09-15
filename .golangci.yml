@@ -1,0 +1,41 @@
+# golangci-lint configuration (v2 schema).
+#
+# The set is deliberately small and stable: it catches error-handling, bug and
+# dead-code classes without being prescriptive about style. It is what CI runs;
+# `gofmt -l .` and `go vet ./...` are enforced separately by the workflow as
+# well, so the formatters below exist to keep local runs identical to CI.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck      # ensure errors are handled
+    - govet         # common mistakes
+    - ineffassign   # ineffectual assignments (dead stores)
+    - staticcheck   # bugs and simplifications
+    - unused        # unused identifiers
+    - misspell      # common misspellings in comments and strings
+  settings:
+    errcheck:
+      check-type-assertions: false
+      check-blank: false
+  exclusions:
+    generated: lax
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/v0lka/flowsh
+
+issues:
+  # Report every instance: the defaults cap identical messages per linter (3),
+  # which would hide unchecked-error sites behind the first few.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+run:
+  timeout: 5m

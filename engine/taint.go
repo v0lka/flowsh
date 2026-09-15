@@ -164,16 +164,6 @@ func normaliseClasses(cs []SourceClass) []SourceClass {
 	return tmp[:w]
 }
 
-// Has reports whether the provenance includes class c.
-func (p Provenance) Has(c SourceClass) bool {
-	for _, s := range p.Sources {
-		if s == c {
-			return true
-		}
-	}
-	return false
-}
-
 // Taint returns the join of the taint labels of every source class.
 func (p Provenance) Taint() Taint {
 	t := TaintBottom()

@@ -299,3 +299,42 @@ func TestAnalyzeConcurrentMatchesSequential(t *testing.T) {
 	t.Logf("concurrency: %d goroutines x %d rounds x %d cases = %d analyses, all byte-identical to sequential",
 		goroutines, rounds, len(probe), goroutines*rounds*len(probe))
 }
+
+// TestExportedAnalyzerReuse drives the documented NewAnalyzer entry point — the
+// second workflow in docs/embedding.md ("reuse the analyser to amortise the KB
+// load"). It pins that NewAnalyzer returns a usable analyser whose report is
+// byte-identical to the package-level Analyze for the same input (they run the
+// same pipeline) and that a single analyzer may be reused across analyses.
+func TestExportedAnalyzerReuse(t *testing.T) {
+	a, err := api.NewAnalyzer()
+	if err != nil {
+		t.Fatalf("NewAnalyzer(): %v", err)
+	}
+	if a == nil {
+		t.Fatal("NewAnalyzer() returned a nil analyzer")
+	}
+
+	for _, p := range probe {
+		t.Run(p.name, func(t *testing.T) {
+			reused := a.Analyze(p.lang, p.src)
+			if reused == nil {
+				t.Fatalf("Analyzer.Analyze(%s, %q): nil report", p.lang, p.src)
+			}
+			plain, err := api.Analyze(p.lang, p.src)
+			if err != nil {
+				t.Fatalf("Analyze(%s, %q): %v", p.lang, p.src, err)
+			}
+			rb, err := reused.Encode()
+			if err != nil {
+				t.Fatalf("Encode(NewAnalyzer report): %v", err)
+			}
+			pb, err := plain.Encode()
+			if err != nil {
+				t.Fatalf("Encode(Analyze report): %v", err)
+			}
+			if string(rb) != string(pb) {
+				t.Errorf("NewAnalyzer report differs from Analyze for %q:\n got=%s\nwant=%s", p.src, rb, pb)
+			}
+		})
+	}
+}

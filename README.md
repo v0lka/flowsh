@@ -362,17 +362,13 @@ guard).
 
 ## Documentation
 
-- [`docs/`](docs/README.md) — the user-facing guides: the
-  [CLI user-guide](docs/cli.md), the
-  [JSON report reference](docs/report-json.md), and
-  [adding a command to the knowledge base](docs/kb-howto.md).
+- [`docs/`](docs/README.md) — the user-facing guides and the development roadmap.
 - [`specs/`](specs/) — the full system specification. Start at
   [`specs/INDEX.md`](specs/INDEX.md) to find the document for a topic.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — architecture, layering rules, the
   knowledge base, the conformance corpus, and how to extend the project.
 - [`SECURITY.md`](SECURITY.md) — threat model, trust boundaries, and secure
   coding rules.
-- [`docs/development/roadmap.md`](docs/development/roadmap.md) — remaining work.
 
 ## License
 

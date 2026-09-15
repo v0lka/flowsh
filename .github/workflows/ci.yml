@@ -48,6 +48,52 @@ jobs:
       - name: vet
         run: go vet ./...
 
+      # Lint with the repository's pinned configuration (.golangci.yml). The
+      # action validates that config against the schema for the pinned version.
+      - name: lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13
+
+      # No dead code: every symbol must be reachable from a command path or a
+      # test. `deadcode -test` prints the unreachable set, which must be empty.
+      - name: deadcode
+        run: |
+          out="$(go run golang.org/x/tools/cmd/deadcode@v0.50.0 -test ./...)"
+          if [ -n "$out" ]; then
+            echo "unreachable symbols:"
+            echo "$out"
+            exit 1
+          fi
+
+      # Documentation hygiene: SECURITY.md must not ship with TODO placeholders,
+      # and every relative Markdown link (README, docs/, specs/) must resolve.
+      # Fenced code blocks and inline `code` are stripped first, so illustrative
+      # format examples are not mistaken for links.
+      - name: docs hygiene
+        run: |
+          if grep -n "TODO" SECURITY.md; then
+            echo "SECURITY.md contains TODO placeholders"
+            exit 1
+          fi
+
+          fail=0
+          for f in $(git ls-files '*.md'); do
+            dir=$(dirname "$f")
+            while IFS= read -r link; do
+              case "$link" in http://*|https://*|mailto:*|'#'*) continue;; esac
+              target=${link%%#*}
+              [ -z "$target" ] && continue
+              case "$target" in /*) p=$target;; *) p="$dir/$target";; esac
+              if [ ! -e "$p" ]; then
+                echo "broken link in $f: $link -> $p"
+                fail=1
+              fi
+            done < <(awk 'BEGIN{f=0} /^[[:space:]]*```/{f=!f; next} f==0{print}' "$f" \
+                     | sed -E 's/`[^`]*`//g' | grep -oE '\]\([^)]+\)' | sed -E 's/^\]\((.*)\)$/\1/')
+          done
+          exit $fail
+
       # Runs the GuardFall A-E corpus (0-miss invariant), the CLI tests
       # (argument, stdin, --batch, --version, --lang auto, exit codes), and the
       # per-command latency budget + recall-regression gates. A latency or

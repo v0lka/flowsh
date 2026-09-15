@@ -1,4 +1,13 @@
-package analysis
+// Package corpus holds the regression-corpus harness: the on-disk corpus
+// document format, its loader, and the group selectors the conformance tests
+// (internal/analysis) and the benchmark harness (engine) use to pick cases.
+//
+// It is test infrastructure and is deliberately kept out of the production
+// facade (internal/analysis), so it is never compiled into the shipped binary.
+// It depends on nothing but the standard library: resolving a case's language
+// to a dialect is the analysis layer's job (analysis.ParseLang), not the data
+// file's, which keeps this package a pure, reusable data loader.
+package corpus
 
 import (
 	"encoding/json"
@@ -49,16 +58,13 @@ type Case struct {
 	// Category is the GuardFall class ("A".."E") for GroupGuardFall cases, and
 	// empty otherwise.
 	Category string `json:"category,omitempty"`
-	// Lang is the dialect the input is written in ("bash" or "posh").
+	// Lang is the dialect the input is written in ("bash", "posix" or "posh").
 	Lang string `json:"lang"`
 	// Input is the command source text.
 	Input string `json:"input"`
 	// Note is free-form documentation of the case's intent.
 	Note string `json:"note,omitempty"`
 }
-
-// Dialect resolves the case's declared language.
-func (c Case) Dialect() (Lang, error) { return ParseLang(c.Lang) }
 
 // RequiresCoverage reports whether the case must be classified as "effect
 // present or ⊤". Benign cases are excluded: an ordinary, side-effect-free
@@ -131,6 +137,9 @@ func (c Case) validate() error {
 	if c.Input == "" {
 		return fmt.Errorf("empty input")
 	}
+	if c.Lang == "" {
+		return fmt.Errorf("empty lang")
+	}
 	switch c.Group {
 	case GroupGuardFall, GroupDestructive, GroupBenign, GroupPS, GroupResolution:
 	default:
@@ -142,9 +151,6 @@ func (c Case) validate() error {
 		}
 	} else if c.Category != "" {
 		return fmt.Errorf("non-guardfall case %q carries a category", c.ID)
-	}
-	if _, err := ParseLang(c.Lang); err != nil {
-		return err
 	}
 	return nil
 }
@@ -174,20 +180,11 @@ func Filter(cases []Case, group string) []Case {
 // and the benchmark harness find the same corpus without hard-coded relative
 // paths.
 func CorpusDir() (string, error) {
-	dir, err := os.Getwd()
+	wd, err := os.Getwd()
 	if err != nil {
 		return "", err
 	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return filepath.Join(dir, "testdata", "corpus"), nil
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", fmt.Errorf("flowsh: go.mod not found above %s", dir)
-		}
-		dir = parent
-	}
+	return CorpusDirFrom(wd)
 }
 
 // CorpusDirFrom locates the corpus directory relative to an explicit starting

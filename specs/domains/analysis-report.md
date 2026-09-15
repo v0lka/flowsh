@@ -2,12 +2,12 @@
 
 ## Purpose
 
-`internal/analysis` is the shared analysis facade behind the `flowsh` CLI and the corpus regression harness. It is the single place that composes the two frontends (`front/bash`, `front/ps`), the knowledge-base binder (`bind`) and the frozen core (`engine`) into one deterministic, serialisable `Report`. It lives under `internal/` because the frozen core (`engine`) must stay frontend-free — the composition of frontends + binder + engine can only live above them. External Go programs reach it through the sibling `api/` embedding package (see [Public Embedding Surface](#public-embedding-surface-api)).
+`internal/analysis` is the shared analysis facade behind the `flowsh` CLI and the embedding API. It is the single place that composes the two frontends (`front/bash`, `front/ps`), the knowledge-base binder (`bind`) and the frozen core (`engine`) into one deterministic, serialisable `Report`. It lives under `internal/` because the frozen core (`engine`) must stay frontend-free — the composition of frontends + binder + engine can only live above them. External Go programs reach it through the sibling `api/` embedding package (see [Public Embedding Surface](#public-embedding-surface-api)).
 
 ## Key Files
 
 - `internal/analysis/analyze.go` — the facade: `Lang`, `ParseLang`, `Report`, `DestructiveFinding`, `Analyzer`, `NewAnalyzer`, `defaultAnalyzer`, `Options` (incl. `Root`, `Windows`), `Bool`, `RootArgument`/`RootStdin`, `Analyze`, `AnalyzeWith`.
-- `internal/analysis/corpus.go` — corpus harness: `Case`, group constants, `GuardFallClasses`, `LoadCorpus`, `Filter`, `CorpusDir`, `CorpusDirFrom`.
+- `internal/corpus/corpus.go` — the test-only corpus harness: `Case`, group constants, `GuardFallClasses`, `LoadCorpus`, `Filter`, `CorpusDir`, `CorpusDirFrom` (language resolution stays in `internal/analysis`).
 - `internal/analysis/corpus_test.go` — conformance tests over the corpus (GuardFall coverage, destructive recall, PowerShell recall, benign precision, why-trace coverage).
 - `internal/analysis/exfil_test.go` — exfiltration regression tests.
 - `internal/analysis/destructive_test.go` — knowledge-base destructive-class raising (a class-E entry raises to Critical; a KB class never lowers the effect-derived severity).
@@ -228,7 +228,7 @@ Compile-time constants in `internal/analysis/analyze.go`:
 | `RootArgument` | `"<argument>"` | `report.root` when the command came from the positional argument. |
 | `RootStdin` | `"<stdin>"` | `report.root` when the command came from stdin (`-` or no argument). |
 
-Corpus location resolution (`corpus.go`):
+Corpus location resolution (`internal/corpus/corpus.go`):
 
 - `CorpusDir()` walks up from the current working directory until a `go.mod` is found, then returns `<root>/testdata/corpus`.
 - `CorpusDirFrom(start)` is the testable core that resolves the same path relative to an explicit starting directory (absolute-ised first).
@@ -253,7 +253,7 @@ Because every exported type is a type **alias**, the boundary is transparent —
 
 The embedding contract is versioned by the two report constants, not by the module version: a consumer pins to `Report.SchemaVersion` (`effect-ir/v1`, the effect IR shape) and `Report.ToolVersion` (`flowsh/v1`, the document as a whole), as described in [Report Contract](../contracts/report-json.md).
 
-The corpus harness is deliberately **not** re-exported: `Case`, `LoadCorpus`, `CorpusDir`, `CorpusDirFrom`, `Filter`, the `Group*` constants and `GuardFallClasses` remain internal testing aids, reachable only through `internal/analysis` (in-module tests, including the external `engine_test` benchmark, still use them there).
+The corpus harness is deliberately **not** re-exported: `Case`, `LoadCorpus`, `CorpusDir`, `CorpusDirFrom`, `Filter`, the `Group*` constants and `GuardFallClasses` live in the test-only `internal/corpus` package — testing aids, not part of the embedding surface (in-module tests, including the external `engine_test` benchmark, reach them there).
 
 ## Extension Points
 

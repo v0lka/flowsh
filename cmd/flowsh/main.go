@@ -119,17 +119,17 @@ type options struct {
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	o, err := parseArgs(args)
 	if err != nil {
-		fmt.Fprintf(stderr, "flowsh: %v\n", err)
-		fmt.Fprintln(stderr, usage)
+		fprint(stderr, "flowsh: %v\n", err)
+		fprintln(stderr, usage)
 		return exitUsage
 	}
 	if o.help {
-		fmt.Fprintln(stdout, usage)
+		fprintln(stdout, usage)
 		return exitOK
 	}
 	if o.version {
-		fmt.Fprintf(stdout, "%s\n", api.ToolVersion)
-		fmt.Fprintf(stdout, "%s\n", engine.SchemaVersion)
+		fprint(stdout, "%s\n", api.ToolVersion)
+		fprint(stdout, "%s\n", engine.SchemaVersion)
 		return exitOK
 	}
 
@@ -141,20 +141,20 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if !auto {
 		lang, err = api.ParseLang(o.lang)
 		if err != nil {
-			fmt.Fprintf(stderr, "flowsh: %v\n", err)
+			fprint(stderr, "flowsh: %v\n", err)
 			return exitUsage
 		}
 	}
 
 	src, err := readInput(o, stdin)
 	if err != nil {
-		fmt.Fprintf(stderr, "flowsh: %v\n", err)
+		fprint(stderr, "flowsh: %v\n", err)
 		return exitInput
 	}
 
 	if o.batch {
 		if err := runBatch(o, src, lang, auto, stdout); err != nil {
-			fmt.Fprintf(stderr, "flowsh: %v\n", err)
+			fprint(stderr, "flowsh: %v\n", err)
 			return exitCode(err)
 		}
 		return exitOK
@@ -176,17 +176,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	rep, err := api.AnalyzeWith(lang, src.src, opts)
 	if err != nil {
-		fmt.Fprintf(stderr, "flowsh: %v\n", err)
+		fprint(stderr, "flowsh: %v\n", err)
 		return exitInternal
 	}
 
 	if o.json {
 		out, err := rep.Encode()
 		if err != nil {
-			fmt.Fprintf(stderr, "flowsh: encode report: %v\n", err)
+			fprint(stderr, "flowsh: encode report: %v\n", err)
 			return exitInternal
 		}
-		fmt.Fprintln(stdout, string(out))
+		fprintln(stdout, string(out))
 		return exitOK
 	}
 	writeText(stdout, rep)
@@ -356,7 +356,7 @@ func runBatch(o options, in input, lang api.Lang, auto bool, stdout io.Writer) e
 		if err != nil {
 			return fmt.Errorf("encode report: %w", err)
 		}
-		fmt.Fprintln(stdout, string(out))
+		fprintln(stdout, string(out))
 	}
 	return nil
 }
@@ -384,48 +384,58 @@ func encodeCompact(r *api.Report) ([]byte, error) {
 	return json.Marshal(r)
 }
 
+// fprint and fprintln write the CLI's terminal output. These are one-shot
+// writes to stdout/stderr, where a short write cannot be recovered and the
+// process exit status is already decided, so the error is deliberately
+// discarded. Routing every write through these two helpers keeps that one
+// decision in a single place instead of scattering //nolint directives
+// across the whole output path.
+func fprint(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
+
+func fprintln(w io.Writer, args ...any) { _, _ = fmt.Fprintln(w, args...) }
+
 // writeText renders the human-readable summary.
 func writeText(w io.Writer, r *api.Report) {
-	fmt.Fprintf(w, "flowsh effect report\n")
-	fmt.Fprintf(w, "  lang:            %s\n", r.Lang)
-	fmt.Fprintf(w, "  input:           %s\n", oneLine(r.Input))
+	fprint(w, "flowsh effect report\n")
+	fprint(w, "  lang:            %s\n", r.Lang)
+	fprint(w, "  input:           %s\n", oneLine(r.Input))
 	if r.Root != "" {
-		fmt.Fprintf(w, "  root:            %s\n", r.Root)
+		fprint(w, "  root:            %s\n", r.Root)
 	}
-	fmt.Fprintf(w, "  commands:        %d\n", r.Commands)
-	fmt.Fprintf(w, "  effects:         %d\n", len(r.Effects))
-	fmt.Fprintf(w, "  destructiveness: %s\n", r.Destructiveness)
-	fmt.Fprintf(w, "  irreversibility: %s\n", r.Score.Irreversibility)
-	fmt.Fprintf(w, "  breadth:         %s\n", r.Score.Breadth)
-	fmt.Fprintf(w, "  influence:       %s\n", r.Score.Influence)
-	fmt.Fprintf(w, "  grade:           %s\n", r.Score.Grade)
-	fmt.Fprintf(w, "  confidence:      %d\n", r.Score.Confidence)
-	fmt.Fprintf(w, "  exfil risk:      %s\n", r.Score.Exfil)
-	fmt.Fprintf(w, "  conservative:    %t\n", r.Conservative)
+	fprint(w, "  commands:        %d\n", r.Commands)
+	fprint(w, "  effects:         %d\n", len(r.Effects))
+	fprint(w, "  destructiveness: %s\n", r.Destructiveness)
+	fprint(w, "  irreversibility: %s\n", r.Score.Irreversibility)
+	fprint(w, "  breadth:         %s\n", r.Score.Breadth)
+	fprint(w, "  influence:       %s\n", r.Score.Influence)
+	fprint(w, "  grade:           %s\n", r.Score.Grade)
+	fprint(w, "  confidence:      %d\n", r.Score.Confidence)
+	fprint(w, "  exfil risk:      %s\n", r.Score.Exfil)
+	fprint(w, "  conservative:    %t\n", r.Conservative)
 	if r.Top {
-		fmt.Fprintf(w, "  top:             true (%s)\n", r.Reason)
+		fprint(w, "  top:             true (%s)\n", r.Reason)
 	}
 	if r.Resolution.Kind != "" {
-		fmt.Fprintf(w, "  resolution:      %s %s", r.Resolution.Kind, r.Resolution.Invoked)
+		fprint(w, "  resolution:      %s %s", r.Resolution.Kind, r.Resolution.Invoked)
 		if r.Resolution.Name != "" && r.Resolution.Name != r.Resolution.Invoked {
-			fmt.Fprintf(w, " → %s", r.Resolution.Name)
+			fprint(w, " → %s", r.Resolution.Name)
 		}
 		if len(r.Resolution.AliasChain) > 0 {
-			fmt.Fprintf(w, " [alias chain: %s]", strings.Join(r.Resolution.AliasChain, " → "))
+			fprint(w, " [alias chain: %s]", strings.Join(r.Resolution.AliasChain, " → "))
 		}
-		fmt.Fprintln(w)
+		fprintln(w)
 	}
 	for _, d := range r.Destructive {
-		fmt.Fprintf(w, "  destructive:     %s %s (class %s): %s\n", d.Command, d.Spec, d.Class, d.Reason)
+		fprint(w, "  destructive:     %s %s (class %s): %s\n", d.Command, d.Spec, d.Class, d.Reason)
 	}
 	for _, e := range r.Effects {
-		fmt.Fprintf(w, "    - %s\n", e.Key())
+		fprint(w, "    - %s\n", e.Key())
 	}
 	for _, p := range r.Score.ExfilPairs {
-		fmt.Fprintf(w, "  exfil: %s → %s\n", p.Source.Key(), p.Sink.Key())
+		fprint(w, "  exfil: %s → %s\n", p.Source.Key(), p.Sink.Key())
 	}
 	for _, n := range r.Notes {
-		fmt.Fprintf(w, "  note: %s\n", n)
+		fprint(w, "  note: %s\n", n)
 	}
 }
 
@@ -436,15 +446,15 @@ func writeWhy(w io.Writer, r *api.Report) {
 	if len(r.Why) == 0 {
 		return
 	}
-	fmt.Fprintf(w, "why:\n")
+	fprint(w, "why:\n")
 	for _, t := range r.Why {
-		fmt.Fprintf(w, "  %s\n", t.Effect)
+		fprint(w, "  %s\n", t.Effect)
 		for _, s := range t.Because {
 			loc := ""
 			if s.Loc != nil {
 				loc = fmt.Sprintf(" @%d:%d", s.Loc.Line, s.Loc.Col)
 			}
-			fmt.Fprintf(w, "    - %s(%s)%s\n", s.Rule, strings.Join(s.Premises, ", "), loc)
+			fprint(w, "    - %s(%s)%s\n", s.Rule, strings.Join(s.Premises, ", "), loc)
 		}
 	}
 }

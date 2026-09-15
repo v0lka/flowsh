@@ -6,16 +6,17 @@ import (
 
 	"github.com/v0lka/flowsh/bind"
 	"github.com/v0lka/flowsh/engine"
+	"github.com/v0lka/flowsh/internal/corpus"
 )
 
 // mustCorpus loads the repository corpus or fails the test.
-func mustCorpus(t *testing.T) []Case {
+func mustCorpus(t *testing.T) []corpus.Case {
 	t.Helper()
-	dir, err := CorpusDir()
+	dir, err := corpus.CorpusDir()
 	if err != nil {
 		t.Fatalf("CorpusDir: %v", err)
 	}
-	cases, err := LoadCorpus(dir)
+	cases, err := corpus.LoadCorpus(dir)
 	if err != nil {
 		t.Fatalf("LoadCorpus(%s): %v", dir, err)
 	}
@@ -36,9 +37,9 @@ func mustAnalyzer(t *testing.T) *Analyzer {
 }
 
 // analyzeCase analyses one corpus case.
-func analyzeCase(t *testing.T, a *Analyzer, c Case) *Report {
+func analyzeCase(t *testing.T, a *Analyzer, c corpus.Case) *Report {
 	t.Helper()
-	lang, err := c.Dialect()
+	lang, err := ParseLang(c.Lang)
 	if err != nil {
 		t.Fatalf("case %s: %v", c.ID, err)
 	}
@@ -55,21 +56,21 @@ func analyzeCase(t *testing.T, a *Analyzer, c Case) *Report {
 // every class A-E, so the suite cannot pass vacuously.
 func TestGuardFallCoverage(t *testing.T) {
 	a := mustAnalyzer(t)
-	cases := Filter(mustCorpus(t), GroupGuardFall)
+	cases := corpus.Filter(mustCorpus(t), corpus.GroupGuardFall)
 	if len(cases) == 0 {
 		t.Fatal("no guardfall cases in the corpus")
 	}
 
 	seen := make(map[string]map[string]bool)
 	for _, c := range cases {
-		lang, _ := c.Dialect()
+		lang, _ := ParseLang(c.Lang)
 		if seen[string(lang)] == nil {
 			seen[string(lang)] = make(map[string]bool)
 		}
 		seen[string(lang)][c.Category] = true
 	}
 	for _, lang := range Langs {
-		for _, cls := range GuardFallClasses {
+		for _, cls := range corpus.GuardFallClasses {
 			if !seen[string(lang)][cls] {
 				t.Errorf("guardfall: dialect %s does not exercise class %s", lang, cls)
 			}
@@ -94,7 +95,7 @@ func TestGuardFallCoverage(t *testing.T) {
 // covered and reach at least the Medium grade.
 func TestDestructiveCoverage(t *testing.T) {
 	a := mustAnalyzer(t)
-	cases := Filter(mustCorpus(t), GroupDestructive)
+	cases := corpus.Filter(mustCorpus(t), corpus.GroupDestructive)
 	if len(cases) == 0 {
 		t.Fatal("no destructive cases in the corpus")
 	}
@@ -114,7 +115,7 @@ func TestDestructiveCoverage(t *testing.T) {
 // all covered.
 func TestPowerShellCorpusCoverage(t *testing.T) {
 	a := mustAnalyzer(t)
-	cases := Filter(mustCorpus(t), GroupPS)
+	cases := corpus.Filter(mustCorpus(t), corpus.GroupPS)
 	if len(cases) == 0 {
 		t.Fatal("no PowerShell cases in the corpus")
 	}
@@ -130,7 +131,7 @@ func TestPowerShellCorpusCoverage(t *testing.T) {
 // escalated to ⊤.
 func TestBenignPrecision(t *testing.T) {
 	a := mustAnalyzer(t)
-	cases := Filter(mustCorpus(t), GroupBenign)
+	cases := corpus.Filter(mustCorpus(t), corpus.GroupBenign)
 	if len(cases) == 0 {
 		t.Fatal("no benign cases in the corpus")
 	}
@@ -187,11 +188,11 @@ func TestCorpusShape(t *testing.T) {
 		group string
 		min   int
 	}{
-		{GroupGuardFall, 2 * len(GuardFallClasses)},
-		{GroupDestructive, 10},
-		{GroupBenign, 5},
-		{GroupPS, 5},
-		{GroupResolution, 5},
+		{corpus.GroupGuardFall, 2 * len(corpus.GuardFallClasses)},
+		{corpus.GroupDestructive, 10},
+		{corpus.GroupBenign, 5},
+		{corpus.GroupPS, 5},
+		{corpus.GroupResolution, 5},
 	} {
 		if byGroup[want.group] < want.min {
 			t.Errorf("corpus group %q has %d cases, want >= %d", want.group, byGroup[want.group], want.min)
@@ -225,7 +226,7 @@ func TestWhyCoverage(t *testing.T) {
 // chain, and at least one case must resolve through more than one alias.
 func TestResolutionCoverage(t *testing.T) {
 	a := mustAnalyzer(t)
-	cases := Filter(mustCorpus(t), GroupResolution)
+	cases := corpus.Filter(mustCorpus(t), corpus.GroupResolution)
 	if len(cases) == 0 {
 		t.Fatal("no resolution cases in the corpus")
 	}
@@ -296,7 +297,7 @@ func TestPOSIXVariantCoverage(t *testing.T) {
 // vacuously.
 func TestDestructiveClassCorpus(t *testing.T) {
 	a := mustAnalyzer(t)
-	cases := Filter(mustCorpus(t), GroupDestructive)
+	cases := corpus.Filter(mustCorpus(t), corpus.GroupDestructive)
 	matched := 0
 	for _, c := range cases {
 		rep := analyzeCase(t, a, c)

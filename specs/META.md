@@ -74,7 +74,7 @@ Specs are organized by domain, never by this layout. The mapping of a domain to 
 | `domains/binding.md` | `bind/` |
 | `domains/bash-frontend/` | `front/bash/` |
 | `domains/powershell-frontend.md` | `front/ps/` |
-| `domains/analysis-report.md` | `internal/analysis/`, `api/` |
+| `domains/analysis-report.md` | `internal/analysis/`, `internal/corpus/`, `api/` |
 | `domains/cli.md` | `cmd/flowsh/` |
 
 ## Naming Conventions

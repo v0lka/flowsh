@@ -9,7 +9,7 @@
 - `front/bash/parse.go` — the entry point: `Variant` (`Bash`/`POSIX`), `Parse` (mvdan `syntax` parser + `syntax.Simplify`), `Pos`, and the ⊤ fallback (`topProgram`).
 - `front/bash/normalize.go` — the normalized AST (`Kind`, `Program`, `Stmt`, `Command`, `Wrapper`, `Assign`, `Redirect`, `Word`, `Part`, `Alias`, `Func`) and normalization: wrapper unwrapping (`wrapperSpecs`/`unwrap`) and symbol annotation (`annotate`).
 - `front/bash/expand.go` — the abstract state Σ (`State`, `Var`, `NewState`, `Clone`, `joinStates`, `defaultVars`), word expansion, static knownness, and taint propagation.
-- `front/bash/exec.go` — the abstract-execution layer: `interp`, `Resolver`/`ExecResult`, `Exec`/`ExecBash`/`ExecPOSIX`, pipelines, control flow, redirections, sinks and budget bounds.
+- `front/bash/exec.go` — the abstract-execution layer: `interp`, `Resolver`/`ExecResult`, `Exec`/`ExecBash`, pipelines, control flow, redirections, sinks and budget bounds.
 - `front/bash/builtins.go` — code-execution sinks, code-executing and shell-only builtins, stdout folding (`echo`/`printf`/`base64`), and builtin state transfer functions.
 - `front/bash/parse_test.go`, `front/bash/normalize_test.go`, `front/bash/exec_test.go` — test suites.
 

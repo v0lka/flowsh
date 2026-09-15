@@ -25,7 +25,7 @@ a responsibility belongs to exactly one layer.
 | Shell frontend | `front/bash/` | `engine` | Parse shell source and abstractly execute it, emitting the effects the shell itself contributes and delegating ordinary commands through a resolver seam. |
 | PowerShell frontend | `front/ps/` | `engine` | Parse PowerShell source and lower it into the effect IR, using its own alias/cmdlet tables. |
 | Binding | `bind/` | `engine`, `kb`, `front/bash` | Resolve an invoked name and bind its flags/operands against the knowledge base, producing `[]engine.Effect`. |
-| Composition | `internal/analysis/` | `engine`, `bind`, `front/bash`, `front/ps` | Wire the two frontends, the binder and the core into one deterministic `Report`; the single facade behind the CLI, the embedding API and the corpus harness. |
+| Composition | `internal/analysis/` | `engine`, `bind`, `front/bash`, `front/ps` | Wire the two frontends, the binder and the core into one deterministic `Report`; the single facade behind the CLI and the embedding API. |
 | Public API | `api/` | `internal/analysis` | Re-export the facade as an embeddable Go API — type aliases, copied constants and forwarding functions only; holds no behaviour of its own ([ADR-0010](../decisions/0010-public-embedding-api.md)). |
 | CLI | `cmd/flowsh/` | `api`, `engine` | Parse arguments, read the command, call the facade through `api`, and print a text summary or JSON report. |
 
@@ -130,10 +130,11 @@ binding").
 - `engine` imports only the Go standard library; it imports no package of this
   module. The single, deliberate exception is the external test package
   `engine/bench_test.go` (`package engine_test`), which imports
-  `internal/analysis` — including its internal corpus harness (`analysis.Case`,
-  `analysis.LoadCorpus`, `analysis.CorpusDir`) — to benchmark the whole pipeline
-  end to end; it adds no edge to the core package and introduces no cycle. The
-  corpus harness it reaches stays internal and is not re-exported by `api/`.
+  `internal/analysis` and the test-only harness `internal/corpus`
+  (`corpus.Case`, `corpus.LoadCorpus`, `corpus.CorpusDir`) to benchmark the whole
+  pipeline end to end; it adds no edge to the core package and introduces no
+  cycle. The corpus harness it reaches stays internal and is not re-exported by
+  `api/`.
 - Every intra-module import edge points from a higher layer in the table above
   to a lower one; the import graph is acyclic.
 - `front/bash` and `front/ps` import `engine` and (their external parser
@@ -161,7 +162,8 @@ binding").
   `internal/analysis`, and `cmd/flowsh` reaches the analysis through `api`.
 - `api` re-exports only the analyse-and-report surface (types, constants,
   functions); the corpus harness (`Case`, `LoadCorpus`, `CorpusDir`, `Filter`,
-  the `Group*` constants, `GuardFallClasses`) is never part of it.
+  the `Group*` constants, `GuardFallClasses`) lives in the test-only
+  `internal/corpus` package and is never part of it.
 
 ## Anti-Patterns
 
@@ -185,8 +187,9 @@ binding").
 - **Re-exporting the corpus harness from `api/`.** The corpus harness is an
   internal testing aid; placing `Case`, `LoadCorpus`, `CorpusDir`, `Filter` or
   the `Group*` constants on the public surface would freeze a testing API as an
-  external contract. In-module tests reach it through `internal/analysis`
-  instead ([ADR-0010](../decisions/0010-public-embedding-api.md)).
+  external contract. In-module tests reach it through the test-only
+  `internal/corpus` package instead
+  ([ADR-0010](../decisions/0010-public-embedding-api.md)).
 
 ## Related Specs
 

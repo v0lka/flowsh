@@ -11,14 +11,13 @@
 | `type Resolution struct{ Effects []engine.Effect; Derivations []engine.Derivation }` + `type Resolver func(cmd *Command, prog *Program) Resolution` | `front/bash` (`exec.go`) | the caller — `internal/analysis` (production), `front/bash/exec_test.go` (tests) | The seam: maps one normalized, fully-expanded command invocation to its effects and the derivations (concrete source atoms) that justify them. |
 | `func Exec(v Variant, name, src string, r Resolver) *ExecResult` | `front/bash` (`exec.go`) | `internal/analysis`, tests | Parse and abstractly execute `src`; never panics; every failure degrades to ⊤. |
 | `func ExecBash(src string, r Resolver) *ExecResult` | `front/bash` (`exec.go`) | tests (`front/bash/exec_test.go`) | `Exec` specialised to the bash dialect (`Exec(Bash, "script", src, r)`); the production caller `internal/analysis.analyzeBash` calls `Exec` directly. |
-| `func ExecPOSIX(src string, r Resolver) *ExecResult` | `front/bash` (`exec.go`) | external callers (no in-module caller) | `Exec` specialised to the POSIX shell (`Exec(POSIX, "script", src, r)`). |
-| `func Parse(v Variant, name, src string) *Program` | `front/bash` (`parse.go`) | `bind.BindScript`/`BindProgram`, tests | Produce the normalized `Program` that a Resolver receives. |
+| `func Parse(v Variant, name, src string) *Program` | `front/bash` (`parse.go`) | `bind.resolve` (alias expansion), tests | Produce the normalized `Program` that a Resolver receives. |
 | `type Program struct{ Variant Variant; File, Source string; Top bool; Reason string; ErrPos *Pos; Stmts []*Stmt; Aliases map[string]*Alias; Funcs map[string]*Func }` | `front/bash` (`normalize.go`) | the Resolver impl, `bind.FromBash` | The normalized AST handed to the Resolver (carries the declared aliases/functions). |
 | `type Command struct{ Pos Pos; Name string; NameWord *Word; Args []*Word; Assigns []*Assign; Wrappers []*Wrapper; ResolveKind, ResolvesTo string; StdinTaint engine.Taint }` | `front/bash` (`normalize.go`) | the Resolver impl, `bind.FromBash` | The normalized simple command handed to the Resolver. |
 | `type ExecResult struct{ Variant Variant; File, Source string; Top bool; Reason string; Conservative bool; Effects []engine.Effect; Destructiveness engine.Destructiveness; Derivations []engine.Derivation; State *State; Cmds []*Command; Notes []string }` | `front/bash` (`exec.go`) | `internal/analysis` | Aggregate result of abstract execution (effects from both the Resolver and the shell itself, plus their derivations). |
 | `func FromBash(cmd *bash.Command, prog *bash.Program) *Call` | `bind` (`bind.go`) | `Binder.BindBash`, tests | Adapter: lowers the frontend's `Command`/`Program` into the binder's frontend-agnostic `Call`. |
 | `func (b *Binder) BindBash(cmd *bash.Command, prog *bash.Program) *Result` | `bind` (`bind.go`) | the injected Resolver closure | Convenience wrapper: `Bind(FromBash(cmd, prog))`. |
-| `func (b *Binder) Bind(c *Call) *Result` | `bind` (`bind.go`) | `Binder.BindBash`, `Binder.BindProgram` | The actual binding entry point for a normalized `Call`. |
+| `func (b *Binder) Bind(c *Call) *Result` | `bind` (`bind.go`) | `Binder.BindBash` | The actual binding entry point for a normalized `Call`. |
 
 ## Initialization
 
@@ -32,7 +31,7 @@ res = bash.Exec(v, sourceName(root, "script"), src, func(cmd *bash.Command, prog
 })
 ```
 
-When the analyser holds no binder, it calls `bash.Exec(v, sourceName(root, "script"), src, nil)`, and only the shell's intrinsic effects are reported. `bind.FromBash(cmd, prog) *Call` is the pure `Command`/`Program`→`Call` handoff used both by `BindBash` and by `Binder.BindProgram`/`BindScript`, which bind a whole program without abstract execution. The frontend side is wired by the interpreter: `newInterp(src, prog, r, file)` stores `r` in `interp.res`, and the interpreter invokes `it.res(cmd, prog)` for each ordinary command it reaches.
+When the analyser holds no binder, it calls `bash.Exec(v, sourceName(root, "script"), src, nil)`, and only the shell's intrinsic effects are reported. `bind.FromBash(cmd, prog) *Call` is the pure `Command`/`Program`→`Call` handoff used by `BindBash`; the whole-program walkers `BindProgram`/`BindScript` (test-only, in `bind/program_bind_test.go`) use it too, binding a whole program without abstract execution. The frontend side is wired by the interpreter: `newInterp(src, prog, r, file)` stores `r` in `interp.res`, and the interpreter invokes `it.res(cmd, prog)` for each ordinary command it reaches.
 
 ## Data Flow Across Boundary
 
@@ -67,7 +66,7 @@ The Resolver is called only for *ordinary* commands; everything the shell contri
 ## Breaking Change Checklist
 
 - **Change the `Resolver` signature** — you MUST update `type Resolver`, the `interp.res` field, `newInterp`, `Exec`, and `ExecBash` in `front/bash/exec.go`, then every injection site: the closure in `internal/analysis/analyze.go` (`analyzeBash`) and `newResolver` in `front/bash/exec_test.go`.
-- **Change `bash.Command` or `bash.Program`** — you MUST update `bind.FromBash` (`bind/bind.go`) and its consumers (`BindBash`, `BindProgram`, `bindStmt`), and regenerate the frontend golden fixtures `front/bash/testdata/program.golden.json` and `front/bash/testdata/wrappers.golden.json`.
+- **Change `bash.Command` or `bash.Program`** — you MUST update `bind.FromBash` (`bind/bind.go`) and its consumers (`BindBash` in production; `BindProgram`/`bindStmt`, test-only in `bind/program_bind_test.go`), and regenerate the frontend golden fixtures `front/bash/testdata/program.golden.json` and `front/bash/testdata/wrappers.golden.json`.
 - **Change `bind.Result`** — you MUST update the closure in `internal/analysis/analyze.go` (it reads `.Effects` and `.Derivations`) and the consumers of `ExecResult`.
 - **Make `front/bash` import `bind`/`kb`/`front/ps`** — forbidden: it creates an import cycle and violates the one-way rule; extend the `Resolver` seam instead.
 - **Change `bash.ExecResult`** — you MUST update `internal/analysis.analyzeBash`, which reads `Effects`, `Derivations`, `Conservative`, `Top`, `Reason`, `Cmds`, and `Notes`.

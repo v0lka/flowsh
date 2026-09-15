@@ -21,8 +21,8 @@
 // A consumer can therefore pin to a contract revision by checking
 // Report.ToolVersion and Report.SchemaVersion rather than by module version.
 //
-// The regression corpus harness (corpus.go in the facade) is deliberately NOT
-// re-exported: it is an internal testing aid, not part of the embedding
+// The regression corpus harness (the test-only internal/corpus package) is
+// deliberately NOT re-exported: it is a testing aid, not part of the embedding
 // surface.
 package api
 

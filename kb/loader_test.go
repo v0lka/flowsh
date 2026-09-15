@@ -197,9 +197,6 @@ func TestDefaultCaches(t *testing.T) {
 	if a != b {
 		t.Errorf("Default returned different instances across calls")
 	}
-	if MustLoad() != a {
-		t.Errorf("MustLoad did not agree with Default")
-	}
 }
 
 // ---------------------------------------------------------------------------

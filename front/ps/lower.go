@@ -96,9 +96,6 @@ func LowerWith(p *Program, opts Options) *Result {
 	return r
 }
 
-// Analyze is the one-call convenience: parse src and lower it.
-func Analyze(src string) *Result { return Lower(Parse("", src)) }
-
 // ===========================================================================
 // Lowering
 // ===========================================================================
@@ -111,10 +108,6 @@ type lowerer struct {
 	notes        []string
 	conservative bool
 	bump         engine.Destructiveness
-}
-
-func (l *lowerer) emit(e engine.Effect) {
-	l.effects = append(l.effects, e)
 }
 
 // emitEff records one effect together with the derivation that justifies it,

@@ -172,15 +172,6 @@ func Default() (*KB, error) {
 	return defaultKB, defaultErr
 }
 
-// MustLoad is Default but panics on error, for wiring at start-up.
-func MustLoad() *KB {
-	k, err := Default()
-	if err != nil {
-		panic("kb: " + err.Error())
-	}
-	return k
-}
-
 // ===========================================================================
 // Decoding: YAML document -> document
 // ===========================================================================

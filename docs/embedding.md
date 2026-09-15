@@ -9,8 +9,9 @@ import "github.com/v0lka/flowsh/api"
 ```
 
 `api` is the **only** public embedding surface. Everything under `internal/` —
-including the composition facade `internal/analysis/` and the corpus harness it
-carries — is not importable by a module outside `github.com/v0lka/flowsh`
+including the composition facade `internal/analysis/` and the test-only corpus
+harness `internal/corpus/` — is not importable by a module outside
+`github.com/v0lka/flowsh`
 (Go's `internal/` rule) and is **not** a supported API. The CLI and the API are
 **equal, first-class entry points** over the same facade; the CLI is simply the
 first consumer of it (see
@@ -164,7 +165,8 @@ your integration must be re-checked.
   is not a stable contract.
 - **The corpus harness is not part of the embedding surface.** `Case`,
   `LoadCorpus`, `CorpusDir`, `Filter`, the `Group*` constants and
-  `GuardFallClasses` stay internal: they are a testing aid, not an API.
+  `GuardFallClasses` live in the test-only `internal/corpus` package: they are a
+  testing aid, not an API.
 - **No runtime dependencies.** The knowledge base is compiled into the binary,
   so an embedding program needs nothing at run time, and the analyser is a pure
   function from command text to report — it never executes, fetches, or writes

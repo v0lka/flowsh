@@ -10,7 +10,8 @@
 - `front/bash/`, `front/ps/` — the bash and PowerShell frontends
 - `kb/` — the embedded YAML knowledge base (`kb/data/*.yaml`)
 - `bind/` — command resolution and flag/operand binding
-- `internal/analysis/` — the composition facade (analysis + corpus harness)
+- `internal/analysis/` — the composition facade (frontends + binder + core → `Report`)
+- `internal/corpus/` — the test-only regression-corpus harness (loader + group selectors)
 - `cmd/flowsh/` — the CLI
 - `testdata/corpus/` — the GuardFall / destructive / benign / ps conformance corpus
 

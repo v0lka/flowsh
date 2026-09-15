@@ -173,7 +173,7 @@ For a parameter marked `fileRef` whose value uses `@file`, `@path` names a file 
 
 - `maxAliasDepth = 32` — bounds alias-chain expansion so a recursive alias set cannot diverge.
 - `Style` is `"bash"` or `"ps"`; the binder is frontend-agnostic and consumes the same `Call` from either frontend.
-- `New`/`NewDefault`/`MustDefault` wire a binder over a supplied KB or the embedded default KB.
+- `NewDefault` wires a binder over the embedded default KB (`internal/analysis` is its only caller).
 - `Result.Encode()` returns canonical indented JSON.
 
 ## Extension Points

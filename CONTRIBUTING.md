@@ -19,7 +19,8 @@ rejected. For deep structural changes, also read the relevant document in
 | `front/bash/` | Frontend | Parse POSIX/bash source and abstractly execute it; emit the effects the shell contributes and delegate ordinary commands through a resolver seam. |
 | `front/ps/` | Frontend | Parse PowerShell (tree-sitter) and lower it into the effect IR using its own alias/cmdlet tables. |
 | `bind/` | Binding | Resolve an invoked name and bind flags/operands against the knowledge base, producing `[]engine.Effect`. |
-| `internal/analysis/` | Composition | The single facade wiring frontends + binder + core into a deterministic `Report`; also the corpus harness. |
+| `internal/analysis/` | Composition | The single facade wiring frontends + binder + core into a deterministic `Report`. |
+| `internal/corpus/` | Tests | The test-only regression-corpus harness: the on-disk document format, its loader, and the group selectors used by the conformance tests and the benchmark harness. |
 | `cmd/flowsh/` | CLI | Arg parsing, input reading, and printing the text/JSON report. |
 | `testdata/corpus/` | Tests | The conformance corpus (GuardFall / destructive / benign / PowerShell). |
 | `specs/` | Docs | The full system specification. |
@@ -92,10 +93,11 @@ cmd/flowsh: text summary or JSON
 ## Build and test
 
 ```sh
-go build ./...      # build everything
-go test ./...       # corpus gate (no-silent-miss) + latency + recall gates
-go vet ./...        # static checks
-gofmt -l .          # formatting check (must print nothing)
+go build ./...         # build everything
+go test ./...          # corpus gate (no-silent-miss) + latency + recall gates
+go vet ./...           # static checks
+gofmt -l .             # formatting check (must print nothing)
+golangci-lint run      # lint with the pinned .golangci.yml (see below)
 ```
 
 Run the CLI from source:
@@ -113,17 +115,25 @@ so the same steps run on all three runners:
 1. **gofmt** — the tree must be `gofmt`-clean.
 2. **build** — `go build ./...`.
 3. **vet** — `go vet ./...`.
-4. **corpus + latency/recall gates** — `go test ./... -count=1` (a latency or
+4. **lint** — `golangci-lint run` with the repository's pinned
+   [`.golangci.yml`](.golangci.yml) (errcheck, govet, ineffassign, staticcheck,
+   unused, misspell; gofmt/goimports as formatters).
+5. **deadcode** — `deadcode -test ./...` must print nothing: every symbol is
+   reachable from a command path or a test.
+6. **docs hygiene** — [SECURITY.md](SECURITY.md) carries no unresolved
+   placeholders, and every relative Markdown link in the README, `docs/` and
+   `specs/` resolves (fenced code blocks and inline code are skipped).
+7. **corpus + latency/recall gates** — `go test ./... -count=1` (a latency or
    recall regression fails this step). This step also runs the **CLI smoke**
    test [`cmd/flowsh/smoke_test.go`](cmd/flowsh/smoke_test.go): it builds the
    binary and checks that it emits a valid JSON report for both dialects, from
    an argument and from stdin, plus `--version`, `--batch` (NDJSON),
    `--lang auto`, and the exit-code contract, across the process boundary.
-5. **bench smoke** — `go test ./engine/ -run '^$' -bench . -benchtime=50x`.
-6. **race** — `go test -race ./... -count=1`, run once on `ubuntu-latest` only
+8. **bench smoke** — `go test ./engine/ -run '^$' -bench . -benchtime=50x`.
+9. **race** — `go test -race ./... -count=1`, run once on `ubuntu-latest` only
    (the race detector instruments every memory access, so wall-clock latency
    budgets are not meaningful under it; those timing tests skip under `-race`
-   and still run in step 4).
+   and still run in step 7).
 
 [`.gitattributes`](.gitattributes) pins `* text=auto eol=lf`, so all three
 runners check the tree out with LF line endings. Keep that file: Git for Windows
@@ -161,7 +171,7 @@ flag/class, edit `destructive.yaml`. Read
 ## The conformance corpus
 
 `testdata/corpus/*.json` is the regression corpus, loaded by
-`internal/analysis/corpus.go` and exercised by
+`internal/corpus/corpus.go` and exercised by
 `internal/analysis/corpus_test.go`. It currently holds 58 cases across five
 documents:
 

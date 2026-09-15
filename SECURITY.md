@@ -36,12 +36,9 @@ mark older lines unsupported.
 
 ## Reporting a Vulnerability
 
-> **TODO — placeholder; replace before publishing.** The repository has no
-> security contact or `CONTRIBUTING` file to derive one from, so the channel
-> below must be filled in by the maintainers.
-
-**Preferred channel:** `security@<org>` (TODO — replace `<org>`) — PGP key:
-TODO (link to public key).
+**Preferred channel:** GitHub Security Advisories — open the repository's
+**Security** tab and select **Report a vulnerability**. This opens a private
+advisory visible only to the maintainers; no email address or PGP key is used.
 
 **Do NOT** open public GitHub issues for security vulnerabilities.
 
@@ -55,7 +52,7 @@ TODO (link to public key).
 before public disclosure. We credit reporters in release notes unless they
 prefer anonymity.
 
-**Bug bounty:** No — TODO (link to a program if one is established).
+**Bug bounty:** No.
 
 Reporters are encouraged to include the exact command text, the
 `--lang`/dialect, the emitted report (`--json`), and the expected-vs-actual
@@ -86,7 +83,7 @@ control** and the data it unavoidably touches.
 
 ### Threat Actors
 
-- **Guard-evading command author (primary).** Crafts command text — quoting/escaping fragments (`r''m`), separator injection (`$IFS`), indirection (command substitution, dynamically named programs), encoded payloads piped to an interpreter (`base64|sh`, `eval`, `sh -c`), or opaque/unbounded work — specifically to force a **false "benign"**. This is the adversary the GuardFall corpus (classes A–E) models ([internal/analysis/corpus.go](internal/analysis/corpus.go)).
+- **Guard-evading command author (primary).** Crafts command text — quoting/escaping fragments (`r''m`), separator injection (`$IFS`), indirection (command substitution, dynamically named programs), encoded payloads piped to an interpreter (`base64|sh`, `eval`, `sh -c`), or opaque/unbounded work — specifically to force a **false "benign"**. This is the adversary the GuardFall corpus (classes A–E) models ([internal/corpus/corpus.go](internal/corpus/corpus.go)).
 - **Malicious insider / KB contributor.** Edits `kb/data/*.yaml` or the corpus to blind or skew the guard while tests stay green.
 - **Compromised supply chain.** A malicious module version, a tampered `go.sum`/CI workflow, or a compromised build step producing a doctored binary.
 - **Consumer integrator.** Not an attacker, but a misconfiguration risk: inverting the `top`/`conservative` semantics, treating the tool as an executor, or using `Covered()==false` (a miss) as "safe".
@@ -270,11 +267,14 @@ The report deliberately embeds attacker-controlled text. Requirements:
 
 ### Build, Release & Supply-Chain Integrity
 
-- CI MUST run `gofmt`, `go build`, `go vet`, the corpus + latency/recall gates
-  (which include the CLI smoke test `cmd/flowsh/smoke_test.go`), and
-  `go test -race` on a three-OS matrix (`ubuntu-latest`, `windows-latest`,
-  `macos-latest`; the `-race` step runs on Linux only), and MUST operate with
-  least privilege (the workflow pins `permissions: contents: read`)
+- CI MUST run `gofmt`, `go build`, `go vet`, the pinned linter (`golangci-lint`
+  with `.golangci.yml`), the dead-code gate (`deadcode -test ./...`), the
+  documentation hygiene gate (no unresolved placeholders in this policy; all
+  relative Markdown links resolve), the corpus + latency/recall gates (which
+  include the CLI smoke test `cmd/flowsh/smoke_test.go`), and `go test -race` on
+  a three-OS matrix (`ubuntu-latest`, `windows-latest`, `macos-latest`; the
+  `-race` step runs on Linux only), and MUST operate with least privilege (the
+  workflow pins `permissions: contents: read`)
   ([.github/workflows/ci.yml](.github/workflows/ci.yml)).
 - Edits to `kb/data/*.yaml` and `testdata/corpus/*.json` MUST be reviewed as
   **security-sensitive changes**: they directly change the guard's verdicts.
@@ -647,7 +647,7 @@ repository:
 
 | File | Purpose |
 | ---- | ------- |
-| [.github/workflows/ci.yml](.github/workflows/ci.yml) | CI gate (matrix: `ubuntu-latest`, `windows-latest`, `macos-latest`): `gofmt`, `go build`, `go vet`, corpus + latency/recall tests (incl. the CLI smoke test [`cmd/flowsh/smoke_test.go`](cmd/flowsh/smoke_test.go)), bench smoke, `go test -race` (Linux only); pins `permissions: contents: read`. |
+| [.github/workflows/ci.yml](.github/workflows/ci.yml) | CI gate (matrix: `ubuntu-latest`, `windows-latest`, `macos-latest`): `gofmt`, `go build`, `go vet`, `golangci-lint`, `deadcode -test`, docs hygiene (no unresolved placeholders in [SECURITY.md](SECURITY.md); links resolve), corpus + latency/recall tests (incl. the CLI smoke test [`cmd/flowsh/smoke_test.go`](cmd/flowsh/smoke_test.go)), bench smoke, `go test -race` (Linux only); pins `permissions: contents: read`. |
 | [go.mod](go.mod) / [go.sum](go.sum) | Dependency graph and exact-version pinning (hash verification). |
 | [kb/data/](kb/data) (`bsd`, `builtins`, `coreutils`, `destructive`, `findutils`, `net`, `remote`, `util-linux`.yaml) | Embedded, reviewed knowledge-base dataset — security-sensitive to change. |
 | [kb/schema.go](kb/schema.go) | Frozen, versioned knowledge-base document schema (`effect-kb/v2`). |
@@ -661,4 +661,4 @@ repository:
 
 | Date       | Author  | Change          |
 | ---------- | ------- | --------------- |
-| 2026-09-15 | TODO    | Initial version |
+| 2026-09-15 | @v0lka  | Initial version |
