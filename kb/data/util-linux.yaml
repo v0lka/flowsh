@@ -1,0 +1,1713 @@
+version: effect-kb/v2
+# ---------------------------------------------------------------------------
+# util-linux: mount/umount, device and privilege tooling.
+#
+# Sources: the util-linux man pages (mount, umount, wipefs, fdisk, losetup,
+# chroot, su, mkfs). Flags that only report state are read-only; flags that
+# rewrite device or namespace state are metadata/write effects. `chroot` and
+# `su` are privilege-boundary operations.
+#
+# B3 additions: the read-only inspection utilities `isosize`, `look` and
+# `tailf` (FSRead) and the device-configuration helpers `ldattach` and `raw`
+# (FSMeta). None of them carries a destructive flag.
+# ---------------------------------------------------------------------------
+commands:
+  - name: mount
+    dialect: util-linux
+    params:
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-B"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: DIR
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: umount
+    dialect: util-linux
+    params:
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: TARGET
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: wipefs
+    dialect: util-linux
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: fdisk
+    dialect: util-linux
+    params:
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: losetup
+    dialect: util-linux
+    params:
+      - spec: "-d"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: chroot
+    dialect: util-linux
+    params:
+      - spec: "-u"
+        kind: option
+        effect: {kind: PrivEsc, mode: Conditional, valueFrom: flagValue}
+      - spec: "-g"
+        kind: option
+        effect: {kind: PrivEsc, mode: Conditional, valueFrom: flagValue}
+      - spec: NEWROOT
+        kind: positional
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: COMMAND
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+
+  - name: su
+    dialect: util-linux
+    params:
+      - spec: "-c"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: "-m"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: USER
+        kind: positional
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+
+  - name: mkfs.ext4
+    dialect: util-linux
+    params:
+      - spec: "-F"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-L"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-m"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  # --- device and filesystem inspection / manipulation ---------------------
+
+  - name: blkid
+    dialect: util-linux
+    params:
+      - spec: "-s"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-c"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-k"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: blockdev
+    dialect: util-linux
+    params:
+      - spec: "--getro"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--setro"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "--flushbufs"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "--rereadpt"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--setra"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: cal
+    dialect: util-linux
+    params:
+      - spec: "-y"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-3"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-1"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-m"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: MONTH
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: YEAR
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: cfdisk
+    dialect: util-linux
+    params:
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-z"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: chattr
+    dialect: util-linux
+    params:
+      - spec: "-R"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-V"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-v"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: MODE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: chrt
+    dialect: util-linux
+    params:
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-b"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-o"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: PRIORITY
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: PID
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: COMMAND
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+
+  - name: dmesg
+    dialect: util-linux
+    params:
+      - spec: "-c"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-T"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-l"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+
+  - name: eject
+    dialect: util-linux
+    params:
+      - spec: "-t"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-T"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: fallocate
+    dialect: util-linux
+    params:
+      - spec: "-l"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-z"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: findmnt
+    dialect: util-linux
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-T"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: TARGET
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: flock
+    dialect: util-linux
+    params:
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-x"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-E"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-c"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: COMMAND
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+
+  - name: fsck
+    dialect: util-linux
+    params:
+      - spec: "-A"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-y"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-V"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: getopt
+    dialect: util-linux
+    params:
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-l"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-n"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-q"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: OPTS
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: PARAMS
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: hexdump
+    dialect: util-linux
+    params:
+      - spec: "-C"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-b"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-o"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-x"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-e"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-n"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: hwclock
+    dialect: util-linux
+    params:
+      - spec: "-r"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--show"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "--systohc"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "--hctosys"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "--systz"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: ionice
+    dialect: util-linux
+    params:
+      - spec: "-c"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-n"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-t"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-P"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-u"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: COMMAND
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+
+  - name: ipcmk
+    dialect: util-linux
+    params:
+      - spec: "-M"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-S"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-Q"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: ipcrm
+    dialect: util-linux
+    params:
+      - spec: "-m"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-q"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-M"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-Q"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-S"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+
+  - name: ipcs
+    dialect: util-linux
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-m"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-q"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-t"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+
+  - name: last
+    dialect: util-linux
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-R"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-x"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: USER
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: logger
+    dialect: util-linux
+    params:
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-u"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: MESSAGE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: login
+    dialect: util-linux
+    params:
+      - spec: "-f"
+        kind: option
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: flagValue}
+      - spec: "-h"
+        kind: option
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: flagValue}
+      - spec: "-r"
+        kind: option
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: USER
+        kind: positional
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+
+  - name: lsattr
+    dialect: util-linux
+    params:
+      - spec: "-R"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: lsblk
+    dialect: util-linux
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-J"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-b"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-t"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: lscpu
+    dialect: util-linux
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-e"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-J"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-C"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-c"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+
+  - name: lslocks
+    dialect: util-linux
+    params:
+      - spec: "-J"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+
+  - name: lsmem
+    dialect: util-linux
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-J"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-b"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-S"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+
+  - name: lsns
+    dialect: util-linux
+    params:
+      - spec: "-J"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: NS
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: mkfs
+    dialect: util-linux
+    params:
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-L"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-V"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: mkswap
+    dialect: util-linux
+    params:
+      - spec: "-L"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-U"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: more
+    dialect: util-linux
+    params:
+      - spec: "-n"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: mountpoint
+    dialect: util-linux
+    params:
+      - spec: "-q"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: PATH
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: namei
+    dialect: util-linux
+    params:
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-m"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-o"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-x"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: PATH
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: newgrp
+    dialect: util-linux
+    params:
+      - spec: "-l"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: GROUP
+        kind: positional
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+
+  - name: nsenter
+    dialect: util-linux
+    params:
+      - spec: "-t"
+        kind: option
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: flagValue}
+      - spec: "-m"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: "-U"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: option
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: flagValue}
+      - spec: "-w"
+        kind: option
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: flagValue}
+      - spec: "-F"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: PROGRAM
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+
+  - name: partx
+    dialect: util-linux
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: pivot_root
+    dialect: util-linux
+    params:
+      - spec: NEW_ROOT
+        kind: positional
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: PUT_OLD
+        kind: positional
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+
+  - name: prlimit
+    dialect: util-linux
+    params:
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--nofile"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "--nproc"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: PID
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: COMMAND
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+
+  - name: rename
+    dialect: util-linux
+    params:
+      - spec: "-v"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-o"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: EXPRESSION
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: REPLACEMENT
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: renice
+    dialect: util-linux
+    params:
+      - spec: "-n"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-g"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-u"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: PRIORITY
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: PID
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+
+  - name: rev
+    dialect: util-linux
+    params:
+      - spec: "-0"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: rtcwake
+    dialect: util-linux
+    params:
+      - spec: "-d"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-m"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: runuser
+    dialect: util-linux
+    params:
+      - spec: "-u"
+        kind: option
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: flagValue}
+      - spec: "-g"
+        kind: option
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: flagValue}
+      - spec: "-G"
+        kind: option
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: flagValue}
+      - spec: "-c"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: "-m"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: USER
+        kind: positional
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: COMMAND
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+
+  - name: script
+    dialect: util-linux
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-q"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-F"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: COMMAND
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+
+  - name: setsid
+    dialect: util-linux
+    params:
+      - spec: "-c"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: PROGRAM
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+
+  - name: setterm
+    dialect: util-linux
+    params:
+      - spec: "-term"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-reset"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-store"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-blank"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-powersave"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-append"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-file"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+
+  - name: sfdisk
+    dialect: util-linux
+    params:
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-J"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-g"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-B"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-u"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: swapoff
+    dialect: util-linux
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: swapon
+    dialect: util-linux
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-e"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: switch_root
+    dialect: util-linux
+    params:
+      - spec: NEW_ROOT
+        kind: positional
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: INIT
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+
+  - name: taskset
+    dialect: util-linux
+    params:
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: MASK
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: PID
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: COMMAND
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+
+  - name: ul
+    dialect: util-linux
+    params:
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-b"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-i"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: TERM
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: unshare
+    dialect: util-linux
+    params:
+      - spec: "-m"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: "-U"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: PROGRAM
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+
+  - name: uuidgen
+    dialect: util-linux
+    params:
+      - spec: "-r"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-t"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+
+  - name: wall
+    dialect: util-linux
+    params:
+      - spec: "-n"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-t"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: MESSAGE
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+
+  - name: whereis
+    dialect: util-linux
+    params:
+      - spec: "-b"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-m"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-B"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-M"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-S"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: NAME
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: write
+    dialect: util-linux
+    params:
+      - spec: USER
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: MESSAGE
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+
+  - name: zramctl
+    dialect: util-linux
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-t"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-D"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: blkdiscard
+    dialect: util-linux
+    params:
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-l"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-z"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: sgdisk
+    dialect: util-linux
+    params:
+      - spec: "-p"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-e"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-d"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-n"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-Z"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-o"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: parted
+    dialect: util-linux
+    params:
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-m"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: print
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: unit
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: mklabel
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: mkpart
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: set
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: resizepart
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: rm
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: mdadm
+    dialect: util-linux
+    params:
+      - spec: "--zero-superblock"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--create"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--assemble"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--manage"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--grow"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--fail"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--remove"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--stop"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--detail"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--scan"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-C"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-A"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-D"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: LEVEL
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: isosize
+    dialect: util-linux
+    params:
+      - spec: "-x"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: ldattach
+    dialect: util-linux
+    params:
+      - spec: "-d"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-e"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-8"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: LDISC
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: look
+    dialect: util-linux
+    params:
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: STRING
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: raw
+    dialect: util-linux
+    params:
+      - spec: "-q"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: RAWDEV
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: BLOCKDEV
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: tailf
+    dialect: util-linux
+    params:
+      - spec: "-n"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}

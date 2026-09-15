@@ -1,0 +1,69 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: build, corpus gate, bench gate (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    # The POSIX shell (bash) is selected explicitly so the same steps run
+    # verbatim on all three runners: windows-latest ships Git Bash, and the
+    # gofmt/here-doc steps below are POSIX-only.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: build
+        run: go build ./...
+
+      - name: vet
+        run: go vet ./...
+
+      # Runs the GuardFall A-E corpus (0-miss invariant), the CLI tests
+      # (argument, stdin, --batch, --version, --lang auto, exit codes), and the
+      # per-command latency budget + recall-regression gates. A latency or
+      # recall regression fails this step.
+      - name: corpus + latency/recall gates
+        run: go test ./... -count=1
+
+      # Smoke-runs the benchmarks so a benchmark that no longer compiles or
+      # panics fails CI as well.
+      - name: bench smoke
+        run: go test ./engine/ -run '^$' -bench . -benchtime=50x
+
+      # Data-race detection for the concurrent paths. The race detector
+      # instruments every memory access, so wall-clock latency budgets are not
+      # meaningful under it; those timing tests skip under -race and still run
+      # in the step above. Run once, on the primary Linux runner.
+      - name: race
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -race ./... -count=1

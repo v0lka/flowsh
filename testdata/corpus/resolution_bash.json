@@ -1,0 +1,16 @@
+{
+  "name": "resolution-bash",
+  "description": "A2 name-resolution recall: each case exercises one link of the resolution chain (builtin → function → alias → external command → unknown). Every case must be classified as 'effect present or top', and the report must expose the decisive Resolution.Kind (which command the invocation actually named), with alias cases carrying a non-empty AliasChain. Both the bash and the POSIX (front/bash in the POSIX variant) dialects are covered (A6).",
+  "cases": [
+    { "id": "res-alias-ls",    "group": "resolution", "lang": "bash",  "input": "alias ll='ls -l'\nll /tmp",  "note": "an in-program alias: ll expands to ls -l, so resolution kind is alias with chain [ll]" },
+    { "id": "res-alias-chain", "group": "resolution", "lang": "bash",  "input": "alias a='ls'\nalias b='a -l'\nb", "note": "a chained alias b → a → ls; the alias chain must list both links (b, a)" },
+    { "id": "res-builtin-cd",  "group": "resolution", "lang": "bash",  "input": "cd /tmp",                    "note": "a shell builtin resolves to the builtin link of the chain" },
+    { "id": "res-builtin-umask", "group": "resolution", "lang": "bash",  "input": "umask 077",                  "note": "a state-mutating builtin also resolves to the builtin link of the chain" },
+    { "id": "res-command-ls",  "group": "resolution", "lang": "bash",  "input": "ls -la /tmp",                "note": "an external command with a KB signature resolves to the PATH link" },
+    { "id": "res-command-rm",  "group": "resolution", "lang": "bash",  "input": "rm -rf /tmp/x",              "note": "an external destructive command also resolves through the PATH link" },
+    { "id": "res-unknown",     "group": "resolution", "lang": "bash",  "input": "frobnicate --beta /z",       "note": "a name that matches nothing resolves to unknown and degrades to top (conservative)" },
+    { "id": "res-posix-alias",   "group": "resolution", "lang": "posix", "input": "alias ll='ls -l'\nll /tmp", "note": "A6: the same alias resolution in the POSIX variant" },
+    { "id": "res-posix-builtin", "group": "resolution", "lang": "posix", "input": "cd /tmp",                   "note": "A6: builtin resolution in the POSIX variant" },
+    { "id": "res-posix-command", "group": "resolution", "lang": "posix", "input": "ls -la /tmp",               "note": "A6: external-command resolution in the POSIX variant" }
+  ]
+}

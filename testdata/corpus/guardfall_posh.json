@@ -1,0 +1,19 @@
+{
+  "name": "guardfall-posh",
+  "description": "GuardFall classes A-E for PowerShell: adversarial inputs that evade a surface-level scanner. Every case must be classified as 'effect present or top' (no silent misses).",
+  "cases": [
+    { "id": "gf-posh-a-backtick",    "group": "guardfall", "category": "A", "lang": "posh", "input": "R`emove-Item -Recurse -Force $HOME", "note": "backtick escape inside the cmdlet name" },
+    { "id": "gf-posh-a-quoted-arg",  "group": "guardfall", "category": "A", "lang": "posh", "input": "Remove-Item -Recurse -Force \"$HOME\"", "note": "quoted argument" },
+    { "id": "gf-posh-b-fragment",    "group": "guardfall", "category": "B", "lang": "posh", "input": "Invoke-Expression ('Remove'+'-Item -Recurse -Force $HOME')", "note": "cmdlet name split across string fragments" },
+    { "id": "gf-posh-c-var",         "group": "guardfall", "category": "C", "lang": "posh", "input": "$cmd = 'Remove-Item'; & $cmd -Recurse -Force $HOME", "note": "call operator with a variable-held cmdlet name" },
+    { "id": "gf-posh-c-comspec",     "group": "guardfall", "category": "C", "lang": "posh", "input": "& $env:ComSpec /c rd /s /q C:\\", "note": "call operator with an environment-held interpreter" },
+    { "id": "gf-posh-d-iex",         "group": "guardfall", "category": "D", "lang": "posh", "input": "Invoke-Expression 'Remove-Item -Recurse -Force $HOME'", "note": "evaluating a string as code" },
+    { "id": "gf-posh-d-b64",         "group": "guardfall", "category": "D", "lang": "posh", "input": "IEX ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('aGk=')))", "note": "decoding a base64 payload into the interpreter" },
+    { "id": "gf-posh-d-enc",         "group": "guardfall", "category": "D", "lang": "posh", "input": "powershell -EncodedCommand aGVsbG8=", "note": "encoded-command invocation of a nested interpreter" },
+    { "id": "gf-posh-e-dynamic",     "group": "guardfall", "category": "E", "lang": "posh", "input": "& $unknown", "note": "call operator with an unknown, computed name" },
+    { "id": "gf-posh-e-scriptblock", "group": "guardfall", "category": "E", "lang": "posh", "input": "[ScriptBlock]::Create('Remove-Item -Recurse -Force $HOME')", "note": "static .NET invocation: opaque, degrades to top" },
+    { "id": "gf-posh-e-execpolicy",  "group": "guardfall", "category": "E", "lang": "posh", "input": "Set-ExecutionPolicy -Scope Process Unrestricted", "note": "unknown cmdlet: degrades to top" },
+    { "id": "gf-posh-e-pipe-unknown","group": "guardfall", "category": "E", "lang": "posh", "input": "frobnicate | frobnicate | frobnicate", "note": "C4 adversarial: pipeline of unknown cmdlets; must degrade to top, not to an empty result" },
+    { "id": "gf-posh-e-alias-rep",   "group": "guardfall", "category": "E", "lang": "posh", "input": "Set-Alias a b; Set-Alias a b; Set-Alias a b; & $unknown", "note": "C4 adversarial: repeated alias records followed by a computed-name call; must stay bounded and degrade to top" }
+  ]
+}

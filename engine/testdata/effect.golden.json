@@ -1,0 +1,19 @@
+{
+  "kind": "NetEgress",
+  "target": {
+    "targets": [
+      "api.example.com:443"
+    ],
+    "arbitrary": false
+  },
+  "mode": "Transitive",
+  "certainty": "Likely",
+  "taint": {
+    "labels": [
+      "network",
+      "untrusted"
+    ],
+    "arbitrary": false
+  },
+  "reversible": false
+}

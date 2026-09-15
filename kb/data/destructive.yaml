@@ -1,0 +1,727 @@
+version: effect-kb/v2
+# ---------------------------------------------------------------------------
+# Destructive-flags table.
+#
+# A separate table (kept out of the command documents so that it can be
+# reviewed as one list) of (command, spec) parameters known to be destructive,
+# with a severity class and the reason. The classes A–E line up with the core
+# Destructiveness lattice: A=None, B=Low, C=Medium, D=High, E=Critical.
+#
+# Every entry must reference a parameter declared by the command; the loader
+# enforces that referential integrity.
+#
+# Sources: POSIX.1-2017, the GNU coreutils/findutils/tar manuals, the util-linux
+# manual, git and the other version-control clients (svn, hg, bzr, fossil,
+# darcs), the archiver/compressor manuals (gzip, bzip2, xz, zstd, zip, 7z, rar,
+# cpio, pax, ar, genisoimage/mkisofs), the package-manager manuals (apt, dpkg,
+# yum, dnf, rpm, pacman, zypper, apk, snap, flatpak, pip, npm, yarn, pnpm, gem,
+# cargo), the account/permission and SELinux/audit tooling (userdel, groupdel,
+# passwd, chcon, restorecon, semanage, auditctl, chattr, setfacl), the
+# service/power tier (systemctl, shutdown, init, telinit, crontab, launchctl),
+# and manual verification of each flag's failure mode.
+# ---------------------------------------------------------------------------
+destructive:
+  # --- class E: irreversible data loss or trust break ---------------------------------
+  - command: rm
+    spec: "-r"
+    class: E
+    reason: recursively removes a whole directory tree, with no confirmation by default
+  - command: rm
+    spec: "-f"
+    class: E
+    reason: forced removal that suppresses prompts and hides errors on missing files
+  - command: dd
+    spec: "of="
+    class: E
+    reason: raw write to the destination; a device target destroys the filesystem or disk
+  - command: install
+    spec: "-m"
+    class: E
+    reason: mode 4755 or 2755 sets the SUID/SGID bits, enabling privilege escalation
+  - command: truncate
+    spec: "-s"
+    class: E
+    reason: resizes the file in place; size 0 irreversibly discards its contents
+  - command: shred
+    spec: FILE
+    class: E
+    reason: overwrites the file to make recovery infeasible and can unlink it afterwards
+  - command: sed
+    spec: "-i"
+    class: E
+    reason: edits files in place and discards the original when no backup suffix is given
+  - command: find
+    spec: "-delete"
+    class: E
+    reason: deletes every matched file without confirmation
+  - command: tar
+    spec: "-x"
+    class: E
+    reason: extracts the archive over the filesystem and clobbers existing files
+  - command: tar
+    spec: "-C"
+    class: E
+    reason: changes directory before the operation; with -x it writes into an arbitrary tree
+  - command: wipefs
+    spec: "-a"
+    class: E
+    reason: erases every filesystem signature from the device
+  - command: fdisk
+    spec: DEVICE
+    class: E
+    reason: rewrites the partition table, invalidating all filesystems on the disk
+  - command: mkfs.ext4
+    spec: DEVICE
+    class: E
+    reason: formats the device, destroying the existing filesystem
+  - command: git
+    spec: clean
+    class: E
+    reason: deletes untracked files, and with -x ignored files, outside version control
+  - command: git
+    spec: "--hard"
+    class: E
+    reason: discards all local working-tree changes with no recovery path
+  - command: rsync
+    spec: "--delete"
+    class: E
+    reason: deletes destination files that are absent from the source
+  - command: hg
+    spec: strip
+    class: E
+    reason: permanently removes a changeset and every descendant from the repository
+  - command: hg
+    spec: purge
+    class: E
+    reason: deletes every untracked and ignored file in the working directory
+  - command: darcs
+    spec: obliterate
+    class: E
+    reason: destroys patches permanently, rewriting repository history
+
+  - command: diskutil
+    spec: eraseDisk
+    class: E
+    reason: erases and reformats a whole disk, destroying every volume and its data
+  - command: parted
+    spec: rm
+    class: E
+    reason: removes a partition from the table, orphaning the data it held
+  - command: sgdisk
+    spec: "-Z"
+    class: E
+    reason: zaps the GPT and MBR structures, destroying all partition metadata and data
+  - command: mdadm
+    spec: "--zero-superblock"
+    class: E
+    reason: wipes the RAID superblock, making the array and its members unrecoverable
+  # archive tools: extraction over an existing tree
+  - command: pax
+    spec: "-r"
+    class: E
+    reason: extracts every archive member over the filesystem, clobbering existing files
+
+  # --- class D: hard to reverse ------------------------------------------------
+  - command: chown
+    spec: "-R"
+    class: D
+    reason: recursively changes ownership across a tree
+  - command: chmod
+    spec: "-R"
+    class: D
+    reason: recursively changes permissions across a tree and can lock out access
+  - command: tar
+    spec: "--delete"
+    class: D
+    reason: removes members from an archive in place
+  - command: git
+    spec: reset
+    class: D
+    reason: moves branch pointers and can discard commits
+  - command: git
+    spec: "--force"
+    class: D
+    reason: forces a remote update, discarding remote history
+  - command: rsync
+    spec: "--remove-source-files"
+    class: D
+    reason: deletes source files after a successful transfer
+  - command: nc
+    spec: "-e"
+    class: D
+    reason: runs a program on connect, the classic reverse shell
+  - command: ssh
+    spec: COMMAND
+    class: D
+    reason: executes an arbitrary command on the remote host
+  - command: exec
+    spec: COMMAND
+    class: D
+    reason: replaces the shell process with an arbitrary command
+  - command: eval
+    spec: ARGS
+    class: D
+    reason: executes its arguments as shell code
+  - command: xargs
+    spec: COMMAND
+    class: D
+    reason: runs a command for every input item, for instance xargs rm
+  - command: chroot
+    spec: NEWROOT
+    class: D
+    reason: changes the root directory for the command and can expose the host
+  - command: mount
+    spec: "-o"
+    class: D
+    reason: mount options such as remount,rw can make a read-only root writable
+  - command: su
+    spec: USER
+    class: D
+    reason: switches to another user, potentially root
+  - command: mv
+    spec: SRC
+    class: D
+    reason: removes the source once the move succeeds
+  - command: git
+    spec: "-f"
+    class: D
+    reason: forces a destructive operation (clean, checkout, rm, push) past its safety checks
+  - command: svn
+    spec: delete
+    class: D
+    reason: removes tracked files from the working copy and schedules them for deletion in the repository
+  - command: hg
+    spec: rollback
+    class: D
+    reason: rolls back the last transaction, discarding the most recent commit or pull
+  - command: bzr
+    spec: uncommit
+    class: D
+    reason: removes the last commit and returns its changes to the working tree
+  - command: systemctl
+    spec: disable
+    class: D
+    reason: persistently disables a unit so it no longer starts at boot or on demand
+  - command: systemctl
+    spec: mask
+    class: D
+    reason: persistently masks a unit so it can never be started, not even as a dependency
+  - command: crontab
+    spec: "-r"
+    class: D
+    reason: removes the user's entire crontab, discarding every scheduled job with no backup
+  - command: tmux
+    spec: kill-server
+    class: D
+    reason: terminates the tmux server and every session, window and process it hosts
+
+  - command: chattr
+    spec: "-R"
+    class: D
+    reason: recursively changes file attributes (e.g. +i immutable) across a whole tree
+  - command: setfacl
+    spec: "-R"
+    class: D
+    reason: recursively rewrites access-control lists across a whole tree
+  - command: iptables
+    spec: "-F"
+    class: D
+    reason: flushes every rule in a chain, dropping the host firewall with no undo
+  - command: nft
+    spec: flush
+    class: D
+    reason: flushes all rules from a table, disabling the packet filter
+  # B6-B9 expansion: package purges, account removal and security/service teardown
+  - command: apt
+    spec: purge
+    class: D
+    reason: removes the package and deletes its configuration files, so a reinstall cannot restore the previous state
+  - command: dpkg
+    spec: "-P"
+    class: D
+    reason: purges the package and deletes its configuration files
+  - command: dpkg
+    spec: "--purge"
+    class: D
+    reason: purges the package and deletes its configuration files
+  - command: userdel
+    spec: USERNAME
+    class: D
+    reason: deletes the user account, which cannot be recreated with its former uid or file ownership
+  - command: userdel
+    spec: "-r"
+    class: D
+    reason: deletes the account together with its home directory and mail spool
+  - command: userdel
+    spec: "-f"
+    class: D
+    reason: forces removal even while the user is logged in or the account is still in use
+  - command: groupdel
+    spec: GROUP
+    class: D
+    reason: deletes the group, orphaning every file still owned by its numeric gid
+  - command: groupdel
+    spec: "-f"
+    class: D
+    reason: forces group removal even when the group is another user's primary group
+  - command: chcon
+    spec: "-R"
+    class: D
+    reason: recursively relabels SELinux contexts across a whole tree, which can relax mandatory access control
+  - command: restorecon
+    spec: "-R"
+    class: D
+    reason: recursively rewrites SELinux contexts across a whole tree from the policy defaults
+  - command: semanage
+    spec: "-d"
+    class: D
+    reason: deletes an SELinux policy mapping, weakening mandatory access control
+  - command: auditctl
+    spec: "-D"
+    class: D
+    reason: deletes every audit rule, disabling the audit trail
+  - command: systemctl
+    spec: kill
+    class: D
+    reason: sends a signal (SIGTERM, or SIGKILL with -s) to every process of a unit
+  - command: strip
+    spec: FILE
+    class: D
+    reason: removes symbol and relocation information from a binary in place, with no way back short of rebuilding
+  # archive tools: in-place archive rewrite or source deletion
+  - command: zip
+    spec: "-d"
+    class: D
+    reason: deletes entries from the archive in place
+  - command: zip
+    spec: "-m"
+    class: D
+    reason: moves files into the archive and deletes the originals
+  - command: 7z
+    spec: d
+    class: D
+    reason: deletes entries from the archive in place
+  - command: 7za
+    spec: d
+    class: D
+    reason: deletes entries from the archive in place
+  - command: rar
+    spec: d
+    class: D
+    reason: deletes entries from the archive in place
+  - command: ar
+    spec: "-d"
+    class: D
+    reason: deletes members from the archive in place
+  - command: cpio
+    spec: "-i"
+    class: D
+    reason: extracts members over the filesystem, replacing existing files
+
+  # --- class C: recoverable with effort ----------------------------------------
+  - command: rm
+    spec: "-i"
+    class: C
+    reason: interactive removal, which still deletes but prompts first
+  - command: cp
+    spec: "-f"
+    class: C
+    reason: overwrites the destination without prompting
+  - command: cp
+    spec: "-a"
+    class: C
+    reason: archive copy with recursion that can overwrite a whole tree
+  - command: mv
+    spec: "-f"
+    class: C
+    reason: overwrites the destination without prompting
+  - command: tee
+    spec: FILE
+    class: C
+    reason: truncates or overwrites the named file by default
+  - command: curl
+    spec: "-o"
+    class: C
+    reason: writes the response to the named file, overwriting it
+  - command: curl
+    spec: "-O"
+    class: C
+    reason: writes to a file named after the URL, overwriting any existing file
+  - command: wget
+    spec: "-O"
+    class: C
+    reason: writes output to the named file, overwriting it
+  - command: find
+    spec: "-fprint"
+    class: C
+    reason: writes the match list to a file, overwriting it
+  - command: git
+    spec: checkout
+    class: C
+    reason: overwrites working-tree files
+  - command: source
+    spec: FILE
+    class: C
+    reason: executes the file in the current shell
+  - command: umount
+    spec: "-f"
+    class: C
+    reason: forced unmount, which can lose buffered writes
+  - command: truncate
+    spec: "-c"
+    class: C
+    reason: resizes only if the file exists but still discards user data
+  - command: wget
+    spec: "--delete-after"
+    class: C
+    reason: removes the downloaded file after completion
+  - command: ssh
+    spec: "-L"
+    class: C
+    reason: forwards a local port through the remote host
+  - command: nc
+    spec: "-l"
+    class: C
+    reason: binds a listening socket that accepts inbound connections
+  - command: svn
+    spec: revert
+    class: C
+    reason: discards uncommitted changes in the working copy
+  - command: darcs
+    spec: revert
+    class: C
+    reason: discards unrecorded changes in the working tree
+  - command: at
+    spec: "-r"
+    class: C
+    reason: removes a scheduled at job before it runs
+  - command: at
+    spec: "-d"
+    class: C
+    reason: deletes a scheduled at job, identical to -r
+  - command: journalctl
+    spec: "--vacuum-time"
+    class: C
+    reason: deletes archived journal entries older than the given span, discarding log history
+  - command: journalctl
+    spec: "--vacuum-size"
+    class: C
+    reason: deletes archived journal entries until the journal fits the given size
+  - command: tmux
+    spec: kill-session
+    class: C
+    reason: terminates a session and every window and process inside it
+  - command: tmux
+    spec: kill-window
+    class: C
+    reason: terminates a window and the processes running in its panes
+  - command: reboot
+    spec: "-f"
+    class: C
+    reason: forces an immediate reboot, skipping the clean shutdown and risking buffered writes
+  - command: halt
+    spec: "-f"
+    class: C
+    reason: forces an immediate halt, skipping the clean shutdown and risking buffered writes
+  - command: poweroff
+    spec: "-f"
+    class: C
+    reason: forces an immediate power-off, skipping the clean shutdown and risking buffered writes
+
+  - command: launchctl
+    spec: unload
+    class: C
+    reason: unloads a launchd job, disabling its persistence or power-on behaviour
+  - command: pip
+    spec: uninstall
+    class: C
+    reason: removes the installed package and its files from the environment
+  - command: npm
+    spec: uninstall
+    class: C
+    reason: removes the installed package from the tree (globally with -g)
+  - command: swapoff
+    spec: "-a"
+    class: C
+    reason: disables all swap areas, leaving the system to run without swap
+  # B6-B9 expansion: package-manager removals and service teardown
+  - command: apt
+    spec: remove
+    class: C
+    reason: uninstalls the package and its files from the system
+  - command: apt
+    spec: autoremove
+    class: C
+    reason: removes packages that were pulled in as dependencies and are no longer needed
+  - command: dpkg
+    spec: "-r"
+    class: C
+    reason: removes the installed package files while keeping its configuration
+  - command: dpkg
+    spec: "--remove"
+    class: C
+    reason: removes the installed package files while keeping its configuration
+  - command: yum
+    spec: remove
+    class: C
+    reason: uninstalls the named package and every package that depends on it
+  - command: dnf
+    spec: remove
+    class: C
+    reason: uninstalls the named package and every package that depends on it
+  - command: rpm
+    spec: "-e"
+    class: C
+    reason: erases the installed package from the system
+  - command: rpm
+    spec: "--erase"
+    class: C
+    reason: erases the installed package from the system
+  - command: pacman
+    spec: "-R"
+    class: C
+    reason: removes the installed package; -Rs also removes its dependencies
+  - command: pacman
+    spec: "--remove"
+    class: C
+    reason: removes the installed package; -Rs also removes its dependencies
+  - command: zypper
+    spec: remove
+    class: C
+    reason: uninstalls the named package
+  - command: zypper
+    spec: removerepo
+    class: C
+    reason: removes a repository definition, so its packages are no longer available
+  - command: apk
+    spec: del
+    class: C
+    reason: deletes the installed package from the system
+  - command: snap
+    spec: remove
+    class: C
+    reason: uninstalls the snap and discards its data
+  - command: snap
+    spec: disable
+    class: C
+    reason: stops a snap service and keeps it from starting until it is re-enabled
+  - command: snap
+    spec: stop
+    class: C
+    reason: stops the running snap service
+  - command: flatpak
+    spec: uninstall
+    class: C
+    reason: uninstalls the application and its runtime data
+  - command: flatpak
+    spec: remote-delete
+    class: C
+    reason: removes a flatpak remote, so its applications can no longer be updated from it
+  - command: gem
+    spec: uninstall
+    class: C
+    reason: removes the installed gem and its files
+  - command: cargo
+    spec: uninstall
+    class: C
+    reason: removes the installed binary crate from the cargo bin directory
+  - command: yarn
+    spec: remove
+    class: C
+    reason: removes the package from node_modules and the manifest
+  - command: pnpm
+    spec: remove
+    class: C
+    reason: removes the package from the workspace and the manifest
+  - command: passwd
+    spec: "-d"
+    class: C
+    reason: deletes the account's password, leaving it able to log in without one
+  - command: passwd
+    spec: "-l"
+    class: C
+    reason: locks the account by prefixing its password hash, taking away its ability to log in
+  - command: systemctl
+    spec: stop
+    class: C
+    reason: stops the running unit and every process it manages
+  - command: shutdown
+    spec: "-h"
+    class: C
+    reason: halts the host, taking every running service down with it
+  - command: shutdown
+    spec: "-P"
+    class: C
+    reason: powers the host off, taking every running service down with it
+  - command: shutdown
+    spec: "-r"
+    class: C
+    reason: reboots the host, taking every running service down with it
+  - command: init
+    spec: RUNLEVEL
+    class: C
+    reason: switches the system runlevel; levels 0 and 6 halt or reboot the host
+  - command: telinit
+    spec: RUNLEVEL
+    class: C
+    reason: switches the system runlevel through the init daemon
+  # archive tools: overwrite without confirmation
+  - command: gzip
+    spec: "-f"
+    class: C
+    reason: forces the write, overwriting an existing output file
+  - command: gunzip
+    spec: "-f"
+    class: C
+    reason: forces the write, overwriting an existing output file
+  - command: bzip2
+    spec: "-f"
+    class: C
+    reason: forces the write, overwriting an existing output file
+  - command: bunzip2
+    spec: "-f"
+    class: C
+    reason: forces the write, overwriting an existing output file
+  - command: xz
+    spec: "-f"
+    class: C
+    reason: forces the write, overwriting an existing output file
+  - command: unxz
+    spec: "-f"
+    class: C
+    reason: forces the write, overwriting an existing output file
+  - command: zstd
+    spec: "-f"
+    class: C
+    reason: forces the write, overwriting an existing output file
+  - command: zstd
+    spec: "-o"
+    class: C
+    reason: writes the named output file, overwriting it
+  - command: compress
+    spec: "-f"
+    class: C
+    reason: forces the write, overwriting an existing output file
+  - command: uncompress
+    spec: "-f"
+    class: C
+    reason: forces the write, overwriting an existing output file
+  - command: zip
+    spec: "-f"
+    class: C
+    reason: freshens archive members, replacing existing ones
+  - command: zip
+    spec: "-u"
+    class: C
+    reason: updates archive members, replacing existing ones
+  - command: unzip
+    spec: "-o"
+    class: C
+    reason: overwrites existing files without prompting
+  - command: unzip
+    spec: "-f"
+    class: C
+    reason: freshens files, overwriting the extracted copies
+  - command: 7z
+    spec: "-aoa"
+    class: C
+    reason: overwrites all existing files without prompting
+  - command: 7z
+    spec: "-y"
+    class: C
+    reason: answers yes to every prompt, overwriting existing files
+  - command: 7za
+    spec: "-aoa"
+    class: C
+    reason: overwrites all existing files without prompting
+  - command: 7za
+    spec: "-y"
+    class: C
+    reason: answers yes to every prompt, overwriting existing files
+  - command: rar
+    spec: "-o+"
+    class: C
+    reason: overwrites existing files without prompting
+  - command: unrar
+    spec: "-o+"
+    class: C
+    reason: overwrites existing files without prompting
+  - command: cpio
+    spec: "-u"
+    class: C
+    reason: copies unconditionally, overwriting existing files
+  - command: ar
+    spec: "-r"
+    class: C
+    reason: replaces existing archive members
+  - command: genisoimage
+    spec: "-o"
+    class: C
+    reason: writes the image to the named file, overwriting it
+  - command: mkisofs
+    spec: "-o"
+    class: C
+    reason: writes the image to the named file, overwriting it
+
+  # --- class B: reversible or read-only ----------------------------------------
+  - command: dd
+    spec: "if="
+    class: B
+    reason: reads from the source and does not modify it
+  - command: sed
+    spec: "-f"
+    class: B
+    reason: reads a script file; no write unless -i is also given
+  - command: tar
+    spec: "-t"
+    class: B
+    reason: lists archive contents only
+  - command: fdisk
+    spec: "-l"
+    class: B
+    reason: lists the partition table and does not modify it
+  - command: losetup
+    spec: "-a"
+    class: B
+    reason: lists loop devices and does not modify them
+  - command: find
+    spec: "-print"
+    class: B
+    reason: prints matches to stdout without touching the filesystem
+  - command: crontab
+    spec: "-l"
+    class: B
+    reason: lists the user's crontab without modifying it
+  - command: at
+    spec: "-l"
+    class: B
+    reason: lists pending at jobs without modifying them
+  - command: runlevel
+    spec: UTMP
+    class: B
+    reason: reports the previous and current runlevel without changing it
+  # archive tools: read-only listings and integrity tests
+  - command: gzip
+    spec: "-l"
+    class: B
+    reason: lists the compressed file's metadata only
+  - command: unzip
+    spec: "-l"
+    class: B
+    reason: lists archive contents only
+  - command: unzip
+    spec: "-t"
+    class: B
+    reason: tests archive integrity without extracting
+  - command: ar
+    spec: "-t"
+    class: B
+    reason: lists archive members only
+  - command: cpio
+    spec: "-t"
+    class: B
+    reason: lists archive members only
+  - command: 7z
+    spec: l
+    class: B
+    reason: lists archive contents only

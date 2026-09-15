@@ -1,0 +1,392 @@
+version: effect-kb/v2
+# ---------------------------------------------------------------------------
+# BSD variants.
+#
+# Sources: the FreeBSD/macOS man pages. `chflags` manipulates the BSD file
+# flags (including the immutable `schg`); `sysctl -w` writes kernel parameters.
+# These commands are recorded to mark the BSD dialect explicitly.
+# ---------------------------------------------------------------------------
+commands:
+  - name: chflags
+    dialect: bsd
+    params:
+      - spec: "-R"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-h"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: FLAGS
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: sysctl
+    dialect: bsd
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: NAME
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: xattr
+    dialect: bsd
+    params:
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-d"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-x"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: mdfind
+    dialect: bsd
+    params:
+      - spec: "-onlyin"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-name"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-count"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-live"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-interpret"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: QUERY
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: mdls
+    dialect: bsd
+    params:
+      - spec: "-name"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-nullMarker"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-raw"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: diskutil
+    dialect: bsd
+    params:
+      - spec: "-plist"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: list
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: info
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: mount
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: unmount
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: eject
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: eraseDisk
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: eraseVolume
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: reformat
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: DEVICE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: launchctl
+    dialect: bsd
+    params:
+      - spec: "-w"
+        kind: flag
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: load
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: unload
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: bootstrap
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: bootout
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: enable
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: disable
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: start
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: stop
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: list
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: print
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: PATH
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+
+  - name: sw_vers
+    dialect: bsd
+    params:
+      - spec: "-productName"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-productVersion"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-buildVersion"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: softwareupdate
+    dialect: bsd
+    params:
+      - spec: "--list"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--install"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--download"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--install-rosetta"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: LABEL
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: pbcopy
+    dialect: bsd
+    params:
+      - spec: "-pboard"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-Prefer"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+
+  - name: pbpaste
+    dialect: bsd
+    params:
+      - spec: "-pboard"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-Prefer"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+
+  - name: open
+    dialect: bsd
+    params:
+      - spec: "-a"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "-b"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "-e"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-t"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-g"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-R"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-W"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--args"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: TARGET
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+
+  - name: defaults
+    dialect: bsd
+    params:
+      - spec: "-g"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-currentHost"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-domain"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: read
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: read-type
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: write
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: delete
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: import
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: export
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: DOMAIN
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: KEY
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: caffeinate
+    dialect: bsd
+    params:
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-m"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-w"
+        kind: option
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: flagValue}
+      - spec: COMMAND
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+
+  - name: dscl
+    dialect: bsd
+    params:
+      - spec: "-u"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "-P"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-raw"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: read
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: list
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: create
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: delete
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: append
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: merge
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: passwd
+        kind: positional
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: PATH
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}

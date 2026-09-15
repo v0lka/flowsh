@@ -1,0 +1,509 @@
+version: effect-kb/v2
+# ---------------------------------------------------------------------------
+# Users, permissions, security policy and auditing.
+#
+# Sources: the shadow-utils manuals (passwd, chpasswd, useradd, usermod,
+# userdel, groupadd, groupmod, groupdel, gpasswd, chage, chfn, chsh), the sudo
+# manual (visudo), the acl tools (setfacl, getfacl), the SELinux/refpolicy
+# tools (chcon, restorecon, semanage), the audit tools (auditctl, ausearch),
+# and the GnuPG manual (gpg).
+#
+# Every entry is documented against the `security` dialect, the family shared
+# by the account, permission/ACL, SELinux, audit and cryptographic tools.
+#
+# Effects by meaning: reading account/ACL/label state is FSRead; the primary
+# edit of an account database, ACL or security label is FSMeta; writing a home
+# directory or a keyring is FSWrite; touching password or key material that is
+# itself a secret is CredAccess; granting a principal a privilege is PrivEsc;
+# creating state that outlives the invocation (accounts, audit rules, policy
+# mappings) is Persist; fetching keys from a keyserver is NetIngress.
+# ---------------------------------------------------------------------------
+commands:
+  - name: passwd
+    dialect: security
+    params:
+      - spec: "-d"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "-e"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-S"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-x"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: NAME
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: chpasswd
+    dialect: security
+    params:
+      - spec: "-e"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "-R"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: useradd
+    dialect: security
+    params:
+      - spec: "-m"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-g"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-G"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-u"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: USERNAME
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+
+  - name: usermod
+    dialect: security
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-G"
+        kind: option
+        effect: {kind: PrivEsc, mode: Conditional, valueFrom: flagValue}
+      - spec: "-g"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-d"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-L"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-U"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: USERNAME
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: userdel
+    dialect: security
+    params:
+      - spec: "-r"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: USERNAME
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: groupadd
+    dialect: security
+    params:
+      - spec: "-g"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: GROUP
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+
+  - name: groupmod
+    dialect: security
+    params:
+      - spec: "-n"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-g"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: GROUP
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: groupdel
+    dialect: security
+    params:
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: GROUP
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: gpasswd
+    dialect: security
+    params:
+      - spec: "-a"
+        kind: option
+        effect: {kind: PrivEsc, mode: Conditional, valueFrom: flagValue}
+      - spec: "-d"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-A"
+        kind: option
+        effect: {kind: PrivEsc, mode: Conditional, valueFrom: flagValue}
+      - spec: "-M"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-R"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: GROUP
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: chage
+    dialect: security
+    params:
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-E"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-M"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-m"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-W"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-d"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: USER
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: chfn
+    dialect: security
+    params:
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-r"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-w"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-h"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: USER
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: chsh
+    dialect: security
+    params:
+      - spec: "-s"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: USER
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: visudo
+    dialect: security
+    params:
+      - spec: "-c"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: option
+        effect: {kind: PrivEsc, mode: Conditional, valueFrom: flagValue}
+      - spec: "-x"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+
+  - name: setfacl
+    dialect: security
+    params:
+      - spec: "-m"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-x"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-b"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-R"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-M"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue, fileRef: true}
+      - spec: "-X"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue, fileRef: true}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: getfacl
+    dialect: security
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-R"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: chcon
+    dialect: security
+    params:
+      - spec: "-R"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-u"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-r"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-l"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "--reference"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: restorecon
+    dialect: security
+    params:
+      - spec: "-R"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-F"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-e"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: PATH
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: semanage
+    dialect: security
+    params:
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: "-m"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-r"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: TYPE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: auditctl
+    dialect: security
+    params:
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-D"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: option
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-k"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-a"
+        kind: option
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
+      - spec: "-d"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-e"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+
+  - name: ausearch
+    dialect: security
+    params:
+      - spec: "-a"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-k"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-m"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-ts"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-te"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-if"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue, fileRef: true}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: gpg
+    dialect: security
+    params:
+      - spec: "-e"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--encrypt"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--decrypt"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "--symmetric"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "--sign"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "--import"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--export"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--gen-key"
+        kind: flag
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: "--list-keys"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--list-secret-keys"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "--recv-keys"
+        kind: option
+        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+      - spec: "--send-keys"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--output"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-u"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "--passphrase-file"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue, fileRef: true}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}

@@ -1,0 +1,359 @@
+version: effect-kb/v2
+# ---------------------------------------------------------------------------
+# POSIX utilities and GNU coreutils extensions.
+#
+# Sources: POSIX.1-2017 utility specifications (rm, cp, mv, ls, cat, chmod,
+# chown, ln, mkdir, rmdir, touch, dd, tee, sort, grep, sed), the GNU coreutils
+# manual (install, truncate, shred and every GNU-only flag), and manual
+# verification against a running system. Specs are written exactly as they are
+# typed; `valueFrom` records which token of an invocation becomes the target of
+# the effect.
+# ---------------------------------------------------------------------------
+commands:
+  - name: rm
+    dialect: posix
+    aliases:
+      - remove
+    params:
+      - spec: "-r"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-R"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: FSWrite, mode: Conditional, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "--no-preserve-root"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: cp
+    dialect: posix
+    params:
+      - spec: "-r"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: FSWrite, mode: Conditional, valueFrom: args}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: SRC
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: DEST
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: mv
+    dialect: posix
+    params:
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: FSWrite, mode: Conditional, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSWrite, mode: Conditional, valueFrom: args}
+      - spec: SRC
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: DEST
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: ls
+    dialect: posix
+    params:
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-R"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: PATH
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: cat
+    dialect: posix
+    params:
+      - spec: "-n"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-A"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: chmod
+    dialect: posix
+    params:
+      - spec: "-R"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: MODE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: chown
+    dialect: posix
+    params:
+      - spec: "-R"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-h"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: OWNER
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: ln
+    dialect: posix
+    params:
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: TARGET
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: mkdir
+    dialect: posix
+    params:
+      - spec: "-p"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-m"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: DIR
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: rmdir
+    dialect: posix
+    params:
+      - spec: "-p"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: DIR
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: touch
+    dialect: posix
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-m"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: dd
+    dialect: posix
+    params:
+      - spec: "if="
+        kind: assign
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "of="
+        kind: assign
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "bs="
+        kind: assign
+        effect: {kind: FSWrite, mode: Conditional, valueFrom: flagValue}
+      - spec: "conv="
+        kind: assign
+        effect: {kind: FSWrite, mode: Conditional, valueFrom: flagValue}
+
+  - name: install
+    dialect: gnu
+    params:
+      - spec: "-m"
+        kind: option
+        effect: {kind: PrivEsc, mode: Conditional, valueFrom: flagValue}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-g"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: SRC
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: DEST
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: truncate
+    dialect: gnu
+    params:
+      - spec: "-s"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: FSWrite, mode: Conditional, valueFrom: args}
+      - spec: "-o"
+        kind: flag
+        effect: {kind: FSWrite, mode: Conditional, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: shred
+    dialect: gnu
+    params:
+      - spec: "-n"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-z"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: tee
+    dialect: gnu
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: FSWrite, mode: Conditional, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: sort
+    dialect: posix
+    params:
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: grep
+    dialect: posix
+    params:
+      - spec: "-r"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: PATTERN
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: sed
+    dialect: posix
+    params:
+      - spec: "-i"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-e"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: SCRIPT
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}

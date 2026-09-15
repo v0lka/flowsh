@@ -1,0 +1,481 @@
+version: effect-kb/v2
+# ---------------------------------------------------------------------------
+# Processes, services and system control: systemd, the SysV/LSB service
+# wrappers, job scheduling (crontab, at, batch) and terminal multiplexers
+# (screen, tmux).
+#
+# Sources: the systemd manuals (systemctl, journalctl, systemd-run, shutdown,
+# reboot, halt, poweroff, init, telinit, runlevel), the LSB `service` wrapper,
+# the Vixie cron manual (crontab), the at/batch manual, and the screen and tmux
+# manuals.
+#
+# Every entry is documented against the `systemd` dialect, the family shared by
+# the service managers, job schedulers, power control and terminal multiplexers
+# of the Linux system tier.
+#
+# Effects by meaning:
+#   - reading unit/journal/job state (`systemctl status|is-active|list-*`,
+#     `journalctl`, `crontab -l`, `at -l`, `runlevel`, `tmux ls`,
+#     `screen -ls`) is FSRead;
+#   - starting or scheduling work (`systemctl start`, `service … start`,
+#     `systemd-run`, `at`, `batch`, `screen`, `tmux new-session`) is ProcSpawn,
+#     and anything that outlives the analyzed process or survives a reboot
+#     (`systemctl enable|disable|mask`, `crontab FILE`, `at`, `batch`, a
+#     systemd-run timer) is Persist;
+#   - stopping, killing and power control (`systemctl stop|restart|kill`,
+#     `service … stop`, `tmux kill-*`, `shutdown`, `reboot`, `halt`,
+#     `poweroff`, `init`, `telinit`) is ProcSignal;
+#   - rewriting on-disk service/cron/journal storage (`systemctl edit`,
+#     `crontab -e`, `journalctl --vacuum-*/--rotate/--flush`) is
+#     FSWrite/FSMeta.
+#
+# The persistently destructive flags (systemctl disable/mask, crontab -r, the
+# forced power control switches, journal vacuuming, the at/tmux removals) carry
+# entries in kb/data/destructive.yaml.
+# ---------------------------------------------------------------------------
+commands:
+  # --- systemd service manager ------------------------------------------------
+  - name: systemctl
+    dialect: systemd
+    params:
+      - spec: "start"
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "stop"
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "restart"
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "reload"
+        kind: positional
+        effect: {kind: ProcSignal, mode: Conditional, valueFrom: args}
+      - spec: "enable"
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: "disable"
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: "mask"
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: "unmask"
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: "daemon-reload"
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: "kill"
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "reset-failed"
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "edit"
+        kind: positional
+        effect: {kind: FSWrite, mode: Conditional, valueFrom: args}
+      - spec: "cat"
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "status"
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "is-active"
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "is-enabled"
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "show"
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "list-units"
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "list-unit-files"
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--now"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "--force"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-H"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "--host"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+
+  - name: service
+    dialect: systemd
+    params:
+      - spec: NAME
+        kind: positional
+        effect: {kind: Persist, mode: Conditional, valueFrom: args}
+      - spec: COMMAND
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--status-all"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: journalctl
+    dialect: systemd
+    params:
+      - spec: "-u"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--unit"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--follow"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-b"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-k"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--since"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--until"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-D"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--no-pager"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--vacuum-time"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--vacuum-size"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--rotate"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--flush"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: systemd-run
+    dialect: systemd
+    params:
+      - spec: "--unit"
+        kind: option
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
+      - spec: "-u"
+        kind: option
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
+      - spec: "--property"
+        kind: option
+        effect: {kind: Persist, mode: Conditional, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: Persist, mode: Conditional, valueFrom: flagValue}
+      - spec: "--scope"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--user"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--on-active"
+        kind: option
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
+      - spec: "--on-calendar"
+        kind: option
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
+      - spec: "--timer-property"
+        kind: option
+        effect: {kind: Persist, mode: Conditional, valueFrom: flagValue}
+      - spec: "-t"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--pty"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: COMMAND
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+
+  # --- job scheduling (Vixie cron and at/batch) --------------------------------
+  - name: crontab
+    dialect: systemd
+    params:
+      - spec: "-e"
+        kind: flag
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: Persist, mode: Conditional, valueFrom: args}
+      - spec: "-u"
+        kind: option
+        effect: {kind: Persist, mode: Conditional, valueFrom: flagValue}
+      - spec: FILE
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+
+  - name: at
+    dialect: systemd
+    params:
+      - spec: "-f"
+        kind: option
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: "-q"
+        kind: option
+        effect: {kind: Persist, mode: Conditional, valueFrom: flagValue}
+      - spec: "-m"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Conditional, valueFrom: args}
+      - spec: TIME
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+
+  - name: batch
+    dialect: systemd
+    params:
+      - spec: "-f"
+        kind: option
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
+      - spec: "-q"
+        kind: option
+        effect: {kind: Persist, mode: Conditional, valueFrom: flagValue}
+      - spec: "-m"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Conditional, valueFrom: args}
+      - spec: TIME
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+
+  # --- power and runlevel control ---------------------------------------------
+  - name: shutdown
+    dialect: systemd
+    params:
+      - spec: "-r"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-h"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-P"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-k"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Conditional, valueFrom: args}
+      - spec: "-t"
+        kind: option
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: flagValue}
+      - spec: TIME
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+
+  - name: reboot
+    dialect: systemd
+    params:
+      - spec: "-f"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: halt
+    dialect: systemd
+    params:
+      - spec: "-f"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+
+  - name: poweroff
+    dialect: systemd
+    params:
+      - spec: "-f"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "--no-wall"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+
+  - name: init
+    dialect: systemd
+    params:
+      - spec: RUNLEVEL
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-q"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: telinit
+    dialect: systemd
+    params:
+      - spec: RUNLEVEL
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-t"
+        kind: option
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: flagValue}
+      - spec: "-q"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: runlevel
+    dialect: systemd
+    params:
+      - spec: UTMP
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  # --- terminal multiplexers ---------------------------------------------------
+  - name: screen
+    dialect: systemd
+    params:
+      - spec: "-S"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "-dm"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-ls"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-x"
+        kind: flag
+        effect: {kind: IPC, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: option
+        effect: {kind: IPC, mode: Direct, valueFrom: flagValue}
+      - spec: "-d"
+        kind: option
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: flagValue}
+      - spec: "-X"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Conditional, valueFrom: args}
+      - spec: "-wipe"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-L"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-q"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Conditional, valueFrom: args}
+
+  - name: tmux
+    dialect: systemd
+    params:
+      - spec: "new-session"
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "new"
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "attach"
+        kind: positional
+        effect: {kind: IPC, mode: Direct, valueFrom: args}
+      - spec: "attach-session"
+        kind: positional
+        effect: {kind: IPC, mode: Direct, valueFrom: args}
+      - spec: "detach"
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "ls"
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "list-sessions"
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "kill-session"
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "kill-window"
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "kill-server"
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "send-keys"
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Conditional, valueFrom: args}
+      - spec: "split-window"
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "source-file"
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "set-option"
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-L"
+        kind: option
+        effect: {kind: IPC, mode: Direct, valueFrom: flagValue}
+      - spec: "-S"
+        kind: option
+        effect: {kind: IPC, mode: Direct, valueFrom: flagValue}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-2"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}

@@ -1,0 +1,18 @@
+{
+  "name": "guardfall-posix",
+  "description": "GuardFall classes A-E for the POSIX shell dialect: adversarial inputs that evade a surface-level scanner. Every case must be classified as 'effect present or top' (no silent misses). These mirror the bash set but are analysed with --lang posix (front/bash in the POSIX variant).",
+  "cases": [
+    { "id": "gf-posix-a-quote-sq",  "group": "guardfall", "category": "A", "lang": "posix", "input": "r''m -rf /tmp/x",            "note": "empty single-quote fragment inside the command name" },
+    { "id": "gf-posix-b-ifs",       "group": "guardfall", "category": "B", "lang": "posix", "input": "rm$IFS-rf$IFS/tmp/x",        "note": "word splitting via the default IFS" },
+    { "id": "gf-posix-b-ifs-brace", "group": "guardfall", "category": "B", "lang": "posix", "input": "rm${IFS}-rf${IFS}/tmp/x",    "note": "braced IFS expansion" },
+    { "id": "gf-posix-c-subst",     "group": "guardfall", "category": "C", "lang": "posix", "input": "$(echo rm) -rf /tmp/x",      "note": "command substitution yielding the program name" },
+    { "id": "gf-posix-c-subst-arg", "group": "guardfall", "category": "C", "lang": "posix", "input": "echo \"$(rm /tmp/x)\"",      "note": "command substitution nested inside an argument" },
+    { "id": "gf-posix-d-b64-sh",    "group": "guardfall", "category": "D", "lang": "posix", "input": "echo aGVsbG8= | base64 -d | sh", "note": "encoded payload piped to an interpreter" },
+    { "id": "gf-posix-d-shc",       "group": "guardfall", "category": "D", "lang": "posix", "input": "sh -c 'rm -rf /tmp/x'",      "note": "interpreter invoked with a command string" },
+    { "id": "gf-posix-e-loop",      "group": "guardfall", "category": "E", "lang": "posix", "input": "while true; do :; done",     "note": "unbounded loop: the step budget must yield top" },
+    { "id": "gf-posix-e-unknown",   "group": "guardfall", "category": "E", "lang": "posix", "input": "frobnicate --wat /y",        "note": "unknown binary: degrades to top" },
+    { "id": "gf-posix-e-dynamic",   "group": "guardfall", "category": "E", "lang": "posix", "input": "$CMD /y",                    "note": "dynamically-named program: degrades to top" },
+    { "id": "gf-posix-e-unkquote",  "group": "guardfall", "category": "E", "lang": "posix", "input": "echo \"unterminated",        "note": "C4 adversarial: unbalanced quote; the parse failure must degrade to top, not to a benign miss" },
+    { "id": "gf-posix-e-pipe-unk",  "group": "guardfall", "category": "E", "lang": "posix", "input": "frobnicate --wat /y | frobnicate --wat /z", "note": "C4 adversarial: pipeline of unresolved commands; must degrade to top, not to an empty result" }
+  ]
+}

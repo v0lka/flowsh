@@ -1,0 +1,1099 @@
+{
+  "variant": "bash",
+  "file": "t",
+  "source": "#!/bin/bash\nset -euo pipefail\nexport PATH=/usr/bin:$PATH\nsudo -u root env FOO=1 nohup /usr/bin/daemon --flag \"a b\" \u003e /var/log/daemon.log 2\u003e\u00261\nif [[ -n \"$X\" ]]; then\n  curl -fsSL \"$URL\" | xargs -0 command rm -f\nelse\n  echo \"$(uptime)\"\nfi\nfunction deploy() { scp \"$1\" host:/tmp/; }\nalias ll='ls -l'\nfor f in *.txt; do cat \"$f\"; done\n",
+  "top": false,
+  "stmts": [
+    {
+      "kind": "simple",
+      "pos": {
+        "line": 2,
+        "col": 1,
+        "offset": 12
+      },
+      "end": {
+        "line": 2,
+        "col": 18,
+        "offset": 29
+      },
+      "cmd": {
+        "pos": {
+          "line": 2,
+          "col": 1,
+          "offset": 12
+        },
+        "name": "set",
+        "nameWord": {
+          "pos": {
+            "line": 2,
+            "col": 1,
+            "offset": 12
+          },
+          "value": "set",
+          "literal": true,
+          "parts": [
+            {
+              "kind": "lit",
+              "pos": {
+                "line": 2,
+                "col": 1,
+                "offset": 12
+              },
+              "value": "set"
+            }
+          ]
+        },
+        "args": [
+          {
+            "pos": {
+              "line": 2,
+              "col": 5,
+              "offset": 16
+            },
+            "value": "-euo",
+            "literal": true,
+            "parts": [
+              {
+                "kind": "lit",
+                "pos": {
+                  "line": 2,
+                  "col": 5,
+                  "offset": 16
+                },
+                "value": "-euo"
+              }
+            ]
+          },
+          {
+            "pos": {
+              "line": 2,
+              "col": 10,
+              "offset": 21
+            },
+            "value": "pipefail",
+            "literal": true,
+            "parts": [
+              {
+                "kind": "lit",
+                "pos": {
+                  "line": 2,
+                  "col": 10,
+                  "offset": 21
+                },
+                "value": "pipefail"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kind": "decl",
+      "pos": {
+        "line": 3,
+        "col": 1,
+        "offset": 30
+      },
+      "end": {
+        "line": 3,
+        "col": 27,
+        "offset": 56
+      },
+      "words": [
+        {
+          "pos": {
+            "line": 3,
+            "col": 8,
+            "offset": 37
+          },
+          "value": "PATH=/usr/bin:$PATH",
+          "literal": true
+        }
+      ],
+      "decl": "export"
+    },
+    {
+      "kind": "simple",
+      "pos": {
+        "line": 4,
+        "col": 1,
+        "offset": 57
+      },
+      "end": {
+        "line": 4,
+        "col": 85,
+        "offset": 141
+      },
+      "redirs": [
+        {
+          "pos": {
+            "line": 4,
+            "col": 59,
+            "offset": 115
+          },
+          "op": "\u003e",
+          "word": {
+            "pos": {
+              "line": 4,
+              "col": 61,
+              "offset": 117
+            },
+            "value": "/var/log/daemon.log",
+            "literal": true,
+            "parts": [
+              {
+                "kind": "lit",
+                "pos": {
+                  "line": 4,
+                  "col": 61,
+                  "offset": 117
+                },
+                "value": "/var/log/daemon.log"
+              }
+            ]
+          }
+        },
+        {
+          "pos": {
+            "line": 4,
+            "col": 81,
+            "offset": 137
+          },
+          "op": "\u003e\u0026",
+          "n": "2",
+          "word": {
+            "pos": {
+              "line": 4,
+              "col": 84,
+              "offset": 140
+            },
+            "value": "1",
+            "literal": true,
+            "parts": [
+              {
+                "kind": "lit",
+                "pos": {
+                  "line": 4,
+                  "col": 84,
+                  "offset": 140
+                },
+                "value": "1"
+              }
+            ]
+          }
+        }
+      ],
+      "cmd": {
+        "pos": {
+          "line": 4,
+          "col": 30,
+          "offset": 86
+        },
+        "name": "/usr/bin/daemon",
+        "nameWord": {
+          "pos": {
+            "line": 4,
+            "col": 30,
+            "offset": 86
+          },
+          "value": "/usr/bin/daemon",
+          "literal": true,
+          "parts": [
+            {
+              "kind": "lit",
+              "pos": {
+                "line": 4,
+                "col": 30,
+                "offset": 86
+              },
+              "value": "/usr/bin/daemon"
+            }
+          ]
+        },
+        "args": [
+          {
+            "pos": {
+              "line": 4,
+              "col": 46,
+              "offset": 102
+            },
+            "value": "--flag",
+            "literal": true,
+            "parts": [
+              {
+                "kind": "lit",
+                "pos": {
+                  "line": 4,
+                  "col": 46,
+                  "offset": 102
+                },
+                "value": "--flag"
+              }
+            ]
+          },
+          {
+            "pos": {
+              "line": 4,
+              "col": 53,
+              "offset": 109
+            },
+            "value": "a b",
+            "literal": true,
+            "parts": [
+              {
+                "kind": "dblQuoted",
+                "pos": {
+                  "line": 4,
+                  "col": 53,
+                  "offset": 109
+                },
+                "parts": [
+                  {
+                    "kind": "lit",
+                    "pos": {
+                      "line": 4,
+                      "col": 54,
+                      "offset": 110
+                    },
+                    "value": "a b"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "assigns": [
+          {
+            "pos": {
+              "line": 4,
+              "col": 18,
+              "offset": 74
+            },
+            "name": "FOO",
+            "value": {
+              "pos": {
+                "line": 4,
+                "col": 22,
+                "offset": 78
+              },
+              "value": "1",
+              "literal": true
+            },
+            "via": "env"
+          }
+        ],
+        "wrappers": [
+          {
+            "name": "sudo",
+            "pos": {
+              "line": 4,
+              "col": 1,
+              "offset": 57
+            },
+            "options": [
+              "-u",
+              "root"
+            ]
+          },
+          {
+            "name": "env",
+            "pos": {
+              "line": 4,
+              "col": 14,
+              "offset": 70
+            }
+          },
+          {
+            "name": "nohup",
+            "pos": {
+              "line": 4,
+              "col": 24,
+              "offset": 80
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "if",
+      "pos": {
+        "line": 5,
+        "col": 1,
+        "offset": 142
+      },
+      "end": {
+        "line": 9,
+        "col": 3,
+        "offset": 236
+      },
+      "cond": [
+        {
+          "kind": "test",
+          "pos": {
+            "line": 5,
+            "col": 4,
+            "offset": 145
+          },
+          "end": {
+            "line": 5,
+            "col": 18,
+            "offset": 159
+          },
+          "text": "[[ -n \"$X\" ]]"
+        }
+      ],
+      "body": [
+        {
+          "kind": "pipeline",
+          "pos": {
+            "line": 6,
+            "col": 3,
+            "offset": 167
+          },
+          "end": {
+            "line": 6,
+            "col": 45,
+            "offset": 209
+          },
+          "op": "|",
+          "left": {
+            "kind": "simple",
+            "pos": {
+              "line": 6,
+              "col": 3,
+              "offset": 167
+            },
+            "end": {
+              "line": 6,
+              "col": 20,
+              "offset": 184
+            },
+            "cmd": {
+              "pos": {
+                "line": 6,
+                "col": 3,
+                "offset": 167
+              },
+              "name": "curl",
+              "nameWord": {
+                "pos": {
+                  "line": 6,
+                  "col": 3,
+                  "offset": 167
+                },
+                "value": "curl",
+                "literal": true,
+                "parts": [
+                  {
+                    "kind": "lit",
+                    "pos": {
+                      "line": 6,
+                      "col": 3,
+                      "offset": 167
+                    },
+                    "value": "curl"
+                  }
+                ]
+              },
+              "args": [
+                {
+                  "pos": {
+                    "line": 6,
+                    "col": 8,
+                    "offset": 172
+                  },
+                  "value": "-fsSL",
+                  "literal": true,
+                  "parts": [
+                    {
+                      "kind": "lit",
+                      "pos": {
+                        "line": 6,
+                        "col": 8,
+                        "offset": 172
+                      },
+                      "value": "-fsSL"
+                    }
+                  ]
+                },
+                {
+                  "pos": {
+                    "line": 6,
+                    "col": 14,
+                    "offset": 178
+                  },
+                  "literal": false,
+                  "parts": [
+                    {
+                      "kind": "dblQuoted",
+                      "pos": {
+                        "line": 6,
+                        "col": 14,
+                        "offset": 178
+                      },
+                      "parts": [
+                        {
+                          "kind": "paramExp",
+                          "pos": {
+                            "line": 6,
+                            "col": 15,
+                            "offset": 179
+                          },
+                          "param": "URL"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "right": {
+            "kind": "simple",
+            "pos": {
+              "line": 6,
+              "col": 23,
+              "offset": 187
+            },
+            "end": {
+              "line": 6,
+              "col": 45,
+              "offset": 209
+            },
+            "cmd": {
+              "pos": {
+                "line": 6,
+                "col": 40,
+                "offset": 204
+              },
+              "name": "rm",
+              "nameWord": {
+                "pos": {
+                  "line": 6,
+                  "col": 40,
+                  "offset": 204
+                },
+                "value": "rm",
+                "literal": true,
+                "parts": [
+                  {
+                    "kind": "lit",
+                    "pos": {
+                      "line": 6,
+                      "col": 40,
+                      "offset": 204
+                    },
+                    "value": "rm"
+                  }
+                ]
+              },
+              "args": [
+                {
+                  "pos": {
+                    "line": 6,
+                    "col": 43,
+                    "offset": 207
+                  },
+                  "value": "-f",
+                  "literal": true,
+                  "parts": [
+                    {
+                      "kind": "lit",
+                      "pos": {
+                        "line": 6,
+                        "col": 43,
+                        "offset": 207
+                      },
+                      "value": "-f"
+                    }
+                  ]
+                }
+              ],
+              "wrappers": [
+                {
+                  "name": "xargs",
+                  "pos": {
+                    "line": 6,
+                    "col": 23,
+                    "offset": 187
+                  },
+                  "options": [
+                    "-0"
+                  ]
+                },
+                {
+                  "name": "command",
+                  "pos": {
+                    "line": 6,
+                    "col": 32,
+                    "offset": 196
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "else": [
+        {
+          "kind": "simple",
+          "pos": {
+            "line": 8,
+            "col": 3,
+            "offset": 217
+          },
+          "end": {
+            "line": 8,
+            "col": 19,
+            "offset": 233
+          },
+          "cmd": {
+            "pos": {
+              "line": 8,
+              "col": 3,
+              "offset": 217
+            },
+            "name": "echo",
+            "nameWord": {
+              "pos": {
+                "line": 8,
+                "col": 3,
+                "offset": 217
+              },
+              "value": "echo",
+              "literal": true,
+              "parts": [
+                {
+                  "kind": "lit",
+                  "pos": {
+                    "line": 8,
+                    "col": 3,
+                    "offset": 217
+                  },
+                  "value": "echo"
+                }
+              ]
+            },
+            "args": [
+              {
+                "pos": {
+                  "line": 8,
+                  "col": 8,
+                  "offset": 222
+                },
+                "literal": false,
+                "parts": [
+                  {
+                    "kind": "dblQuoted",
+                    "pos": {
+                      "line": 8,
+                      "col": 8,
+                      "offset": 222
+                    },
+                    "parts": [
+                      {
+                        "kind": "cmdSubst",
+                        "pos": {
+                          "line": 8,
+                          "col": 9,
+                          "offset": 223
+                        },
+                        "stmts": [
+                          {
+                            "kind": "simple",
+                            "pos": {
+                              "line": 8,
+                              "col": 11,
+                              "offset": 225
+                            },
+                            "end": {
+                              "line": 8,
+                              "col": 17,
+                              "offset": 231
+                            },
+                            "cmd": {
+                              "pos": {
+                                "line": 8,
+                                "col": 11,
+                                "offset": 225
+                              },
+                              "name": "uptime",
+                              "nameWord": {
+                                "pos": {
+                                  "line": 8,
+                                  "col": 11,
+                                  "offset": 225
+                                },
+                                "value": "uptime",
+                                "literal": true,
+                                "parts": [
+                                  {
+                                    "kind": "lit",
+                                    "pos": {
+                                      "line": 8,
+                                      "col": 11,
+                                      "offset": 225
+                                    },
+                                    "value": "uptime"
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "kind": "func",
+      "pos": {
+        "line": 10,
+        "col": 1,
+        "offset": 237
+      },
+      "end": {
+        "line": 10,
+        "col": 43,
+        "offset": 279
+      },
+      "func": {
+        "pos": {
+          "line": 10,
+          "col": 10,
+          "offset": 246
+        },
+        "name": "deploy",
+        "style": "function-parens",
+        "body": [
+          {
+            "kind": "block",
+            "pos": {
+              "line": 10,
+              "col": 19,
+              "offset": 255
+            },
+            "end": {
+              "line": 10,
+              "col": 43,
+              "offset": 279
+            },
+            "body": [
+              {
+                "kind": "simple",
+                "pos": {
+                  "line": 10,
+                  "col": 21,
+                  "offset": 257
+                },
+                "end": {
+                  "line": 10,
+                  "col": 41,
+                  "offset": 277
+                },
+                "cmd": {
+                  "pos": {
+                    "line": 10,
+                    "col": 21,
+                    "offset": 257
+                  },
+                  "name": "scp",
+                  "nameWord": {
+                    "pos": {
+                      "line": 10,
+                      "col": 21,
+                      "offset": 257
+                    },
+                    "value": "scp",
+                    "literal": true,
+                    "parts": [
+                      {
+                        "kind": "lit",
+                        "pos": {
+                          "line": 10,
+                          "col": 21,
+                          "offset": 257
+                        },
+                        "value": "scp"
+                      }
+                    ]
+                  },
+                  "args": [
+                    {
+                      "pos": {
+                        "line": 10,
+                        "col": 25,
+                        "offset": 261
+                      },
+                      "literal": false,
+                      "parts": [
+                        {
+                          "kind": "dblQuoted",
+                          "pos": {
+                            "line": 10,
+                            "col": 25,
+                            "offset": 261
+                          },
+                          "parts": [
+                            {
+                              "kind": "paramExp",
+                              "pos": {
+                                "line": 10,
+                                "col": 26,
+                                "offset": 262
+                              },
+                              "param": "1"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "pos": {
+                        "line": 10,
+                        "col": 30,
+                        "offset": 266
+                      },
+                      "value": "host:/tmp/",
+                      "literal": true,
+                      "parts": [
+                        {
+                          "kind": "lit",
+                          "pos": {
+                            "line": 10,
+                            "col": 30,
+                            "offset": 266
+                          },
+                          "value": "host:/tmp/"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kind": "simple",
+      "pos": {
+        "line": 11,
+        "col": 1,
+        "offset": 280
+      },
+      "end": {
+        "line": 11,
+        "col": 17,
+        "offset": 296
+      },
+      "cmd": {
+        "pos": {
+          "line": 11,
+          "col": 1,
+          "offset": 280
+        },
+        "name": "alias",
+        "nameWord": {
+          "pos": {
+            "line": 11,
+            "col": 1,
+            "offset": 280
+          },
+          "value": "alias",
+          "literal": true,
+          "parts": [
+            {
+              "kind": "lit",
+              "pos": {
+                "line": 11,
+                "col": 1,
+                "offset": 280
+              },
+              "value": "alias"
+            }
+          ]
+        },
+        "args": [
+          {
+            "pos": {
+              "line": 11,
+              "col": 7,
+              "offset": 286
+            },
+            "value": "ll=ls -l",
+            "literal": true,
+            "parts": [
+              {
+                "kind": "lit",
+                "pos": {
+                  "line": 11,
+                  "col": 7,
+                  "offset": 286
+                },
+                "value": "ll="
+              },
+              {
+                "kind": "sglQuoted",
+                "pos": {
+                  "line": 11,
+                  "col": 10,
+                  "offset": 289
+                },
+                "value": "ls -l"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kind": "for",
+      "pos": {
+        "line": 12,
+        "col": 1,
+        "offset": 297
+      },
+      "end": {
+        "line": 12,
+        "col": 34,
+        "offset": 330
+      },
+      "body": [
+        {
+          "kind": "simple",
+          "pos": {
+            "line": 12,
+            "col": 20,
+            "offset": 316
+          },
+          "end": {
+            "line": 12,
+            "col": 29,
+            "offset": 325
+          },
+          "cmd": {
+            "pos": {
+              "line": 12,
+              "col": 20,
+              "offset": 316
+            },
+            "name": "cat",
+            "nameWord": {
+              "pos": {
+                "line": 12,
+                "col": 20,
+                "offset": 316
+              },
+              "value": "cat",
+              "literal": true,
+              "parts": [
+                {
+                  "kind": "lit",
+                  "pos": {
+                    "line": 12,
+                    "col": 20,
+                    "offset": 316
+                  },
+                  "value": "cat"
+                }
+              ]
+            },
+            "args": [
+              {
+                "pos": {
+                  "line": 12,
+                  "col": 24,
+                  "offset": 320
+                },
+                "literal": false,
+                "parts": [
+                  {
+                    "kind": "dblQuoted",
+                    "pos": {
+                      "line": 12,
+                      "col": 24,
+                      "offset": 320
+                    },
+                    "parts": [
+                      {
+                        "kind": "paramExp",
+                        "pos": {
+                          "line": 12,
+                          "col": 25,
+                          "offset": 321
+                        },
+                        "param": "f"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "name": "f",
+      "words": [
+        {
+          "pos": {
+            "line": 12,
+            "col": 10,
+            "offset": 306
+          },
+          "value": "*.txt",
+          "literal": true,
+          "parts": [
+            {
+              "kind": "lit",
+              "pos": {
+                "line": 12,
+                "col": 10,
+                "offset": 306
+              },
+              "value": "*.txt"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "aliases": {
+    "ll": {
+      "pos": {
+        "line": 11,
+        "col": 7,
+        "offset": 286
+      },
+      "name": "ll",
+      "value": "ls -l"
+    }
+  },
+  "funcs": {
+    "deploy": {
+      "pos": {
+        "line": 10,
+        "col": 10,
+        "offset": 246
+      },
+      "name": "deploy",
+      "style": "function-parens",
+      "body": [
+        {
+          "kind": "block",
+          "pos": {
+            "line": 10,
+            "col": 19,
+            "offset": 255
+          },
+          "end": {
+            "line": 10,
+            "col": 43,
+            "offset": 279
+          },
+          "body": [
+            {
+              "kind": "simple",
+              "pos": {
+                "line": 10,
+                "col": 21,
+                "offset": 257
+              },
+              "end": {
+                "line": 10,
+                "col": 41,
+                "offset": 277
+              },
+              "cmd": {
+                "pos": {
+                  "line": 10,
+                  "col": 21,
+                  "offset": 257
+                },
+                "name": "scp",
+                "nameWord": {
+                  "pos": {
+                    "line": 10,
+                    "col": 21,
+                    "offset": 257
+                  },
+                  "value": "scp",
+                  "literal": true,
+                  "parts": [
+                    {
+                      "kind": "lit",
+                      "pos": {
+                        "line": 10,
+                        "col": 21,
+                        "offset": 257
+                      },
+                      "value": "scp"
+                    }
+                  ]
+                },
+                "args": [
+                  {
+                    "pos": {
+                      "line": 10,
+                      "col": 25,
+                      "offset": 261
+                    },
+                    "literal": false,
+                    "parts": [
+                      {
+                        "kind": "dblQuoted",
+                        "pos": {
+                          "line": 10,
+                          "col": 25,
+                          "offset": 261
+                        },
+                        "parts": [
+                          {
+                            "kind": "paramExp",
+                            "pos": {
+                              "line": 10,
+                              "col": 26,
+                              "offset": 262
+                            },
+                            "param": "1"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "pos": {
+                      "line": 10,
+                      "col": 30,
+                      "offset": 266
+                    },
+                    "value": "host:/tmp/",
+                    "literal": true,
+                    "parts": [
+                      {
+                        "kind": "lit",
+                        "pos": {
+                          "line": 10,
+                          "col": 30,
+                          "offset": 266
+                        },
+                        "value": "host:/tmp/"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

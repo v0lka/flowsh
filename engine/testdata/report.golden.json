@@ -1,0 +1,126 @@
+{
+  "schemaVersion": "effect-ir/v1",
+  "root": "demo",
+  "effects": [
+    {
+      "kind": "CodeExec",
+      "target": {
+        "targets": [
+          "bash",
+          "sh"
+        ],
+        "arbitrary": false
+      },
+      "mode": "Direct",
+      "certainty": "Certain",
+      "taint": {
+        "labels": [
+          "untrusted"
+        ],
+        "arbitrary": false
+      },
+      "reversible": false
+    },
+    {
+      "kind": "FSRead",
+      "target": {
+        "targets": [
+          "/etc/passwd",
+          "/etc/shadow"
+        ],
+        "arbitrary": false
+      },
+      "mode": "Direct",
+      "certainty": "Certain",
+      "taint": {
+        "labels": [
+          "secret",
+          "userInput"
+        ],
+        "arbitrary": false
+      },
+      "reversible": true
+    },
+    {
+      "kind": "NetEgress",
+      "target": {
+        "targets": [
+          "api.example.com:443"
+        ],
+        "arbitrary": false
+      },
+      "mode": "Transitive",
+      "certainty": "Likely",
+      "taint": {
+        "labels": [
+          "network",
+          "untrusted"
+        ],
+        "arbitrary": false
+      },
+      "reversible": false
+    },
+    {
+      "kind": "PrivEsc",
+      "target": {
+        "targets": [],
+        "arbitrary": true
+      },
+      "mode": "Conditional",
+      "certainty": "Possible",
+      "taint": {
+        "labels": [
+          "untrusted"
+        ],
+        "arbitrary": false
+      },
+      "reversible": false
+    }
+  ],
+  "destructiveness": "Critical",
+  "why": [
+    {
+      "effect": "CodeExec|Direct|[bash,sh]",
+      "because": [
+        {
+          "rule": "exec.spawn",
+          "premises": [
+            "call:os/exec.Command",
+            "arg:sh"
+          ],
+          "loc": {
+            "file": "demo.go",
+            "line": 20
+          }
+        },
+        {
+          "rule": "taint.sink",
+          "premises": [
+            "untrusted"
+          ]
+        }
+      ]
+    },
+    {
+      "effect": "NetEgress|Transitive|[api.example.com:443]",
+      "because": [
+        {
+          "rule": "net.call",
+          "premises": [
+            "call:http.Get",
+            "arg:url"
+          ],
+          "note": "HTTP client egress",
+          "loc": {
+            "file": "demo.go",
+            "line": 12,
+            "col": 3
+          }
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "sample report for the frozen core"
+  ]
+}

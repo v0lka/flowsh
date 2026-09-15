@@ -1,0 +1,680 @@
+version: effect-kb/v2
+# ---------------------------------------------------------------------------
+# Shell builtins (POSIX sh and the common bash extensions).
+#
+# Sources: the POSIX Shell Command Language (cd, echo, export, eval, exec, .,
+# read, set, umask, ulimit, trap, unset, type, kill, printf, pwd, test, hash,
+# readonly, command, wait) and the bash builtins manual (declare/typeset,
+# local). Builtins that mutate the shell's variable or environment state are
+# EnvWrite; `eval`, `exec` and `source` execute code; `cd` changes the working
+# directory.
+#
+# Effect-bearing extensions (B1): the effect-carrying bash builtins that the
+# frontend does NOT model itself are described here — `mapfile`/`readarray`
+# (reads stdin), `history`/`fc` (touch the history file), `enable`, `help`,
+# `compgen`, `complete`, `bind`, `caller`, plus the extra options of `read`
+# (-d, -u) and `declare` (-F, -n).
+#
+# Deliberately absent: the pure shell-state builtins that front/bash handles in
+# `shellOnlyBuiltins` (alias, unalias, jobs, bg, fg, disown, times, return,
+# exit, break, continue, shift, getopts, shopt, dirs, pushd, popd, let, builtin,
+# command, logout, suspend, `[`). Binding them here would double-count a
+# decision the frontend already makes; the KB describes only effect-bearing
+# commands.
+# ---------------------------------------------------------------------------
+commands:
+  - name: cd
+    dialect: builtin
+    params:
+      - spec: "-P"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-L"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-e"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: DIR
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: cwd}
+
+  - name: echo
+    dialect: builtin
+    params:
+      - spec: "-n"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-e"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-E"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: ARGS
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+
+  - name: export
+    dialect: builtin
+    params:
+      - spec: "-n"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: NAME
+        kind: positional
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+
+  - name: eval
+    dialect: builtin
+    params:
+      - spec: ARGS
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+
+  - name: exec
+    dialect: builtin
+    params:
+      - spec: "-a"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: COMMAND
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+
+  - name: source
+    dialect: builtin
+    aliases:
+      - "."
+    params:
+      - spec: FILE
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+
+  - name: read
+    dialect: builtin
+    params:
+      - spec: "-r"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: stdin}
+      - spec: "-p"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "-t"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "-n"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: stdin}
+      - spec: "-a"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-d"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "-u"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: NAME
+        kind: positional
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+
+  - name: set
+    dialect: builtin
+    params:
+      - spec: "-e"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-x"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-o"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-C"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: ARGS
+        kind: positional
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+
+  - name: umask
+    dialect: builtin
+    params:
+      - spec: "-S"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: MASK
+        kind: positional
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+
+  - name: ulimit
+    dialect: builtin
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-n"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-v"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-H"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-S"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+
+  - name: trap
+    dialect: builtin
+    params:
+      - spec: "-l"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: ACTION
+        kind: positional
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: SIGNAL
+        kind: positional
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+
+  - name: declare
+    dialect: builtin
+    aliases:
+      - typeset
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-A"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-x"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-g"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: "-F"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: NAME
+        kind: positional
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+
+  - name: unset
+    dialect: builtin
+    params:
+      - spec: "-f"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: NAME
+        kind: positional
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+
+  - name: type
+    dialect: builtin
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: "-t"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: "-P"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: NAME
+        kind: positional
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+
+  - name: kill
+    dialect: builtin
+    params:
+      - spec: "-s"
+        kind: option
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: flagValue}
+      - spec: "-n"
+        kind: option
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: flagValue}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: PID
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+
+  - name: printf
+    dialect: builtin
+    params:
+      - spec: "-v"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: FORMAT
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: ARGS
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+
+  - name: pwd
+    dialect: builtin
+    params:
+      - spec: "-P"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: cwd}
+      - spec: "-L"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: cwd}
+
+  - name: test
+    dialect: builtin
+    aliases:
+      - "["
+    params:
+      - spec: "-e"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-x"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: EXPR
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: hash
+    dialect: builtin
+    params:
+      - spec: "-r"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+
+  - name: readonly
+    dialect: builtin
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: NAME
+        kind: positional
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+
+  - name: local
+    dialect: builtin
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: NAME
+        kind: positional
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+
+  - name: command
+    dialect: builtin
+    params:
+      - spec: "-v"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: "-V"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: NAME
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+
+  - name: wait
+    dialect: builtin
+    params:
+      - spec: "-n"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: JOB
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+
+  # -------------------------------------------------------------------------
+  # Effect-bearing extensions (B1). `mapfile`, `history`/`fc`, `enable`,
+  # `help`, `compgen`, `complete`, `bind` and `caller` are not in the
+  # frontend's shellOnlyBuiltins: they touch the history file, read stdin,
+  # spawn processes or mutate shell state in ways the KB describes.
+  # -------------------------------------------------------------------------
+
+  - name: mapfile
+    dialect: builtin
+    aliases:
+      - readarray
+    params:
+      - spec: "-t"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: stdin}
+      - spec: "-n"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "-u"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "-d"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "-c"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "-C"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-O"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: ARRAY
+        kind: positional
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+
+  - name: history
+    dialect: builtin
+    params:
+      - spec: "-c"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: env}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: env}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: env}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: env}
+      - spec: "-p"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: ARGS
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+
+  - name: fc
+    dialect: builtin
+    params:
+      - spec: "-e"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: env}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: env}
+      - spec: FIRST
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: LAST
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+
+  - name: caller
+    dialect: builtin
+    params:
+      - spec: N
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+
+  - name: enable
+    dialect: builtin
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: NAME
+        kind: positional
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+
+  - name: help
+    dialect: builtin
+    params:
+      - spec: "-d"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-m"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: PATTERN
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+
+  - name: compgen
+    dialect: builtin
+    params:
+      - spec: "-a"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-b"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-A"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "-W"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "-F"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-C"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: WORD
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+
+  - name: complete
+    dialect: builtin
+    params:
+      - spec: "-p"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-D"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-A"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-W"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-F"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-C"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: NAME
+        kind: positional
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+
+  - name: bind
+    dialect: builtin
+    params:
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-x"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-m"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-u"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-q"
+        kind: option
+        effect: {kind: EnvRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-P"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: "-e"
+        kind: flag
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
+      - spec: SEQUENCE
+        kind: positional
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: args}
