@@ -1,0 +1,14 @@
+# Pin line endings: store LF in the repository and check LF out on every platform.
+#
+# Git for Windows defaults to core.autocrlf=true, so without these attributes a
+# windows-latest checkout rewrites every text file to CRLF. That is invisible on
+# Linux/macOS (where the checkout stays LF) but breaks two Linux-first gates:
+#
+#   * `gofmt -l .` — gofmt emits LF, so a CRLF file is never "gofmt-clean" and
+#     every .go file is reported as unformatted; and
+#   * the knowledge base's strict YAML reader (kb/loader.go) — a bare `key:` line
+#     arrives as `key:\r` and splitKey rejects it, so the whole KB fails to load.
+#
+# `text=auto` lets git detect and leave binary files alone; `eol=lf` forces LF
+# for everything it treats as text. Do not remove — see CONTRIBUTING.md.
+* text=auto eol=lf

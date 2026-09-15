@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [0011](./0011-ci-tolerant-load-budget.md) for the load-latency acceptance threshold only; the embed-and-version decision stands.
 
 ## Context
 

@@ -524,6 +524,15 @@ func parseYAML(src, name string) (*yamlNode, error) {
 }
 
 func newYAMLParser(src, name string) (*yamlParser, error) {
+	// Normalise line endings before splitting into lines. A Windows checkout
+	// (core.autocrlf) or a CRLF-saved file delivers `\r\n`; the reader is
+	// LF-based, so a bare `key:` line would otherwise arrive as `key:\r` and
+	// splitKey (which needs the `:` followed by whitespace or end-of-line) would
+	// reject the whole document. A lone CR (old-Mac style) is treated as a line
+	// break too. .gitattributes pins LF for the embedded data, so this is
+	// defence in depth against any other CRLF source.
+	src = strings.ReplaceAll(src, "\r\n", "\n")
+	src = strings.ReplaceAll(src, "\r", "\n")
 	p := &yamlParser{name: name}
 	for i, raw := range strings.Split(src, "\n") {
 		no := i + 1

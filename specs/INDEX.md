@@ -25,7 +25,7 @@ For formats and update rules, see [META.md](META.md). For how to use the system,
 | Understand the end-to-end pipeline | [Data Flow](architecture/data-flow.md) |
 | Understand the layering / import rules | [Layer Architecture](architecture/layers.md) |
 | Understand degrade-to-⊤ semantics | [Conservatism](architecture/conservatism.md) |
-| Understand why the IR is frozen / the KB is embedded / ⊤ is used / one module / the tool is named `flowsh` / a public embedding API exists | [Decisions](decisions/_template.md) (ADR-0001 … ADR-0010) |
+| Understand why the IR is frozen / the KB is embedded / ⊤ is used / one module / the tool is named `flowsh` / a public embedding API exists | [Decisions](decisions/_template.md) (ADR-0001 … ADR-0011) |
 | Add a new spec document | [META.md](META.md), [WORKFLOW.md](WORKFLOW.md) |
 
 ## Dependency Graph
@@ -115,7 +115,8 @@ specs/
     ├── 0007-lattice-based-effect-model.md
     ├── 0008-single-go-module.md
     ├── 0009-rename-identity-to-flowsh.md
-    └── 0010-public-embedding-api.md
+    ├── 0010-public-embedding-api.md
+    └── 0011-ci-tolerant-load-budget.md
 ```
 
 ## Full File List
@@ -143,6 +144,7 @@ Every spec file, by path relative to `specs/`:
 - `decisions/0008-single-go-module.md`
 - `decisions/0009-rename-identity-to-flowsh.md`
 - `decisions/0010-public-embedding-api.md`
+- `decisions/0011-ci-tolerant-load-budget.md`
 - `domains/analysis-report.md`
 - `domains/bash-frontend/README.md`
 - `domains/bash-frontend/abstract-exec.md`

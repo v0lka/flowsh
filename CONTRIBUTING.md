@@ -125,6 +125,12 @@ so the same steps run on all three runners:
    budgets are not meaningful under it; those timing tests skip under `-race`
    and still run in step 4).
 
+[`.gitattributes`](.gitattributes) pins `* text=auto eol=lf`, so all three
+runners check the tree out with LF line endings. Keep that file: Git for Windows
+defaults to `core.autocrlf=true`, and without it `windows-latest` would rewrite
+every `.go` file to CRLF (breaking the `gofmt` gate) and hand the knowledge
+base's strict YAML reader CRLF documents (breaking the `kb` load).
+
 Run all of these locally before opening a pull request.
 
 ## The knowledge base
