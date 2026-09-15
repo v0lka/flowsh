@@ -169,9 +169,14 @@ func TestAdversarialInputsAreBounded(t *testing.T) {
 			if p == nil {
 				t.Fatalf("Parse returned nil")
 			}
-			// The per-parse budget is DefaultTimeoutMicros (250 ms); a generous
-			// wall-clock ceiling proves the bound held and nothing hung.
-			if elapsed > 5*time.Second {
+			// The per-parse budget is DefaultTimeoutMicros (250 ms) in an ordinary
+			// build; a generous wall-clock ceiling proves the bound held and
+			// nothing hung. Under the race detector the budget is disabled (see
+			// budget_race.go) and every memory access is instrumented, so a
+			// wall-clock ceiling is not meaningful there — the race build skips
+			// it, exactly as the other wall-clock gates do, while the remaining
+			// assertions below still run.
+			if !raceDetectorEnabled && elapsed > 5*time.Second {
 				t.Fatalf("not bounded: took %s (budget %d µs)", elapsed, DefaultTimeoutMicros)
 			}
 			if p.Top {

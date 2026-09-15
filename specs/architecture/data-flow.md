@@ -80,7 +80,8 @@ Notes on the bash stage:
      │
      ▼
  ps.Parse / ps.ParseTimeout      front/ps/parse.go
-   (gotreesitter grammar; 250 ms wall-clock budget — DefaultTimeoutMicros)
+   (gotreesitter grammar; 250 ms wall-clock budget — DefaultTimeoutMicros,
+    disabled under the race detector, see front/ps/budget_race.go)
    parse stop / timeout / panic ⇒ Program.Top=true, Reason set
      │  *ps.Program  (normalized AST: Stmts, decls of Aliases/Funcs)
      ▼

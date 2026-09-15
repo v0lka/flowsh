@@ -33,9 +33,14 @@ import (
 	"github.com/v0lka/flowsh/engine"
 )
 
-// DefaultTimeoutMicros bounds a single parse. The task budgets hundreds of
-// milliseconds for the whole analysis, so 250 ms per source is generous while
-// still stopping a pathological input at the top element ⊤.
+// DefaultTimeoutMicros bounds a single parse in an ordinary build. The task
+// budgets hundreds of milliseconds for the whole analysis, so 250 ms per source
+// is generous while still stopping a pathological input at the top element ⊤.
+//
+// Parse applies this budget in ordinary builds only: under the race detector a
+// wall-clock budget is not meaningful and would make the result depend on host
+// load, so Parse disables it there (see budget_race.go). ParseTimeout takes an
+// explicit budget in every build, so callers that want to pin one still can.
 const DefaultTimeoutMicros uint64 = 250_000
 
 // ===========================================================================
@@ -246,12 +251,18 @@ func (p *Program) Encode() ([]byte, error) {
 // Parsing
 // ===========================================================================
 
-// Parse parses src under the default timeout. name is used for diagnostics.
+// Parse parses src under the default budget. name is used for diagnostics.
 //
 // Parse never panics and never returns a Go error: an unrecoverable failure is
 // represented as the top element ⊤ (Program.Top with a Reason). Callers that
 // must tell "parsed" from "unparseable" inspect Program.Top.
-func Parse(name, src string) *Program { return ParseTimeout(name, src, DefaultTimeoutMicros) }
+//
+// The default budget is DefaultTimeoutMicros in an ordinary build; under the
+// race detector it is disabled (parseBudgetMicros is 0), because a wall-clock
+// budget is not a meaningful bound for a race-instrumented binary and letting
+// it fire would make the result depend on host load rather than on the source.
+// See budget_race.go / budget_norace.go.
+func Parse(name, src string) *Program { return ParseTimeout(name, src, parseBudgetMicros) }
 
 // ParseTimeout is Parse with an explicit per-parse budget in microseconds. A
 // timeoutMicros of 0 disables the timeout (not recommended for untrusted

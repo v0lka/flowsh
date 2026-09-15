@@ -2,11 +2,12 @@
 
 ## Purpose
 
-`ps` is the PowerShell frontend of the effect IR. It has exactly two responsibilities: `Parse` turns PowerShell source text into a faithful, position-preserving normalized AST using the pure-Go tree-sitter runtime (`gotreesitter`) and its embedded PowerShell grammar under a hard wall-clock budget; `Lower` folds that AST into the frontend-agnostic effect IR, consulting the PowerShell alias and cmdlet tables — never the bash knowledge base. A failing parse (unknown construct, timeout, internal panic) degrades to the top element ⊤ (`CodeExec`) rather than guessing or crashing.
+`ps` is the PowerShell frontend of the effect IR. It has exactly two responsibilities: `Parse` turns PowerShell source text into a faithful, position-preserving normalized AST using the pure-Go tree-sitter runtime (`gotreesitter`) and its embedded PowerShell grammar under a wall-clock budget that the race detector disables; `Lower` folds that AST into the frontend-agnostic effect IR, consulting the PowerShell alias and cmdlet tables — never the bash knowledge base. A failing parse (unknown construct, timeout, internal panic) degrades to the top element ⊤ (`CodeExec`) rather than guessing or crashing.
 
 ## Key Files
 
 - `front/ps/parse.go` — the parser and the normalized AST: `Pos`, `Word`, `Param`, `Binding`, `Redirect`, `Command`, `Assign`, `Kind`, `Stmt`, `Program`, `DefaultTimeoutMicros`, `Parse`/`ParseTimeout`, and the CST `walker`.
+- `front/ps/budget_race.go` / `front/ps/budget_norace.go` — the build-tagged per-parse budget `parseBudgetMicros` (and `raceDetectorEnabled`) `Parse` applies: `DefaultTimeoutMicros` in an ordinary build, `0` (disabled) under the race detector (see [ADR-0012](../decisions/0012-race-advisory-parse-budget.md)).
 - `front/ps/lower.go` — lowering to the IR: `Lower`/`LowerWith`, `lowerer`, `topReason`, `emitSpec`/`emitOne`, `redirs`, `assignment`, `bumpFor`, `finish`, and credential-material detection.
 - `front/ps/aliases.go` — the built-in `Aliases` table, `LookupAlias`, the `Cmdlets` command→effect table, `TargetKind`/`Spec`, the parameter-recognition predicates (`isSwitch`/`pathParam`/`nameParam`/`urlParam`), and the drive/provider helpers.
 - `front/ps/lower_test.go` — lowering tests.
@@ -16,7 +17,8 @@
 ### AST and parse result (`parse.go`)
 
 ```go
-// DefaultTimeoutMicros bounds a single parse: 250 ms.
+// DefaultTimeoutMicros bounds a single parse: 250 ms in an ordinary build.
+// Parse disables it under the race detector (see budget_race.go).
 const DefaultTimeoutMicros uint64 = 250_000
 
 type Word struct {
@@ -184,6 +186,7 @@ A target string is classified by the PowerShell provider its prefix selects (an 
 ## Invariants
 
 - `Parse` never panics and never returns a Go error: an unrecoverable failure is represented as ⊤ (`Program.Top` with a `Reason`); callers distinguish "parsed" from "unparseable" by inspecting `Program.Top`.
+- `Parse` is deterministic under the race detector: the wall-clock budget is disabled there (`parseBudgetMicros = 0`), so a benign source never flips to ⊤ because of scheduling or GC; the parser's deterministic iteration/node/depth limits still bound the parse.
 - A ⊤ program carries a reason and no statements (`Program.Validate`).
 - A `function_statement` body is **not** descended, so a function body is never mistaken for executed code.
 - A static .NET invocation `[Type]::Method(…)` (including `[ScriptBlock]::Create`) lowers to ⊤ (`KindTop`).
@@ -196,7 +199,7 @@ A target string is classified by the PowerShell provider its prefix selects (an 
 
 ## Configuration
 
-- `DefaultTimeoutMicros = 250_000` (250 ms) — the per-parse budget; `ParseTimeout(…, 0)` disables it (not recommended for untrusted input).
+- `DefaultTimeoutMicros = 250_000` (250 ms) — the per-parse budget in an ordinary build. `Parse` disables it under the race detector (`parseBudgetMicros`, `front/ps/budget_race.go`), because a wall-clock budget is not meaningful when every memory access is instrumented and letting it fire would make the result depend on host load. `ParseTimeout(…, 0)` disables it explicitly in any build (not recommended for untrusted input).
 - `Options.Windows` — enables the Registry provider; `Lower` defaults it to `runtime.GOOS == "windows"`. The composition facade (`internal/analysis.Options.Windows`, tri-state) and the CLI (`--windows[=bool]`) expose it, so the Registry branches can be forced on or off independently of the host OS.
 - `StylePS = "ps"` — the dialect label on every result.
 - `credentialMarkers` — the substrings (`.ssh`, `id_rsa`, `password`, `.aws`, …) whose presence in a command's text marks a filesystem read as a `CredAccess` effect.

@@ -128,10 +128,15 @@ single decision point for the constructs the task pins:
 | unknown command | Direct | `⊤ unknown command …` | `front/ps/lower.go` |
 | unparseable program / timeout | Direct | the parse `Reason` | `front/ps/lower.go`, `front/ps/parse.go` |
 
-Parse itself is bounded: `DefaultTimeoutMicros = 250_000` (250 ms) bounds one
-parse (`front/ps/parse.go`); a stop, timeout or internal failure becomes
-`Program.Top = true` with a `Reason`, and `Lower` then emits ⊤ and nothing else.
-`ps.Lower` also treats a nil program as ⊤ (`front/ps/lower.go`).
+Parse itself is bounded: in an ordinary build `DefaultTimeoutMicros = 250_000`
+(250 ms) bounds one parse (`front/ps/parse.go`); under the race detector the
+wall-clock budget is disabled (`front/ps/budget_race.go`), because a wall-clock
+bound would otherwise make the result depend on host load — see
+[ADR-0012](../decisions/0012-race-advisory-parse-budget.md). Either way a stop,
+timeout or internal failure becomes `Program.Top = true` with a `Reason`, and
+`Lower` then emits ⊤ and nothing else; the parser's deterministic
+iteration/node/depth limits still bound the parse. `ps.Lower` also treats a nil
+program as ⊤ (`front/ps/lower.go`).
 
 ## No-silent-miss invariant
 

@@ -116,7 +116,8 @@ specs/
     ├── 0008-single-go-module.md
     ├── 0009-rename-identity-to-flowsh.md
     ├── 0010-public-embedding-api.md
-    └── 0011-ci-tolerant-load-budget.md
+    ├── 0011-ci-tolerant-load-budget.md
+    └── 0012-race-advisory-parse-budget.md
 ```
 
 ## Full File List
@@ -145,6 +146,7 @@ Every spec file, by path relative to `specs/`:
 - `decisions/0009-rename-identity-to-flowsh.md`
 - `decisions/0010-public-embedding-api.md`
 - `decisions/0011-ci-tolerant-load-budget.md`
+- `decisions/0012-race-advisory-parse-budget.md`
 - `domains/analysis-report.md`
 - `domains/bash-frontend/README.md`
 - `domains/bash-frontend/abstract-exec.md`
