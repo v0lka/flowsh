@@ -143,6 +143,51 @@ base's strict YAML reader CRLF documents (breaking the `kb` load).
 
 Run all of these locally before opening a pull request.
 
+## Releasing
+
+Releases are cut by pushing a `vX.Y.Z` tag; nothing else is required:
+
+```sh
+git tag -a v0.1.0 -m "v0.1.0"
+git push origin v0.1.0
+```
+
+The push triggers [`.github/workflows/release.yml`](.github/workflows/release.yml),
+which:
+
+1. validates the tag matches `vX.Y.Z` (a tag such as `v1.2` fails fast);
+2. re-runs the security-relevant gates (`go vet ./...`, `go test ./... -count=1`)
+   on the tagged commit — a tag can point at a commit that never went through
+   pull-request CI;
+3. runs [GoReleaser](https://goreleaser.com) ([`.goreleaser.yaml`](.goreleaser.yaml))
+   to cross-compile the supported matrix — `linux/amd64`, `linux/arm64`,
+   `darwin/arm64`, `windows/amd64` — package each binary (`.tar.gz`, or `.zip`
+   on Windows), write `checksums.txt`, and publish a GitHub Release; and
+4. attests SLSA build provenance for the released files.
+
+The tag is stamped into the binary (`main.buildVersion`, injected with
+`-ldflags`), so `flowsh --version` prints it below the frozen contract tags:
+
+```sh
+$ flowsh --version
+flowsh/v1
+effect-ir/v1
+flowsh 0.1.0
+```
+
+Verify a downloaded release:
+
+```sh
+shasum -a 256 -c checksums.txt   # sha256sum -c on Linux
+gh attestation verify flowsh_0.1.0_linux_amd64.tar.gz --repo v0lka/flowsh
+```
+
+To build the release artifacts locally without publishing anything:
+
+```sh
+goreleaser release --snapshot --clean
+```
+
 ## The knowledge base
 
 `kb/` holds the embedded, hand-verified dataset of command and parameter effects.

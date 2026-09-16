@@ -34,3 +34,6 @@ go.work.sum
 # Built flowsh binary
 /flowsh
 /flowsh.exe
+
+# GoReleaser local build output (see .goreleaser.yaml)
+/dist/

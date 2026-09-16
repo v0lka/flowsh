@@ -64,6 +64,13 @@ const (
 	exitInput    = 3 // the named input source could not be read, or was empty
 )
 
+// buildVersion is the release build stamp, injected by the linker at release
+// time (`-ldflags "-X main.buildVersion={{ .Version }}"`, see .goreleaser.yaml).
+// A plain `go build`/`go test` leaves it empty, and an empty value is not
+// printed. It is additive build metadata only: the frozen report-contract
+// versions below (api.ToolVersion, engine.SchemaVersion) are never affected.
+var buildVersion string
+
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 // usageError marks an invocation error: it is the caller's mistake (a bad flag,
@@ -142,6 +149,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if o.version {
 		fprint(stdout, "%s\n", api.ToolVersion)
 		fprint(stdout, "%s\n", engine.SchemaVersion)
+		if buildVersion != "" {
+			fprint(stdout, "flowsh %s\n", buildVersion)
+		}
 		return exitOK
 	}
 

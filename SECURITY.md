@@ -280,6 +280,13 @@ The report deliberately embeds attacker-controlled text. Requirements:
   **security-sensitive changes**: they directly change the guard's verdicts.
 - Releases MUST be tagged and, where the distribution channel supports it,
   signed, so consumers can verify the binary that produces the report.
+- Releases are cut by [`.github/workflows/release.yml`](.github/workflows/release.yml)
+  when a `vX.Y.Z` tag is pushed. The workflow re-runs `go vet` and the test
+  gates on the tagged commit, then GoReleaser ([`.goreleaser.yaml`](.goreleaser.yaml))
+  builds the supported OS/arch matrix (linux/amd64, linux/arm64, darwin/arm64,
+  windows/amd64), writes a SHA-256 `checksums.txt` and publishes a GitHub
+  Release; a follow-up job attests SLSA build provenance over the released
+  bytes, verifiable with `gh attestation verify <file> --repo v0lka/flowsh`.
 
 ---
 
@@ -648,6 +655,8 @@ repository:
 | File | Purpose |
 | ---- | ------- |
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) | CI gate (matrix: `ubuntu-latest`, `windows-latest`, `macos-latest`): `gofmt`, `go build`, `go vet`, `golangci-lint`, `deadcode -test`, docs hygiene (no unresolved placeholders in [SECURITY.md](SECURITY.md); links resolve), corpus + latency/recall tests (incl. the CLI smoke test [`cmd/flowsh/smoke_test.go`](cmd/flowsh/smoke_test.go)), bench smoke, `go test -race` (Linux only); pins `permissions: contents: read`. |
+| [.github/workflows/release.yml](.github/workflows/release.yml) | Release pipeline, triggered by a `vX.Y.Z` tag: validates the tag shape, re-runs `go vet` and the test gates on the tagged commit, then GoReleaser publishes a GitHub Release (OS/arch archives + `checksums.txt`); a second job attests SLSA build provenance (`actions/attest-build-provenance`). Least privilege: the workflow pins `permissions: contents: read` and widens per job (`contents: write` to publish; `id-token`/`attestations` to attest). |
+| [.goreleaser.yaml](.goreleaser.yaml) | GoReleaser release configuration: cross-build matrix, `-ldflags` build stamp, archive naming, SHA-256 checksums and changelog generation. |
 | [go.mod](go.mod) / [go.sum](go.sum) | Dependency graph and exact-version pinning (hash verification). |
 | [kb/data/](kb/data) (`bsd`, `builtins`, `coreutils`, `destructive`, `findutils`, `net`, `remote`, `util-linux`.yaml) | Embedded, reviewed knowledge-base dataset — security-sensitive to change. |
 | [kb/schema.go](kb/schema.go) | Frozen, versioned knowledge-base document schema (`effect-kb/v2`). |

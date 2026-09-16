@@ -1,0 +1,84 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+#
+# Release configuration for flowsh.
+#
+# Driven by .github/workflows/release.yml, which runs this on a `vX.Y.Z` tag.
+# GoReleaser cross-compiles the CLI for the supported OS/arch matrix, packages
+# each binary into an archive, writes a SHA-256 checksums file and publishes a
+# GitHub Release. Build-provenance attestation is added by a separate job in the
+# release workflow (the GitHub attestations store, not GoReleaser).
+#
+# The build is deliberately reproducible: no build date or commit hash is
+# injected and mod_timestamp is pinned to the commit time, so the same tag
+# produces byte-identical binaries and therefore stable checksums.
+version: 2
+
+project_name: flowsh
+
+builds:
+  - id: flowsh
+    main: ./cmd/flowsh
+    binary: flowsh
+    # The knowledge base is embedded (go:embed) and the analyser has no runtime
+    # dependencies, so a static, CGO-free binary is all that is needed.
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # Trim the full goos x goarch matrix down to the four targets the release
+    # ships: linux/amd64, linux/arm64, darwin/arm64, windows/amd64.
+    ignore:
+      - goos: darwin
+        goarch: amd64
+      - goos: windows
+        goarch: arm64
+    flags:
+      - -trimpath
+    ldflags:
+      # -s -w drop the symbol table and DWARF. main.buildVersion is the additive
+      # build stamp printed by `flowsh --version`; the frozen report-contract
+      # versions (flowsh/v1, effect-ir/v1) are source constants and unaffected.
+      - -s -w -X main.buildVersion={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: flowsh
+    # tar.gz everywhere, zip on Windows (the platform convention).
+    formats: ["tar.gz"]
+    format_overrides:
+      - goos: windows
+        formats: ["zip"]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "^style:"
+      - "Merge pull request"
+      - "Merge branch"
+
+release:
+  # One release per tag; the tag itself is the release name.
+  name_template: "{{ .Tag }}"
+  draft: false
+  # vX.Y.Z tags are full releases; a pre-release suffix (if ever allowed) would
+  # be marked automatically.
+  prerelease: auto

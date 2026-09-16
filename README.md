@@ -26,7 +26,25 @@ The module is `github.com/v0lka/flowsh`; the public binary is `flowsh`.
 The command knowledge base is embedded in the binary, so a built `flowsh` has
 no runtime dependencies.
 
-## Build & install
+## Install
+
+### Prebuilt binaries
+
+Prebuilt binaries for the supported platforms — `linux/amd64`, `linux/arm64`,
+`darwin/arm64` and `windows/amd64` — are published on the
+[releases page](https://github.com/v0lka/flowsh/releases). Download the archive
+for your platform, check it against `checksums.txt`, and put the `flowsh`
+binary on your `PATH`:
+
+```sh
+shasum -a 256 -c checksums.txt   # sha256sum -c on Linux
+gh attestation verify flowsh_<version>_linux_amd64.tar.gz --repo v0lka/flowsh
+```
+
+New releases are cut by pushing a `vX.Y.Z` tag; see
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
+### From source
 
 From a checkout of this repository:
 

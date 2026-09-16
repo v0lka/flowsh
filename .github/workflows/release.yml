@@ -1,0 +1,117 @@
+name: release
+
+# Cut a release by pushing a `vX.Y.Z` tag:
+#
+#   git tag -a v0.1.0 -m "v0.1.0"
+#   git push origin v0.1.0
+#
+# The tag glob below is intentionally broad (`v*.*.*`) because GitHub tag
+# filters are globs, not regexes; the "validate tag" step then pins the exact
+# `vX.Y.Z` shape, so a malformed tag (v1.2, v1.2.3-rc1, vNext) fails fast
+# instead of publishing a broken release.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+# Least privilege: the workflow starts read-only and each job widens only the
+# scopes it needs (see SECURITY.md — Build, Release & Supply-Chain Integrity).
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: build & publish (${{ github.ref_name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # create the GitHub Release and upload the assets
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          # GoReleaser needs the full history and every tag to resolve the
+          # previous release and build the changelog.
+          fetch-depth: 0
+
+      - name: validate tag
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release tags must match vX.Y.Z, got '$tag'"
+            exit 1
+          fi
+
+      - name: setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: verify module graph
+        # Pinned, hash-verified dependencies (SECURITY.md — Dependency
+        # Management). Downloading up front also keeps GoReleaser's parallel
+        # cross-builds from racing on the module cache.
+        run: |
+          go mod download
+          go mod verify
+
+      - name: gates
+        # Re-run the security-relevant gates on the exact tagged commit before
+        # anything is published: a tag can point at a commit that never went
+        # through pull-request CI.
+        run: |
+          go vet ./...
+          go test ./... -count=1
+
+      - name: run goreleaser
+        # Builds the OS/arch matrix, writes checksums.txt and publishes the
+        # GitHub Release (config: .goreleaser.yaml).
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  provenance:
+    name: SLSA build-provenance attestation
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # download the published release assets
+      id-token: write # OIDC signing of the attestation
+      attestations: write # persist the attestation
+    steps:
+      - name: download published assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dist
+          gh release download "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" --dir dist
+
+      - name: attest build provenance
+        # Signs a SLSA provenance statement over the exact released bytes and
+        # stores it in the repository's attestation store, so a consumer can
+        # verify the archive that produced their report with:
+        #
+        #   gh attestation verify <file> --repo $GITHUB_REPOSITORY
+        id: attest
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: "dist/*"
+
+      - name: attestation summary
+        if: always()
+        run: |
+          {
+            echo "### Provenance attestation"
+            echo ""
+            echo "- Attestation ID: \`${{ steps.attest.outputs.attestation-id }}\`"
+            echo "- Attestation URL: ${{ steps.attest.outputs.attestation-url }}"
+            echo "- Verify a download with: \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\`"
+          } >> "$GITHUB_STEP_SUMMARY"
