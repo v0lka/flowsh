@@ -2,9 +2,9 @@
 
 `flowsh --json '<command>'` writes a single JSON document to stdout. That
 document is a **frozen wire contract**: consumers read it without importing the
-Go packages, so they pin to its version tags. This guide documents the document
-field by field and how to read it. The normative statement of the contract — and
-the breaking-change checklist — is
+Go packages, so they pin to its version tags. This guide describes that document
+field by field and explains how to read it. The normative statement of the
+contract, and the breaking-change checklist, is
 [`specs/contracts/report-json.md`](../specs/contracts/report-json.md).
 
 For the command line itself, see the [CLI user-guide](cli.md).
@@ -17,11 +17,11 @@ Every report carries three identity fields:
 | --- | ----- | ------- |
 | `schemaVersion` | `effect-ir/v1` | Tags the **effect payload** (`effects[]` and its atoms). Equal to `engine.SchemaVersion`. |
 | `tool` | `flowsh` | The tool name (`analysis.ToolName`). |
-| `toolVersion` | `flowsh/v1` | Tags the **CLI report shape** — the envelope plus the additive `why`, `resolution` and `destructive` fields over v1. Equal to `analysis.ToolVersion`. |
+| `toolVersion` | `flowsh/v1` | Tags the **CLI report shape**: the envelope plus the additive `why`, `resolution` and `destructive` fields over v1. Equal to `analysis.ToolVersion`. |
 
 A consumer that parses the effect set pins to `effect-ir/v1`; a consumer that
 reads the CLI-specific fields pins to `flowsh/v1`. Any change to the shape of an
-emitted field bumps the corresponding tag — the analyser never renames or removes
+emitted field bumps the corresponding tag; the analyser never renames or removes
 a field silently.
 
 ## Example document
@@ -85,7 +85,7 @@ $ flowsh --json 'rm -rf $HOME'
 
 (The `why` trace is shortened here for width; a real trace carries one step per
 supporting flag/operand/source/sink. Keys are emitted in the struct's declaration
-order, and the encoding is indent-frozen — the golden fixtures under
+order, and the encoding is indent-frozen; the golden fixtures under
 [`engine/testdata/`](../engine/testdata/) pin the exact bytes.)
 
 ## Envelope fields
@@ -133,7 +133,7 @@ Each element of `effects[]` is one implied effect:
 | `taint` | object | `{ "labels": [string], "arbitrary": bool }` — provenance labels; `arbitrary: true` marks ⊤ provenance. |
 | `reversible` | bool | Whether the effect can be undone. |
 
-An effect's stable identity — used as the key in `why[].effect` and `score.exfilPairs` — is `kind|mode|[targets]`. The `[targets]` part is the target set with each target's `\`, `,` and `]` backslash-escaped, so a target containing them cannot forge a set boundary and the key stays injective: a Windows target `C:\Windows` renders as `C:\\Windows`, and a single target `a,b` renders as `[a\,b]` (distinct from the two-target set `[a,b]`). For targets containing none of those three bytes — ordinary POSIX text — the spelling is unchanged (e.g. `FSWrite|Direct|[/root]`).
+An effect's stable identity, used as the key in `why[].effect` and `score.exfilPairs`, is `kind|mode|[targets]`. The `[targets]` part is the target set with each target's `\`, `,` and `]` backslash-escaped, so a target containing them cannot forge a set boundary and the key stays injective: a Windows target `C:\Windows` renders as `C:\\Windows`, and a single target `a,b` renders as `[a\,b]` (distinct from the two-target set `[a,b]`). For targets containing none of those three bytes (ordinary POSIX text), the spelling is unchanged (e.g. `FSWrite|Direct|[/root]`).
 
 ### score
 
@@ -147,7 +147,7 @@ An effect's stable identity — used as the key in `why[].effect` and `score.exf
 | `confidence` | integer | Weakest-link confidence across effects, `0`–`100`. |
 | `reversible` | bool | True iff every effect is reversible. |
 | `grade` | string | The joined headline grade across the dimensions above. |
-| `exfilPairs` | array | Detected credential-egress pairings (omitted when none) — see below. |
+| `exfilPairs` | array | Detected credential-egress pairings (omitted when none; see below). |
 
 Each `exfilPairs[]` element is `{ "source": effect, "sink": effect }`, where
 `source` is the secret read (a `CredAccess`, or an `FSRead`/`FSMeta` of a
@@ -167,8 +167,8 @@ The object always carries the *most informative* resolution observed across the
 program's calls. It is the zero value `{ "kind": "" }` whenever no call reached
 the binder: on the PowerShell path (which resolves through its own alias/cmdlet
 tables), and on the bash path for a program whose statements are not command
-invocations — a bare assignment, a redirection, or a pure shell-state builtin
-(`true`, `:`, …) — none of which are routed to the binder. The `assignment` and
+invocations (a bare assignment, a redirection, or a pure shell-state builtin
+such as `true` or `:`), none of which are routed to the binder. The `assignment` and
 `empty` kinds are emitted only when such a statement is passed to the binder
 directly (e.g. through `bind.Bind`); the bash frontend executes them itself.
 
@@ -207,14 +207,14 @@ Each step:
 
 ## Reading the result
 
-- `effects` is always an array — empty (`[]`), never `null`. A non-empty list
-  means the analyser resolved the command against its knowledge base.
+- `effects` is always an array, never `null`; it may be empty (`[]`). A non-empty
+  list means the analyser resolved the command against its knowledge base.
 - `top: true` (or `conservative: true`) means the analyser could not fully bound
   the input: treat it as "unknown, potentially anything". `reason` explains why.
-- The invariant the corpus enforces is **no silent miss**: every analysed command
-  yields either at least one effect *or* a ⊤/conservative report — never an empty
-  "all clear". A consumer can replicate the check with `len(effects) > 0 ||
-  top || conservative`.
+- The invariant the corpus enforces is no silent miss. Every analysed command
+  yields at least one effect or a ⊤/conservative report, never an empty "all
+  clear". A consumer can replicate the check with `len(effects) > 0 || top ||
+  conservative`.
 
 ## Stability and breaking changes
 

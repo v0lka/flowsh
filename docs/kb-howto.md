@@ -27,7 +27,7 @@ kb/data/*.yaml  ──▶  effects on a bound command  ──▶  a corpus case 
 Every document declares the same frozen schema version, `effect-kb/v2`; a
 document authored against an unknown version is rejected rather than mis-read.
 The full list of documents and the commands each covers is in the
-[knowledge-base spec](../specs/domains/knowledge-base.md) — the files remain the
+[knowledge-base spec](../specs/domains/knowledge-base.md); the files remain the
 single source of truth.
 
 ## Workflow
@@ -37,7 +37,7 @@ single source of truth.
 Choose the `kb/data/*.yaml` document for the command's tradition (e.g.
 `coreutils.yaml` for POSIX/GNU utilities, `net.yaml` for network clients,
 `destructive.yaml` for the destructive table). Adding a **new** `*.yaml` file is
-also fine — discovery is automatic — but keep one tradition per document.
+also fine, since discovery is automatic, but keep one tradition per document.
 
 ### 2. Add the command entry
 
@@ -72,7 +72,7 @@ commands:
 | `params[].effect.kind` | effect kind | From the core's closed set (`FSRead`, `FSWrite`, `NetEgress`, `CredAccess`, …). |
 | `params[].effect.mode` | `Direct` \| `Transitive` \| `Ambient` \| `Conditional` | How the effect happens. |
 | `params[].effect.valueFrom` | `args` \| `flagValue` \| `stdin` \| `env` \| `cwd` \| `self` \| `literal` | Which token of the invocation becomes the effect's target. |
-| `params[].effect.fileRef` | bool | Optional; `@file` convention — only valid with `valueFrom: flagValue`. |
+| `params[].effect.fileRef` | bool | Optional; `@file` convention, valid only with `valueFrom: flagValue`. |
 
 Use the conservative default when unsure: leave the parameter unmapped and the
 analysis degrades to ⊤, rather than claiming a narrower effect than is true.
@@ -92,7 +92,7 @@ destructive:
 ```
 
 Every entry **must reference a parameter that is actually declared on a known
-command** — the loader enforces this referential integrity. A matched entry joins
+command**; the loader enforces this referential integrity. A matched entry joins
 (raises) the report's `destructiveness` and `grade`; it never lowers them.
 
 ### 4. Add a corpus case
@@ -155,8 +155,8 @@ The loader enforces these, and a violation fails the build or the tests:
 - a command belongs to exactly one dialect, and every dialect is exercised by at
   least one command.
 
-The guiding rule is **degrade to ⊤, never guess**: a parameter you cannot map is
-better left unmapped than approximated.
+The guiding rule is to degrade to ⊤ rather than guess: a parameter you cannot map
+is better left unmapped than approximated.
 
 ## See also
 

@@ -8,7 +8,7 @@ Before making any change, read [`SECURITY.md`](SECURITY.md): it contains the
 threat model, trust boundaries, secure-coding guidelines, and hard constraints
 (including agentic controls). A contribution that violates those rules will be
 rejected. For deep structural changes, also read the relevant document in
-[`specs/`](specs/) — start at [`specs/INDEX.md`](specs/INDEX.md).
+[`specs/`](specs/), starting at [`specs/INDEX.md`](specs/INDEX.md).
 
 ## Repository layout
 
@@ -30,7 +30,7 @@ rejected. For deep structural changes, also read the relevant document in
 ### Layers and dependency direction
 
 Each layer is a Go package (or package tree) with an exclusive responsibility.
-Imports point strictly downward — there are no cycles and no upward edges:
+Imports point strictly downward, with no cycles and no upward edges:
 
 ```
 cmd/flowsh
@@ -61,18 +61,18 @@ Module-internal imports per layer:
 
 ### The two invariants
 
-Most changes must respect these; both are enforced by tests, not convention:
+Most changes must respect both, and tests enforce them:
 
 1. **One-way dependency.** The core (`engine`) never imports a frontend or the
    knowledge base. `TestCoreDoesNotImportFrontends` fails if `engine` gains any
    import beyond the standard library and the module's own core packages. This is
    what lets a new frontend be added without touching the core.
 2. **Degrade to ⊤.** Every layer degrades to the top element (⊤) rather than
-   guessing or crashing. Analysis is total and deterministic — the frontends
+   guessing or crashing. Analysis is total and deterministic: the frontends
    never fail on hard input, so `Analyze` always returns a non-nil report.
 
-The composition of frontends + binder + core therefore can live only *above*
-them — that is why the facade is in `internal/`.
+The composition of frontends, binder and core can therefore live only *above*
+them, which is why the facade is in `internal/`.
 
 ### The analysis pipeline
 
@@ -108,8 +108,8 @@ go run ./cmd/flowsh --lang bash --json 'rm -rf $HOME'
 
 ### CI gates
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs, on every push and PR,
-on a three-OS matrix — `ubuntu-latest`, `windows-latest`, and `macos-latest` —
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and PR
+across a three-OS matrix (`ubuntu-latest`, `windows-latest`, and `macos-latest`),
 so the same steps run on all three runners:
 
 1. **gofmt** — the tree must be `gofmt`-clean.
@@ -183,8 +183,8 @@ documents:
 | `ps_cases.json` | `ps` | PowerShell-specific recall cases. |
 | `benign_bash.json` | `benign` | Ordinary commands (precision control). |
 
-Every non-benign case must be classified as **effect present or ⊤** — the
-"no silent miss" invariant. Benign cases may legitimately yield no effect, so
+Every non-benign case must be classified as **effect present or ⊤** (the
+"no silent miss" invariant). Benign cases may legitimately yield no effect, so
 they are excluded from that invariant.
 
 The GuardFall class letters are: `A` quoting/escaping fragments, `B` separator
@@ -248,4 +248,4 @@ Update the relevant spec alongside any structural change.
 - Keep changes focused; update specs and corpus cases together with code.
 - Ensure `gofmt -l .` is empty, and `go build ./...`, `go vet ./...` and
   `go test ./...` all pass locally.
-- Do not weaken an invariant to make a test pass — fix the analysis instead.
+- Do not weaken an invariant to make a test pass; fix the analysis instead.

@@ -1,23 +1,21 @@
 # flowsh
 
-`flowsh` is a static effect analyser for shell and PowerShell commands. Given a
-command line — bash/POSIX or PowerShell — it reports the **observable effects** the
-command implies *without running it*: filesystem access, environment changes,
+`flowsh` is a static effect analyser for shell and PowerShell commands. Give it a
+command line, in bash/POSIX or PowerShell, and it reports the observable effects
+that command implies without running it: filesystem access, environment changes,
 network traffic, process control, credential access, code execution, and more.
-It also emits a composite risk **score**, a **destructiveness** rating, and any
-**credential-exfiltration** flows it can prove (e.g. a secret read piped to a
-network sink).
+It also produces a composite risk score, a destructiveness rating, and any
+credential-exfiltration flows it can prove, such as a secret read piped to a
+network sink.
 
-It is designed for the "look before you leap" case: CI gates, pre-execution
-review, sandbox/agent guardrails, and security triage of untrusted command
-strings.
+It is built for the look-before-you-leap case: CI gates, pre-execution review,
+sandbox and agent guardrails, and security triage of untrusted command strings.
 
-- **Static, not sandboxed** — it parses and reasons about the command; it never
-  executes it.
-- **Conservative by construction** — where the analysis cannot bound an input it
-  degrades to the top element (⊤) and says so, instead of guessing or missing it.
-- **Two dialects** — bash/POSIX and PowerShell in one binary.
-- **Machine-readable + human-readable** — a JSON report or a one-screen summary.
+- **Static.** It parses and reasons about the command; it never runs it.
+- **Conservative.** Where the analysis cannot bound an input, it degrades to the
+  top element (⊤) and says so, instead of guessing or missing it.
+- **Two dialects.** bash/POSIX and PowerShell in one binary.
+- **Two output formats.** A JSON report or a one-screen summary.
 
 The module is `github.com/v0lka/flowsh`; the public binary is `flowsh`.
 
@@ -49,8 +47,8 @@ go test ./...
 
 ## Use as a library
 
-`flowsh` is also an **embeddable Go library**, not just a CLI. Import the public
-package `github.com/v0lka/flowsh/api` and analyse a command in-process:
+`flowsh` is also an embeddable Go library. Import the public package
+`github.com/v0lka/flowsh/api` and analyse a command in-process:
 
 ```go
 import "github.com/v0lka/flowsh/api"
@@ -62,11 +60,11 @@ if err != nil {
 data, err := rep.Encode() // the same canonical JSON `flowsh --json` writes
 ```
 
-Only `api` is public: the composition facade `internal/analysis` and the rest of
-the module are not importable outside `github.com/v0lka/flowsh`. See
-[Embedding the analyser (Go library)](docs/embedding.md) for the full guide —
-the import path, the `Analyze`/`AnalyzeWith` workflow, the exported surface, and
-the `schemaVersion`/`toolVersion` stability policy.
+Only `api` is public. The composition facade `internal/analysis` and the rest of
+the module cannot be imported from outside `github.com/v0lka/flowsh`. See
+[Embedding the analyser (Go library)](docs/embedding.md) for the full guide: the
+import path, the `Analyze`/`AnalyzeWith` workflow, the exported surface, and the
+`schemaVersion`/`toolVersion` stability policy.
 
 ## Usage
 
@@ -153,13 +151,13 @@ flowsh effect report
 
 ### A complex, fully-resolved malicious script
 
-`flowsh` reasons about whole scripts, not just single commands. The payload
-below is deliberately tangled — nested shell functions, an alias, multi-stage
-pipelines, a conditional, a `for` loop, a subshell, input/output redirections, a
-raw `/dev/tcp` command channel, a `timeout` wrapper, host-environment recon and
-device-level wipes — and
-yet every construct resolves against the knowledge base. Nothing degrades to ⊤,
-and the credential-exfiltration dataflow is *proved*, not merely guessed:
+`flowsh` reasons about whole scripts, not just single commands. The payload below
+is deliberately tangled: nested shell functions, an alias, multi-stage pipelines,
+a conditional, a `for` loop, a subshell, input/output redirections, a raw
+`/dev/tcp` command channel, a `timeout` wrapper, host-environment recon, and
+device-level wipes. Every construct still resolves against the knowledge base,
+nothing degrades to ⊤, and the credential-exfiltration dataflow is proved rather
+than guessed:
 
 ```bash
 #!/usr/bin/env bash
@@ -231,19 +229,18 @@ flowsh effect report
 *(The `input:` line echoes the entire script on one line; it is abbreviated here
 for width. Everything else is verbatim tool output.)*
 
-The two `exfil:` lines are the payoff: `flowsh` joined a **secret read** — the
-SSH key vault, the cloud-credential store, or the `curl -u` credential — to the
-**tainted `NetEgress`** through a real per-command data flow, and raised the
-exfiltration risk to `Critical`. Fourteen of the fifteen effect kinds (everything
-except the ⊤ `CodeExec`) are reported with concrete targets, and
-`conservative: false` / `top: false` confirm the analysis never had to fall back
-to ⊤. Passing `--json` emits the same finding structurally, as
-`score.exfilPairs`.
+The two `exfil:` lines are the point. `flowsh` joined a secret read (the SSH key
+vault, the cloud-credential store, or the `curl -u` credential) to the tainted
+`NetEgress` through a real per-command data flow, and raised the exfiltration
+risk to `Critical`. Fourteen of the fifteen effect kinds are reported with
+concrete targets; the exception is the ⊤ `CodeExec`. The `conservative: false`
+and `top: false` flags confirm the analysis never had to fall back to ⊤. Passing
+`--json` emits the same finding structurally, as `score.exfilPairs`.
 
 ### Conservative degradation to ⊤
 
-When a command cannot be resolved — an unknown binary, or dynamically named code —
-`flowsh` reports the top effect rather than a false negative:
+When a command cannot be resolved (an unknown binary, or dynamically named
+code), `flowsh` reports the top effect rather than a false negative:
 
 ```sh
 $ flowsh 'frobnicate --wat /y'
@@ -354,11 +351,11 @@ guard).
 - A non-empty `effects` list means the analyser resolved the command against its
   knowledge base and found concrete effects.
 - `top: true` (or `conservative: true`) means the analyser could not fully bound
-  the input. Treat it as "unknown, potentially anything" — a benign-looking
-  command with `top: true` should not be trusted as safe.
-- The invariant the corpus enforces is **no silent miss**: every analysed command
-  must yield either at least one effect *or* a ⊤/conservative report — never an
-  empty "all clear".
+  the input. Treat it as unknown, potentially anything: a benign-looking command
+  with `top: true` should not be trusted as safe.
+- The invariant the corpus enforces is no silent miss. Every analysed command
+  must yield at least one effect or a ⊤/conservative report, never an empty "all
+  clear".
 
 ## Documentation
 

@@ -1,7 +1,7 @@
 # Documentation index
 
-User-facing guides for `flowsh`. For what the tool is and why, start at the
-[project README](../README.md); for the normative specification of the system
+User-facing guides for `flowsh`. For an introduction to the tool, start at the
+[project README](../README.md). For the normative specification of the system
 (IR, schemas, import rules and decisions), see
 [`specs/`](../specs/INDEX.md).
 
@@ -13,8 +13,8 @@ User-facing guides for `flowsh`. For what the tool is and why, start at the
 | [Adding a command to the knowledge base](kb-howto.md) | The author workflow for the effect dataset under `kb/data/`. |
 | [Development roadmap](development/roadmap.md) | The work taxonomy (`A`/`B`/`C`/`D`) and the status of each item. |
 
-The guides here are **descriptive**; where they and
+These guides are descriptive. Where they and
 [`specs/`](../specs/INDEX.md) disagree, the specification is authoritative.
-Contributor-facing material — architecture, layering rules, the conformance
-corpus, and how to extend the project — lives in
+Contributor-facing material (architecture, layering rules, the conformance
+corpus, and how to extend the project) lives in
 [`CONTRIBUTING.md`](../CONTRIBUTING.md).

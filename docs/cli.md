@@ -1,9 +1,9 @@
 # CLI user-guide
 
-`flowsh` is a static effect analyser: you give it a shell or PowerShell
-command, it reports the observable effects that command implies *without running
-it*, plus a risk score and any credential-exfiltration flows it can prove. This
-guide covers the command-line interface. For what the tool is and why, see the
+`flowsh` is a static effect analyser: you give it a shell or PowerShell command,
+and it reports the observable effects that command implies *without running it*,
+plus a risk score and any credential-exfiltration flows it can prove. This guide
+covers the command-line interface. For an introduction to the tool, see the
 [project overview](../README.md); for the structure of the machine-readable
 output, see the [JSON report reference](report-json.md).
 
@@ -47,8 +47,8 @@ positional command or with `-`.
 
 With `--batch`, the selected source is read as **many commands, one per line**:
 each non-blank line is analysed on its own and written as one compact JSON
-report per line (NDJSON), in input order. This is how you scan a whole script or
-a list of commands in one invocation.
+report per line (NDJSON), in input order. One invocation is enough to scan a
+whole script or a long list of commands.
 
 ## Options
 
@@ -208,7 +208,7 @@ $ flowsh --lang auto 'Get-Content ~/.aws/credentials'
 ```
 
 `--lang auto` sniffs the input: PowerShell cmdlets/aliases/parameters select
-`posh`, otherwise `bash` is used (including POSIX input). It never fails — a
+`posh`, otherwise `bash` is used (including POSIX input). It never fails: a
 command with no distinctive markers is treated as bash.
 
 ### PowerShell

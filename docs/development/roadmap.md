@@ -3,8 +3,8 @@
 This is the working taxonomy of flowsh's build-out: the work items referenced
 across the code, tests, knowledge-base data and specifications by short IDs
 (`A2`, `B6`, `C4`, `D6`, …). Each item records what the ID means and its status.
-The IDs are stable identifiers, not priorities — they exist so that a comment,
-test name or KB document can cite a single, unambiguous item.
+The IDs are stable identifiers rather than priorities: they exist so that a
+comment, test name or KB document can cite a single, unambiguous item.
 
 The leading letter groups the work by area:
 
