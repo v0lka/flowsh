@@ -1,6 +1,6 @@
 # flowsh
 
-`flowsh` is a static effect analyser for shell and PowerShell commands. Give it a
+`flowsh` is a static effect analyser for shell and PowerShell scripts. Give it a
 command line, in bash/POSIX or PowerShell, and it reports the observable effects
 that command implies without running it: filesystem access, environment changes,
 network traffic, process control, credential access, code execution, and more.
