@@ -371,8 +371,43 @@ func (x Scope) canonical() string {
 	case len(x.s.elems) == 0:
 		return "[]"
 	default:
-		return "[" + strings.Join(x.s.elems, ",") + "]"
+		var b strings.Builder
+		b.Grow(2 + len(x.s.elems)*4)
+		b.WriteByte('[')
+		for i, e := range x.s.elems {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			b.WriteString(canonicalElem(e))
+		}
+		b.WriteByte(']')
+		return b.String()
 	}
+}
+
+// canonicalElem backslash-escapes the three bytes the canonical set form uses
+// as syntax — the element separator ",", the closing frame "]", and the escape
+// character itself — so a target that contains them cannot forge a set
+// boundary. It is the identity for every target that contains none of those
+// three bytes, i.e. for ordinary POSIX target text (the documented spellings
+// such as FSWrite|Direct|[/root] are unchanged). Targets that do contain ","
+// or "]" or "\" are rewritten — most visibly Windows paths, so a `C:\Windows`
+// target renders as `C:\\Windows` in the key. The escaping is injective, which
+// makes Scope.canonical — and hence Effect.Key — injective.
+func canonicalElem(s string) string {
+	if !strings.ContainsAny(s, ",]\\") {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 4)
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case ',', ']', '\\':
+			b.WriteByte('\\')
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 func (x Scope) String() string { return x.s.display() }

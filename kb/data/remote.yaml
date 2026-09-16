@@ -20,7 +20,7 @@ commands:
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: "--remove-source-files"
         kind: flag
-        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: "-a"
         kind: flag
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
@@ -81,7 +81,7 @@ commands:
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: "--force"
         kind: flag
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: clone
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}

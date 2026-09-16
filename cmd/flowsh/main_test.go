@@ -186,6 +186,7 @@ func TestRunUsageErrors(t *testing.T) {
 		{"missing lang value", []string{"--lang"}, ""},
 		{"extra argument", []string{"ls", "pwd"}, ""},
 		{"bad windows value", []string{"--windows=maybe", "ls"}, ""},
+		{"stdin and command", []string{"-", "ls"}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -409,6 +410,32 @@ func TestRunInputErrorExitCode(t *testing.T) {
 	}
 	if errStr == "" {
 		t.Errorf("missing file: no diagnostic on stderr")
+	}
+}
+
+// TestRunEmptyArgumentExitCode pins that an empty positional argument is an
+// input error (exit 3), not a usage error (2): the invocation is well-formed,
+// the command it named is just empty. The usage text's exit-status block must
+// agree.
+func TestRunEmptyArgumentExitCode(t *testing.T) {
+	code, _, errStr := exec(t, []string{""}, "")
+	if code != 3 {
+		t.Errorf("empty argument: exit = %d, want 3 (stderr=%s)", code, errStr)
+	}
+	if errStr == "" {
+		t.Errorf("empty argument: no diagnostic on stderr")
+	}
+}
+
+// TestRunUsageTextExitStatus pins the usage text's exit-status description to
+// the implemented contract: exit 3 covers an empty command, so exit 2 must not
+// claim "no input".
+func TestRunUsageTextExitStatus(t *testing.T) {
+	if !strings.Contains(usage, "input error") {
+		t.Errorf("usage must describe the input-error class (exit 3)")
+	}
+	if strings.Contains(usage, "or no input") {
+		t.Errorf("usage still attributes \"no input\" to a usage error (exit 2)")
 	}
 }
 

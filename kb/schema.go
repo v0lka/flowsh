@@ -107,10 +107,17 @@ const (
 	ParamPositional ParamKind = "positional"
 	// ParamAssign is a key=value operand, e.g. `dd of=FILE`, `if=FILE`.
 	ParamAssign ParamKind = "assign"
+	// ParamSelf is an intrinsic parameter: an effect the command contributes by
+	// the mere fact of being invoked, with no token on the command line to bind
+	// it to. Its spec is a bare name (conventionally the command's own name) and
+	// its effect is sourced from the command itself (valueFrom: self), so a
+	// command whose only other parameters are flags still contributes a concrete
+	// "this command ran" effect instead of an empty, non-conservative report.
+	ParamSelf ParamKind = "self"
 )
 
 // ParamKinds is every valid parameter kind, in canonical order.
-var ParamKinds = []ParamKind{ParamFlag, ParamOption, ParamPositional, ParamAssign}
+var ParamKinds = []ParamKind{ParamFlag, ParamOption, ParamPositional, ParamAssign, ParamSelf}
 
 var paramKindSet = setOf(ParamKinds)
 
@@ -250,6 +257,21 @@ func (p Param) Validate() error {
 		if strings.HasPrefix(p.Spec, "-") {
 			return fmt.Errorf("param %q: positional spec must not start with '-'", p.Spec)
 		}
+	case ParamSelf:
+		if strings.HasPrefix(p.Spec, "-") || strings.HasSuffix(p.Spec, "=") {
+			return fmt.Errorf("param %q: kind %q requires a bare name spec (no leading '-' or trailing '=')", p.Spec, string(p.Kind))
+		}
+		if p.Effect.ValueFrom != ValueSelf {
+			return fmt.Errorf("param %q: kind %q requires valueFrom %q, got %q", p.Spec, string(p.Kind), string(ValueSelf), string(p.Effect.ValueFrom))
+		}
+	}
+	// An option consumes the token that follows it, so the effect's value is the
+	// flag value and never the invocation's positional arguments. Rejecting the
+	// contradictory combination keeps a value-less declaration (e.g. `sed -i`,
+	// which takes no separate operand) from silently swallowing the next
+	// operand and losing its effect.
+	if p.Kind == ParamOption && p.Effect.ValueFrom == ValueArgs {
+		return fmt.Errorf("param %q: kind %q takes its value from the flag, so valueFrom must be %q, not %q", p.Spec, string(p.Kind), string(ValueFlagValue), string(ValueArgs))
 	}
 	if err := p.Effect.Validate(); err != nil {
 		return fmt.Errorf("param %q: effect: %w", p.Spec, err)

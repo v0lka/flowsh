@@ -15,7 +15,13 @@ import (
 // dataFS holds the knowledge-base documents, compiled into the binary. Loading
 // therefore needs no files on disk at run time.
 //
-//go:embed data/*.yaml
+// The whole data directory is embedded (rather than a `data/*.yaml` glob) so
+// that every document documentNames discovers — including a `.yml` file — is
+// actually present in the embedded filesystem. A glob would silently ignore a
+// `.yml` document that discovery nonetheless reports, and a literal
+// `data/*.yml` pattern would fail the build while no .yml file exists.
+//
+//go:embed data
 var dataFS embed.FS
 
 // dataDir is the directory inside dataFS that holds the schema documents.

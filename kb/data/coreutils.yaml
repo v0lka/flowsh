@@ -21,6 +21,9 @@ commands:
       - spec: "-R"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--recursive"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: "-f"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -212,12 +215,6 @@ commands:
       - spec: "of="
         kind: assign
         effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
-      - spec: "bs="
-        kind: assign
-        effect: {kind: FSWrite, mode: Conditional, valueFrom: flagValue}
-      - spec: "conv="
-        kind: assign
-        effect: {kind: FSWrite, mode: Conditional, valueFrom: flagValue}
 
   - name: install
     dialect: gnu
@@ -340,14 +337,14 @@ commands:
     dialect: posix
     params:
       - spec: "-i"
-        kind: option
+        kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: "-n"
         kind: flag
         effect: {kind: Stdio, mode: Direct, valueFrom: args}
       - spec: "-e"
         kind: option
-        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "-f"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}

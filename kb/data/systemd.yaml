@@ -302,6 +302,9 @@ commands:
       - spec: TIME
         kind: positional
         effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: shutdown
+        kind: self
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: self}
 
   - name: reboot
     dialect: systemd
@@ -318,6 +321,9 @@ commands:
       - spec: "-w"
         kind: flag
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: reboot
+        kind: self
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: self}
 
   - name: halt
     dialect: systemd
@@ -334,6 +340,9 @@ commands:
       - spec: "-w"
         kind: flag
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: halt
+        kind: self
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: self}
 
   - name: poweroff
     dialect: systemd
@@ -350,6 +359,9 @@ commands:
       - spec: "--no-wall"
         kind: flag
         effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: poweroff
+        kind: self
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: self}
 
   - name: init
     dialect: systemd

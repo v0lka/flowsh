@@ -15,8 +15,11 @@ version: effect-kb/v2
 #   * bookkeeping such as adding a repository, pinning a package, or
 #     connecting/disconnecting a snap interface is FSMeta;
 #   * read-only queries (list / search / info / audit) are FSRead;
-#   * installing a package runs third-party build and maintainer scripts, which
-#     is CodeExec (Conditional: only packages that ship such scripts do);
+#   * the install subcommand is modelled as FSWrite (it rewrites the local
+#     package store); the code-execution surface an install opens is carried
+#     instead by the flags that bypass integrity checks or run package scripts
+#     explicitly (apt --allow-unauthenticated, yum/dnf --nogpgcheck,
+#     dpkg --configure), which are CodeExec (Conditional);
 #   * a global or system-wide install typically needs an elevated context and
 #     does not stay confined to the user's own tree, hence PrivEsc;
 #   * installing a system service (snap enable/disable) makes it outlive the

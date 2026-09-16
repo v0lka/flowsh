@@ -153,7 +153,17 @@ func normaliseClasses(cs []SourceClass) []SourceClass {
 	if len(tmp) == 0 {
 		return nil
 	}
-	sort.Slice(tmp, func(i, j int) bool { return tmp[i] < tmp[j] })
+	// Total order: by canonical class position, then lexicographically by name.
+	// The name tie-break matters for unrecognised classes — they all share the
+	// last position — so normaliseClasses is order-independent for any input
+	// (sort.Slice is unstable, so without it the result depended on input order).
+	sort.Slice(tmp, func(i, j int) bool {
+		oi, oj := classOrder(tmp[i]), classOrder(tmp[j])
+		if oi != oj {
+			return oi < oj
+		}
+		return tmp[i] < tmp[j]
+	})
 	w := 1
 	for i := 1; i < len(tmp); i++ {
 		if tmp[i] != tmp[w-1] {
@@ -162,6 +172,19 @@ func normaliseClasses(cs []SourceClass) []SourceClass {
 		}
 	}
 	return tmp[:w]
+}
+
+// classOrder returns the canonical position of c in SourceClasses (most
+// attacker-influenced first), so normaliseClasses preserves the documented
+// class order rather than sorting lexicographically. An unrecognised class
+// sorts last, so it never displaces a known one.
+func classOrder(c SourceClass) int {
+	for i, x := range SourceClasses {
+		if x == c {
+			return i
+		}
+	}
+	return len(SourceClasses)
 }
 
 // Taint returns the join of the taint labels of every source class.
@@ -228,16 +251,34 @@ func MaxInfluence(effects []Effect) Influence {
 // Secrets and exfiltration
 // ===========================================================================
 
-// secretPathMarkers are substrings that mark a well-known credential or secret
-// location. Matching is case-insensitive and substring-based, so both ~/.aws and
-// /root/.aws match, and it stays robust across path spellings.
+// secretPathMarkers are the well-known credential or secret locations the
+// analysis recognises. Matching is case-insensitive. Three rules apply, chosen
+// per marker so the common spellings match without over-matching:
+//
+//   - a marker containing a path separator (".kube/config", "/etc/shadow") is a
+//     path fragment and matches as a substring;
+//   - a dot-prefixed marker (".ssh", ".env", …) matches at the start of a path
+//     component or as the basename's suffix, so "my.envelope" does not match
+//     ".env" but "prod.env" (the common ".env" file name) does;
+//   - any other marker ("id_rsa", "credentials", …) is a distinctive name and
+//     matches as a substring.
+//
+// File-name extensions that mark private keys and key stores are handled
+// separately by secretExtensionMarkers, matched as a basename suffix or as a
+// basename that carries further extension text after the marker.
 var secretPathMarkers = []string{
 	".ssh", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "authorized_keys",
 	".aws", ".gnupg", ".netrc", ".pgpass", ".my.cnf", ".git-credentials",
 	".kube/config", ".docker/config.json", ".npmrc", ".pypirc", ".htpasswd",
 	".bash_history", ".zsh_history", ".env", "/etc/shadow", "/etc/gshadow",
-	"/etc/sudoers", ".pem", "keystore", "credentials", "secrets",
+	"/etc/sudoers", "keystore", "credentials", "secrets",
 }
+
+// secretExtensionMarkers are file-name extensions that mark a private key or a
+// key/certificate store; each matches when it is the basename's suffix
+// ("/etc/ssl/private/tls.key") or when the basename carries further extension
+// text right after it ("/etc/ssl/private/server.pem.old", "id_rsa.key.2024").
+var secretExtensionMarkers = []string{".pem", ".key", ".p12", ".pfx", ".pkcs12"}
 
 // SecretPath reports whether p names (or lies under) a well-known credential or
 // secret location.
@@ -246,10 +287,61 @@ func SecretPath(p string) bool {
 		return false
 	}
 	lp := strings.ToLower(p)
+	base := lp
+	if i := strings.LastIndexAny(lp, "/\\"); i >= 0 {
+		base = lp[i+1:]
+	}
 	for _, m := range secretPathMarkers {
+		if m[0] == '.' && !strings.Contains(m, "/") {
+			// A dot marker is a hidden name: it matches at the start of a path
+			// component (".ssh", "…/.env") or as the basename's suffix
+			// ("prod.env"), but never mid-component, so "my.envelope" is not a
+			// ".env" secret.
+			if componentStarts(lp, m) || strings.HasSuffix(base, m) {
+				return true
+			}
+			continue
+		}
 		if strings.Contains(lp, m) {
 			return true
 		}
+	}
+	for _, ext := range secretExtensionMarkers {
+		if baseMatchesExt(base, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// baseMatchesExt reports whether the extension ext marks the basename b: it is
+// b's suffix ("tls.key") or b carries further extension text right after it
+// ("server.pem.old", "id_rsa.key.2024"). A marker followed by non-extension
+// text ("app.pemx") does not match.
+func baseMatchesExt(b, ext string) bool {
+	i := strings.LastIndex(b, ext)
+	if i < 0 {
+		return false
+	}
+	rest := b[i+len(ext):]
+	return rest == "" || rest[0] == '.'
+}
+
+// componentStarts reports whether marker begins a path component of lp: it is
+// found at the start of lp or immediately after a path separator. The marker
+// may be a prefix of the component (".env" matches ".env.recon") but must not
+// appear mid-component, so ".env" does not match "my.envelope".
+func componentStarts(lp, marker string) bool {
+	for i := 0; i < len(lp); {
+		j := strings.Index(lp[i:], marker)
+		if j < 0 {
+			return false
+		}
+		at := i + j
+		if at == 0 || lp[at-1] == '/' || lp[at-1] == '\\' {
+			return true
+		}
+		i = at + 1
 	}
 	return false
 }

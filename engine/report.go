@@ -119,8 +119,65 @@ func (r *Report) Normalize() {
 		merged = append(merged, e)
 	}
 	r.Effects = merged
+	// Merging under join changes the merged effect's Key, so re-point every
+	// why-trace at the effect it now explains; otherwise WhyGaps would report
+	// a spurious gap for a fully explained (merged) effect.
+	keyByMode := make(map[string]string, len(merged))
+	for _, e := range merged {
+		keyByMode[string(e.Kind)+"|"+string(e.Mode)] = e.Key()
+	}
+	r.Why = remapWhy(r.Why, keyByMode)
 	r.Destructiveness = ComputeDestructiveness(r.Effects)
 	r.Sort()
+}
+
+// remapWhy re-points why-traces at the effects Normalize merged them into.
+// Traces are matched by the (kind, mode) pair Normalize merges on, so a trace
+// recorded for a narrower target still explains the merged effect; traces that
+// land on the same effect are combined. A trace whose kind/mode matches no
+// effect is left untouched. The result is order-stable for a report that is
+// already normalised, so Normalize is idempotent.
+func remapWhy(why []WhyTrace, keyByMode map[string]string) []WhyTrace {
+	if len(why) == 0 {
+		return why
+	}
+	merged := make(map[string]*WhyTrace, len(why))
+	order := make([]string, 0, len(why))
+	for _, w := range why {
+		key := w.Effect
+		if nk, ok := keyByMode[effectKindMode(key)]; ok {
+			key = nk
+		}
+		m, ok := merged[key]
+		if !ok {
+			m = &WhyTrace{Effect: key}
+			merged[key] = m
+			order = append(order, key)
+		}
+		m.Because = append(m.Because, w.Because...)
+	}
+	out := make([]WhyTrace, 0, len(order))
+	for _, key := range order {
+		m := merged[key]
+		m.Because = dedupSteps(m.Because)
+		out = append(out, *m)
+	}
+	return out
+}
+
+// effectKindMode extracts the "kind|mode" prefix of an Effect.Key, the pair
+// Normalize merges on. A key without a mode segment (unexpected) is returned
+// unchanged so the trace is preserved rather than dropped.
+func effectKindMode(key string) string {
+	i := strings.IndexByte(key, '|')
+	if i < 0 {
+		return key
+	}
+	j := strings.IndexByte(key[i+1:], '|')
+	if j < 0 {
+		return key
+	}
+	return key[:i+1+j]
 }
 
 // Validate reports whether the report is well-formed: a schema version is set,

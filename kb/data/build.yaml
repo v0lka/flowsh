@@ -293,8 +293,8 @@ commands:
         kind: option
         effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
       - spec: "-s"
-        kind: option
-        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
       - spec: "-K"
         kind: option
         effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
@@ -335,7 +335,10 @@ commands:
         effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-x"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Conditional, valueFrom: flagValue}
+      - spec: "--command"
+        kind: option
+        effect: {kind: CodeExec, mode: Conditional, valueFrom: flagValue}
       - spec: "-c"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}

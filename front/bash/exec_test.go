@@ -560,3 +560,105 @@ func TestExecFinalState(t *testing.T) {
 		t.Fatalf("EDITOR not exported: %+v", v)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// case-arm pattern matching (code-review regression)
+// ---------------------------------------------------------------------------
+
+// TestExecCasePatternMatching pins bash's case-pattern semantics for the
+// constructs the pattern matcher used to get wrong: a literal leading ']' inside
+// a class, the negated class that contains ']', backslash escaping and POSIX
+// character classes. A dropped arm would leave the report uncovered.
+func TestExecCasePatternMatching(t *testing.T) {
+	r := newResolver(t)
+	cases := []struct {
+		src     string
+		matched bool
+	}{
+		{`case ']' in []abc]) echo y;; esac`, true},
+		{`case 'd' in []abc]) echo y;; esac`, false},
+		{`case 'm' in [[:alpha:]]) echo y;; esac`, true},
+		{`case '5' in [[:alpha:]]) echo y;; esac`, false},
+		{`case '5' in [[:digit:]]) echo y;; esac`, true},
+		{`case ']' in [!]abc]) echo y;; esac`, false},
+		{`case 'z' in [!]abc]) echo y;; esac`, true},
+		{`case 'a*' in a\*) echo y;; esac`, true},
+		{`case 'ab' in a\*) echo y;; esac`, false},
+	}
+	for _, tc := range cases {
+		res := bash.ExecBash(tc.src, r)
+		if got := hasEffect(res, engine.KindStdio, "y"); got != tc.matched {
+			t.Errorf("%q: arm ran = %v, want %v (effects %v)", tc.src, got, tc.matched, effectKeys(res))
+		}
+		if res.Top {
+			t.Errorf("%q: a decidable pattern must not degrade to ⊤: %s", tc.src, res.Reason)
+		}
+	}
+}
+
+// TestExecCasePatternUndecidableIsTop pins the soundness backstop: a pattern the
+// matcher cannot faithfully evaluate must run its arm and degrade to ⊤ rather
+// than leave the case uncovered (no-silent-miss).
+func TestExecCasePatternUndecidableIsTop(t *testing.T) {
+	r := newResolver(t)
+	for _, src := range []string{
+		`case 'a' in [[:foo:]]) echo y;; esac`, // unknown POSIX class
+		`case 'a' in @(a|b)) echo y;; esac`,    // extglob
+	} {
+		res := bash.ExecBash(src, r)
+		if !res.Conservative {
+			t.Errorf("%q: an undecidable pattern must be conservative, got %v", src, effectKeys(res))
+		}
+		if !hasEffect(res, engine.KindStdio, "y") {
+			t.Errorf("%q: the arm must still run (possibly matches), got %v", src, effectKeys(res))
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// trap (code-review regression)
+// ---------------------------------------------------------------------------
+
+// TestExecTrapListingNotTop pins that only a trap that registers an action runs
+// code: the bare listing/reset forms execute nothing.
+func TestExecTrapListingNotTop(t *testing.T) {
+	r := newResolver(t)
+	for _, src := range []string{`trap`, `trap -p`, `trap - INT`} {
+		res := bash.ExecBash(src, r)
+		if res.HasTop() {
+			t.Errorf("%q: a trap listing/reset form executes no code and must not be ⊤: %v", src, effectKeys(res))
+		}
+	}
+	if res := bash.ExecBash(`trap 'rm -rf /tmp/x' EXIT`, r); !res.HasTop() {
+		t.Errorf("trap with an action must degrade to ⊤, got %v", effectKeys(res))
+	}
+}
+
+// TestExecTestClauseSubstitutionRunsOnce pins that a `[[ … ]]` clause expands a
+// command/process substitution exactly once: the clause walks its words twice
+// (expandSubstsIn then testFileReads), and without memoisation the substitution's
+// effects would run twice.
+func TestExecTestClauseSubstitutionRunsOnce(t *testing.T) {
+	r := newResolver(t)
+	for _, tc := range []struct {
+		src  string
+		name string
+	}{
+		{`[[ -n "$(rm -rf /tmp/x)" ]]`, "rm"},
+		{`[[ -f <(rm -rf /tmp/x) ]]`, "rm"},
+	} {
+		res := bash.ExecBash(tc.src, r)
+		n := 0
+		for _, c := range res.Cmds {
+			if c.Name == tc.name {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("%q: substitution ran %d times, want 1 (cmds=%v)", tc.src, n, cmdNames(res))
+		}
+		if !hasEffect(res, engine.KindFSWrite, "/tmp/x") {
+			t.Errorf("%q: substitution effect lost: %v", tc.src, effectKeys(res))
+		}
+	}
+}

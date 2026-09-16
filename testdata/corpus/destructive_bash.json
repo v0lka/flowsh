@@ -43,6 +43,17 @@
     { "id": "des-b9-git-reset",  "group": "destructive", "lang": "bash", "input": "git reset --hard HEAD~5",                    "note": "B9 VCS: discard commits and working-tree changes" },
     { "id": "des-b9-git-force",  "group": "destructive", "lang": "bash", "input": "git push --force origin main",               "note": "B9 VCS: rewrite remote history" },
 
-    { "id": "des-a3-install-suid", "group": "destructive", "lang": "bash", "input": "install -m 4755 /tmp/x /usr/local/bin/x", "note": "A3 destructive-class: a class-E KB entry whose effect trail carries no FSWrite (a mode change plus a conditional privilege escalation) must still force Critical via the knowledge-base class" }
+    { "id": "des-a3-install-suid", "group": "destructive", "lang": "bash", "input": "install -m 4755 /tmp/x /usr/local/bin/x", "note": "A3 destructive-class: a class-E KB entry whose effect trail carries no FSWrite (a mode change plus a conditional privilege escalation) must still force Critical via the knowledge-base class" },
+
+    { "id": "des-kb-reboot",    "group": "destructive", "lang": "bash", "input": "reboot",   "note": "KB/no-silent-miss: a bare power-control command must carry an intrinsic effect, never an empty report" },
+    { "id": "des-kb-poweroff",  "group": "destructive", "lang": "bash", "input": "poweroff", "note": "KB/no-silent-miss: a bare power-control command must carry an intrinsic effect, never an empty report" },
+    { "id": "des-kb-halt",      "group": "destructive", "lang": "bash", "input": "halt",     "note": "KB/no-silent-miss: a bare power-control command must carry an intrinsic effect, never an empty report" },
+    { "id": "des-kb-shutdown",  "group": "destructive", "lang": "bash", "input": "shutdown", "note": "KB/no-silent-miss: a bare power-control command must carry an intrinsic effect, never an empty report" },
+    { "id": "des-kb-sgdisk",    "group": "destructive", "lang": "bash", "input": "sgdisk --zap-all /dev/sdb", "note": "KB: the sgdisk long spelling must be flagged class E, like its short form -Z" },
+    { "id": "des-kb-iptables",  "group": "destructive", "lang": "bash", "input": "iptables --flush",          "note": "KB: the long firewall-flush spelling must be flagged class D, like its short form -F" },
+    { "id": "des-kb-ufw",       "group": "destructive", "lang": "bash", "input": "ufw disable",               "note": "KB: disabling the host firewall is class D, like the iptables/nft equivalents" },
+    { "id": "des-kb-dmesg",     "group": "destructive", "lang": "bash", "input": "dmesg -c",                  "note": "KB: clearing the kernel ring buffer is an anti-forensic write, not a read" },
+    { "id": "des-kb-gpg-del",   "group": "destructive", "lang": "bash", "input": "gpg --delete-secret-keys x", "note": "KB: destroying private key material is class E" },
+    { "id": "des-kb-rm-R",      "group": "destructive", "lang": "bash", "input": "rm -R /tmp/x",              "note": "KB: the -R synonym of recursive rm must be flagged class E, like its -r form" }
   ]
 }

@@ -128,6 +128,11 @@ type Command struct {
 	Args         []*Word     `json:"args,omitempty"`
 	Bindings     []*Binding  `json:"bindings,omitempty"`
 	Redirs       []*Redirect `json:"redirs,omitempty"`
+	// ArrayComma marks a command whose argument list uses PowerShell's
+	// comma-separated array syntax (a,b). The grammar cannot split such a list
+	// into elements, so the operands cannot be bounded and the command lowers
+	// to ⊤ rather than to a garbled target set.
+	ArrayComma bool `json:"arrayComma,omitempty"`
 }
 
 // HasParam reports whether the command carries the named parameter (bare, no
@@ -309,7 +314,60 @@ func ParseTimeout(name, src string, timeoutMicros uint64) (prog *Program) {
 	if len(prog.Funcs) == 0 {
 		prog.Funcs = nil
 	}
+	// An ERROR/MISSING node that sits *outside* every command is a fragment the
+	// grammar could not attach to one: it means a command was truncated or a
+	// pipeline stage dropped (a `$var\…` operand suffix, a swallowed stage).
+	// Lowering the salvaged statements would report a silently narrower effect
+	// set, so when the source recognised a command at all it degrades to ⊤. An
+	// ERROR nested *inside* a command — its operand expression, or its element
+	// list (the latter is repaired by the comma-array path) — is instead handled
+	// best-effort, and a source with no command at all is not a miss and stays
+	// an empty program.
+	if e := statementLevelError(root, lang); e != nil && hasDescendantType(root, lang, "command_name") {
+		return topProgram(name, src, w.pos(e), "a command could not be parsed from the source")
+	}
 	return prog
+}
+
+// statementLevelError returns the first ERROR (or MISSING) node that is not
+// inside any command, or nil. Such a node is a fragment the grammar could not
+// attach to a command — a truncated operand suffix or a dropped pipeline stage —
+// so the source it belongs to must degrade to ⊤ rather than be lowered from its
+// salvaged prefix. Descent stops at a command node: an ERROR inside one is
+// repaired best-effort (in its operand) or by the comma-array path (in its
+// element list), and must not escalate the whole source to ⊤.
+func statementLevelError(n *gotreesitter.Node, lang *gotreesitter.Language) *gotreesitter.Node {
+	if n == nil || n.Type(lang) == "command" {
+		return nil
+	}
+	for i := 0; i < n.ChildCount(); i++ {
+		if ch := n.Child(i); ch.Type(lang) == "ERROR" || ch.IsMissing() {
+			return ch
+		}
+	}
+	for i := 0; i < n.ChildCount(); i++ {
+		if e := statementLevelError(n.Child(i), lang); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+// hasDescendantType reports whether n or any of its descendants has the given
+// node type.
+func hasDescendantType(n *gotreesitter.Node, lang *gotreesitter.Language, typ string) bool {
+	if n == nil {
+		return false
+	}
+	if n.Type(lang) == typ {
+		return true
+	}
+	for i := 0; i < n.ChildCount(); i++ {
+		if hasDescendantType(n.Child(i), lang, typ) {
+			return true
+		}
+	}
+	return false
 }
 
 // topProgram builds the ⊤ program: no statements, Top set, and a reason.
@@ -345,6 +403,19 @@ func (w *walker) walk(n *gotreesitter.Node) {
 		// do NOT descend, so its body is not mistaken for executed code.
 		w.function(n)
 		return
+	case "class_statement", "trap_statement", "param_block":
+		// A class definition, a trap handler and a parameter default are each a
+		// definition (or a deferred handler), not code executed at the point it
+		// appears. Like a function body they must not be mistaken for executed
+		// code, so the walker does not descend into them.
+		return
+	case "switch_statement":
+		// A switch is not modelled: it can read a file (-File), evaluate a
+		// condition and run any of its clauses, so it degrades to ⊤ rather than
+		// producing nothing. The clauses are not descended into, so their
+		// (conditionally executed) bodies are not reported as if unconditional.
+		w.prog.Stmts = append(w.prog.Stmts, &Stmt{Kind: KindTop, Pos: w.pos(n), Reason: w.switchReason(n)})
+		return
 	case "command":
 		c := w.command(n)
 		w.prog.Stmts = append(w.prog.Stmts, &Stmt{Kind: KindCommand, Pos: c.Pos, Cmd: c})
@@ -364,14 +435,25 @@ func (w *walker) walk(n *gotreesitter.Node) {
 }
 
 // function records a function definition's name without descending into its
-// body.
+// body. The name is keyed case-insensitively, because PowerShell command and
+// function names are case-insensitive: `function get-content { … }` must shadow
+// a later `Get-Content` call exactly as the canonical spelling would.
 func (w *walker) function(n *gotreesitter.Node) {
 	for i := 0; i < n.ChildCount(); i++ {
 		ch := n.Child(i)
 		if ch.Type(w.lang) == "function_name" {
-			w.prog.Funcs[ch.Text(w.src)] = true
+			w.prog.Funcs[strings.ToLower(ch.Text(w.src))] = true
 		}
 	}
+}
+
+// switchReason renders a reason for a switch_statement, noting the file it reads
+// when it is the -File form.
+func (w *walker) switchReason(n *gotreesitter.Node) string {
+	if f := findType(n, "switch_filename", w.lang); f != nil {
+		return "switch -File " + f.Text(w.src) + " is not modelled"
+	}
+	return "switch construct is not modelled"
 }
 
 // staticInvocation renders a human-readable reason for a [Type]::Method node.
@@ -384,25 +466,59 @@ func (w *walker) staticInvocation(n *gotreesitter.Node) string {
 	return "static .NET invocation"
 }
 
-// maybeDeclareAlias records an alias declared by Set-Alias/New-Alias with a
-// literal name and value, so subsequent calls can resolve it.
-func (w *walker) maybeDeclareAlias(c *Command) {
-	switch strings.ToLower(c.Name) {
+// aliasDecl extracts a literal (name, value) pair from a Set-Alias/New-Alias
+// command, unquoting each side. It reports ok=false when the command is not an
+// alias declaration or either side is not statically known.
+func aliasDecl(c *Command) (name, value string, ok bool) {
+	if c == nil {
+		return "", "", false
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Name)) {
 	case "set-alias", "new-alias", "sal", "nal":
 	default:
+		return "", "", false
+	}
+	nameWord := c.ParamValue("name")
+	valueWord := c.ParamValue("value")
+	if nameWord == nil && len(c.Args) >= 1 {
+		nameWord = c.Args[0]
+	}
+	if valueWord == nil && len(c.Args) >= 2 {
+		valueWord = c.Args[1]
+	}
+	if nameWord == nil || valueWord == nil || !nameWord.Literal || !valueWord.Literal {
+		return "", "", false
+	}
+	name = unquoteWord(nameWord.Text)
+	value = unquoteWord(valueWord.Text)
+	if name == "" || value == "" {
+		return "", "", false
+	}
+	return name, value, true
+}
+
+// maybeDeclareAlias records an alias declared by Set-Alias/New-Alias with a
+// literal name and value, so subsequent calls can resolve it. Aliases are keyed
+// by their folded name, because PowerShell alias names are case-insensitive and
+// a later declaration of the same name (in any case) replaces the earlier one.
+func (w *walker) maybeDeclareAlias(c *Command) {
+	name, value, ok := aliasDecl(c)
+	if !ok {
 		return
 	}
-	name := c.ParamValue("name")
-	value := c.ParamValue("value")
-	if name == nil && len(c.Args) >= 1 {
-		name = c.Args[0]
+	w.prog.Aliases[strings.ToLower(name)] = value
+}
+
+// unquoteWord strips one matching pair of surrounding single or double quotes,
+// so `'Remove-Item'` (a quoted alias target or operand) resolves to its real
+// text rather than a quoted, unknown spelling.
+func unquoteWord(s string) string {
+	if len(s) >= 2 {
+		if (s[0] == '\'' && s[len(s)-1] == '\'') || (s[0] == '"' && s[len(s)-1] == '"') {
+			return s[1 : len(s)-1]
+		}
 	}
-	if value == nil && len(c.Args) >= 2 {
-		value = c.Args[1]
-	}
-	if name != nil && value != nil && name.Literal && value.Literal && name.Text != "" {
-		w.prog.Aliases[name.Text] = value.Text
-	}
+	return s
 }
 
 // command builds a Command from a `command` node.
@@ -422,7 +538,12 @@ func (w *walker) command(n *gotreesitter.Node) *Command {
 			c.Name = ch.Text(w.src)
 			c.NameWord = w.word(ch)
 		case "command_name_expr":
+			// A name derived from a sub-expression — `& (Get-Command x)`,
+			// `& $cmd`, `& $env:ComSpec` — is not statically known. The inner
+			// command's name must not be mistaken for the invoked name, so the
+			// invocation is flagged computed and lowers to ⊤.
 			w.nameExpr(c, ch)
+			c.ComputedName = true
 		case "command_elements":
 			w.elements(c, ch)
 		}
@@ -457,29 +578,93 @@ func (w *walker) nameExpr(c *Command, n *gotreesitter.Node) {
 // elements walks command_elements, splitting it into named parameters,
 // parameter→value bindings, positional operands and redirections.
 func (w *walker) elements(c *Command, n *gotreesitter.Node) {
-	var pending *Param
+	var (
+		pending *Param
+		// colonValue is set after a switch parameter is followed by a colon
+		// separator (`-Confirm:`): the next token is that switch's inline value
+		// and must not leak into the operand list as a spurious target.
+		colonValue bool
+	)
 	for i := 0; i < n.ChildCount(); i++ {
 		ch := n.Child(i)
 		switch ch.Type(w.lang) {
 		case "command_argument_sep":
+			if strings.TrimSpace(ch.Text(w.src)) == ":" && pending != nil && isSwitchPrefix(pending.Bare()) {
+				colonValue = true
+			}
 			continue
 		case "command_parameter":
 			p := &Param{Pos: w.pos(ch), Name: ch.Text(w.src)}
 			c.Params = append(c.Params, p)
 			pending = p
+			colonValue = false
 			continue
 		case "redirection":
 			c.Redirs = append(c.Redirs, w.redirect(ch))
 			continue
+		case "ERROR":
+			// The grammar cannot split a PowerShell comma-separated argument
+			// list (a,b) into elements: it swallows the separator and the tail
+			// into an ERROR node. Rather than bind a garbled operand set, mark
+			// the whole command for ⊤.
+			if strings.Contains(ch.Text(w.src), ",") {
+				c.ArrayComma = true
+			}
+			continue
+		}
+		if colonValue {
+			// The token belongs to the preceding switch (`-Confirm:$false`).
+			colonValue, pending = false, nil
+			continue
+		}
+		// A redirection written without a separating space (`>file`, `2>file`,
+		// `>>file`) is emitted as a single operand token, not a redirection
+		// node; recognise it before treating it as an operand.
+		if r, ok := inlineRedirect(w.pos(ch), ch.Text(w.src)); ok {
+			c.Redirs = append(c.Redirs, r)
+			continue
 		}
 		wd := w.word(ch)
-		if pending != nil && !isSwitch(pending.Bare()) {
+		if pending != nil && !isSwitchPrefix(pending.Bare()) {
 			c.Bindings = append(c.Bindings, &Binding{Param: pending, Value: wd})
 		} else {
 			c.Args = append(c.Args, wd)
 		}
 		pending = nil
 	}
+}
+
+// inlineRedirect recognises a redirection written without a separating space
+// (`>file`, `>>file`, `2>file`, `*>file`), which the PowerShell grammar emits as
+// a single operand token rather than a redirection node. It returns the
+// operator and the target file name. A bare operator or a stream merge
+// (`2>&1`, whose target is a file descriptor, not a path) is not a file write
+// and reports ok=false.
+func inlineRedirect(p Pos, text string) (*Redirect, bool) {
+	s := strings.TrimSpace(text)
+	if s == "" {
+		return nil, false
+	}
+	i := 0
+	for i < len(s) && (s[i] == '*' || (s[i] >= '0' && s[i] <= '9')) {
+		i++
+	}
+	if i >= len(s) || s[i] != '>' {
+		return nil, false
+	}
+	j := i + 1
+	if j < len(s) && s[j] == '>' {
+		j++
+	}
+	file := s[j:]
+	if file == "" || strings.HasPrefix(file, "&") {
+		return nil, false
+	}
+	return &Redirect{
+		Pos:  p,
+		Op:   s[:j],
+		Word: &Word{Pos: p, Text: file, Literal: !strings.ContainsAny(file, "$`")},
+	}, true
 }
 
 // redirect builds a Redirect from a `redirection` node.
@@ -489,6 +674,11 @@ func (w *walker) redirect(n *gotreesitter.Node) *Redirect {
 		ch := n.Child(i)
 		switch ch.Type(w.lang) {
 		case "file_redirection_operator":
+			r.Op = strings.TrimSpace(ch.Text(w.src))
+		case "merging_redirection_operator":
+			// A stream merge (2>&1, *>&1) duplicates a file descriptor; it does
+			// not name a file. The op text (which contains '&') tells the
+			// lowerer to skip it.
 			r.Op = strings.TrimSpace(ch.Text(w.src))
 		case "redirected_file_name":
 			r.Word = w.firstWord(ch)

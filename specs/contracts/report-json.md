@@ -70,7 +70,7 @@ The emitted document has the envelope:
 }
 ```
 
-(Field names follow the struct tags; `reason`, `why`, `root`, `notes`, `destructive` and `exfilPairs` are omitted when empty. `resolution` is always present — it carries the aggregated outcome across the program's calls, and is the zero value `{"kind":""}` on the PowerShell path, which resolves through its own alias/cmdlet tables rather than the binder.) A consumer that needs only the effect set reads `effects[]` (each keyed by `Effect.Key()`); a consumer that needs bounding information reads `conservative`, `top`, and `reason`.
+(Field names follow the struct tags; `reason`, `why`, `root`, `notes`, `destructive` and `exfilPairs` are omitted when empty. `resolution` is always present — it carries the aggregated outcome across the program's calls, and is the zero value `{"kind":""}` whenever no call reached the binder: on the PowerShell path (which resolves through its own alias/cmdlet tables rather than the binder) and on the bash path for a program made only of non-command statements — a bare assignment, a redirection, or a pure shell-state builtin. The `assignment` and `empty` kinds surface only when such a statement is passed to the binder directly.) A consumer that needs only the effect set reads `effects[]`; each effect is keyed by `Effect.Key()` = `kind|mode|[targets]`, where the `[targets]` element backslash-escapes `\`, `,` and `]` so the key is injective — a Windows target such as `C:\Windows` renders as `C:\\Windows`, while POSIX targets containing none of those three bytes are unchanged (e.g. `FSWrite|Direct|[/root]`). A consumer that needs bounding information reads `conservative`, `top`, and `reason`.
 
 ## Error Propagation
 

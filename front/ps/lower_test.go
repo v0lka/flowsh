@@ -511,8 +511,8 @@ func TestSwitchNamesRecognised(t *testing.T) {
 // TestPathParamNamesRecognised pins the filesystem-target table.
 func TestPathParamNamesRecognised(t *testing.T) {
 	want := []string{
-		"Path", "LiteralPath", "PSPath", "Destination", "FilePath", "OutFile",
-		"Target", "Source", "FullName", "Filter", "Include", "Exclude",
+		"Path", "LiteralPath", "PSPath", "Destination", "DestinationPath",
+		"FilePath", "Target", "Source", "FullName",
 	}
 	for _, name := range want {
 		if !pathParam(name) {
@@ -521,10 +521,28 @@ func TestPathParamNamesRecognised(t *testing.T) {
 	}
 	// -Name/-Value are not filesystem targets: classifying them as such would
 	// fabricate an extra target for Set-ItemProperty -Path … -Name … -Value ….
-	for _, name := range []string{"Name", "Value", "Uri", "Url", "Method", ""} {
+	// -Filter/-Include/-Exclude are *selection* patterns and -OutFile is a write
+	// destination, so none of them is a selection path target either.
+	for _, name := range []string{"Name", "Value", "Uri", "Url", "Method", "OutFile", "Filter", "Include", "Exclude", ""} {
 		if pathParam(name) {
 			t.Errorf("pathParam(%q) = true, want false", name)
 		}
+	}
+	for _, name := range []string{"Filter", "Include", "Exclude"} {
+		if !patternParam(name) {
+			t.Errorf("patternParam(%q) = false, want true", name)
+		}
+	}
+	if k, ok := dataFileKind("New-FileCatalog", "OutFile"); !ok || k != engine.KindFSWrite {
+		t.Errorf(`dataFileKind("OutFile") = %v,%v want FSWrite,true`, k, ok)
+	}
+	// The catalog output path is a write only for New-FileCatalog: Test-FileCatalog
+	// accepts the same parameter names but merely reads the catalog it verifies.
+	if k, ok := dataFileKind("New-FileCatalog", "CatalogFilePath"); !ok || k != engine.KindFSWrite {
+		t.Errorf(`dataFileKind("New-FileCatalog","CatalogFilePath") = %v,%v want FSWrite,true`, k, ok)
+	}
+	if _, ok := dataFileKind("Test-FileCatalog", "CatalogFilePath"); ok {
+		t.Error(`dataFileKind("Test-FileCatalog","CatalogFilePath") = ok; the verifier must not fabricate a write`)
 	}
 }
 
@@ -762,9 +780,12 @@ func TestRemainingDefaultAliasesResolve(t *testing.T) {
 
 // TestNewAliasesLowerWithoutTop is the behavioural counterpart: the added
 // aliases must never degrade to ⊤.
+//
+// Invoke-History (`ihy`/`r`) is excluded: it re-executes a previous command, so
+// it is deliberately ⊤ (see TestInvokeHistoryIsTop).
 func TestNewAliasesLowerWithoutTop(t *testing.T) {
 	for _, src := range []string{
-		`ipmo Pester`, `ihy`, `r`, `gdr`, `ise`,
+		`ipmo Pester`, `gdr`, `ise`,
 		`ndr -Name X -Root /tmp`, `mount -Name X -Root /tmp`,
 		`npssc -Path /tmp/c.pssc`, `iwmi -ClassName Win32_Process`,
 		`rwmi -Class Win32_Process`, `rujb`, `sujb`, `rdr -Name X`,
@@ -772,6 +793,27 @@ func TestNewAliasesLowerWithoutTop(t *testing.T) {
 		r := lowerOK(t, src)
 		if r.Conservative {
 			t.Errorf("%q degraded to ⊤: %v", src, r.Notes)
+		}
+	}
+}
+
+// TestInvokeHistoryIsTop pins finding #46: Invoke-History and Trace-Command
+// re-execute / evaluate arbitrary code, so they must degrade to ⊤ rather than
+// reporting "no external effect".
+func TestInvokeHistoryIsTop(t *testing.T) {
+	for _, src := range []string{
+		`Invoke-History`,
+		`Invoke-History -Id 3`,
+		`ihy`,
+		`r`,
+		`Trace-Command -Name ParameterBinding -Expression 'Remove-Item C:\x' -PSHost`,
+	} {
+		r := lowerOK(t, src)
+		if !r.Conservative {
+			t.Errorf("%q: expected a conservative (⊤) result; effects=%+v notes=%v", src, r.Effects, r.Notes)
+		}
+		if !hasKind(r, engine.KindCodeExec) {
+			t.Errorf("%q: expected a CodeExec effect; effects=%+v", src, r.Effects)
 		}
 	}
 }

@@ -3,6 +3,7 @@ package bind_test
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/v0lka/flowsh/bind"
@@ -412,5 +413,118 @@ func TestBindUploadTaintsEgress(t *testing.T) {
 	}
 	if !engine.IsEgressSink(egress) {
 		t.Errorf("uploading a secret file must taint the egress: %+v", egress)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Code-review regressions: flag/operand disambiguation and positional binding
+// ---------------------------------------------------------------------------
+
+// TestBindDeclaredNumericFlagBeatsSignedNumberOperand is the regression for the
+// guard that treated a leading signed number as an operand BEFORE consulting the
+// declared parameters. A DECLARED numeric flag (gzip -9, comm -1, join -1,
+// printenv -0, ssh -4, ping -6) must keep its effect and must never leak into an
+// operand target.
+func TestBindDeclaredNumericFlagBeatsSignedNumberOperand(t *testing.T) {
+	b := newBinder(t)
+	cases := []struct {
+		src  string
+		flag string
+		want engine.EffectKind
+	}{
+		{"gzip -9 file", "-9", engine.KindFSWrite},
+		{"comm -1 a b", "-1", engine.KindStdio},
+		{"join -1 2 a b", "-1", engine.KindStdio},
+		{"printenv -0", "-0", engine.KindEnvRead},
+		{"ssh -4 host", "-4", engine.KindNetEgress},
+		{"ping -6 host", "-6", engine.KindNetEgress},
+	}
+	for _, tc := range cases {
+		res := bindOne(t, b, tc.src)
+		if _, ok := findEffect(res, tc.want, engine.ModeDirect); !ok {
+			t.Errorf("%q: declared flag %s must contribute a %s effect; got %s", tc.src, tc.flag, tc.want, effectsString(res))
+		}
+		for _, e := range res.Effects {
+			if e.Target.Contains(tc.flag) {
+				t.Errorf("%q: declared flag %s leaked into an operand target %s", tc.src, tc.flag, e.Target)
+			}
+		}
+	}
+}
+
+// TestBindKillSignedNumberStaysOperand pins the other half of the rule: kill
+// declares no -9/-1 flag, so both tokens remain operands (the PID positional
+// absorbs them) and neither surfaces as an unknown flag.
+func TestBindKillSignedNumberStaysOperand(t *testing.T) {
+	b := newBinder(t)
+	res := bindOne(t, b, "kill -9 -1")
+	hasEffectOn(t, res, engine.KindProcSignal, engine.ModeDirect, "-1")
+	for _, n := range res.Notes {
+		if strings.Contains(n, "-9") || strings.Contains(n, "-1") {
+			t.Errorf("kill -9 -1: a signed number must not be reported as an unknown flag: %q", n)
+		}
+	}
+}
+
+// TestBindValueMatchedSubcommandDoesNotFabricate is the regression for the
+// index-order fallback that still ran for the non-matched positionals after a
+// value match, fabricating effects (7z l ARCHIVE → bogus FSWrite; git clean PATH
+// → bogus NetEgress).
+func TestBindValueMatchedSubcommandDoesNotFabricate(t *testing.T) {
+	b := newBinder(t)
+
+	res := bindOne(t, b, "7z l /tmp/x.7z")
+	hasEffectOn(t, res, engine.KindFSRead, engine.ModeDirect, "/tmp/x.7z")
+	if _, ok := findEffect(res, engine.KindFSWrite, engine.ModeDirect); ok {
+		t.Errorf("7z l: a read-only listing must not fabricate an FSWrite: %s", effectsString(res))
+	}
+
+	res = bindOne(t, b, "git clean foo")
+	hasEffectOn(t, res, engine.KindFSWrite, engine.ModeDirect, "foo")
+	if _, ok := findEffect(res, engine.KindNetEgress, engine.ModeDirect); ok {
+		t.Errorf("git clean: must not fabricate a NetEgress: %s", effectsString(res))
+	}
+}
+
+// TestBindGenericPositionalsStillBind guards the fix above against
+// over-correction: the ordinary SRC/DEST/FILE forms keep binding their real
+// operands.
+func TestBindGenericPositionalsStillBind(t *testing.T) {
+	b := newBinder(t)
+
+	res := bindOne(t, b, "cp a b")
+	hasEffectOn(t, res, engine.KindFSRead, engine.ModeDirect, "a")
+	hasEffectOn(t, res, engine.KindFSWrite, engine.ModeDirect, "b")
+
+	hasEffectOn(t, bindOne(t, b, "chmod 644 f"), engine.KindFSMeta, engine.ModeDirect, "f")
+	hasEffectOn(t, bindOne(t, b, "grep x f"), engine.KindFSRead, engine.ModeDirect, "f")
+	hasEffectOn(t, bindOne(t, b, "sed s/a/b/ f"), engine.KindFSRead, engine.ModeDirect, "f")
+	hasEffectOn(t, bindOne(t, b, "tar -cf a.tar d"), engine.KindFSRead, engine.ModeDirect, "d")
+
+	res = bindOne(t, b, "git clone URL DIR")
+	eg, ok := findEffect(res, engine.KindNetEgress, engine.ModeDirect)
+	if !ok {
+		t.Fatalf("git clone: expected NetEgress, got %s", effectsString(res))
+	}
+	if !eg.Target.Contains("URL") || !eg.Target.Contains("DIR") {
+		t.Errorf("git clone: egress target %s must cover URL and DIR", eg.Target)
+	}
+}
+
+// TestBindSelfParamEmitsIntrinsic pins that a declared kind: self parameter
+// contributes its effect regardless of what else matched: reboot -f must report
+// ProcSpawn{reboot} alongside the -f ProcSignal, not only the flag's effect.
+func TestBindSelfParamEmitsIntrinsic(t *testing.T) {
+	b := newBinder(t)
+	res := bindOne(t, b, "reboot -f")
+	e, ok := findEffect(res, engine.KindProcSpawn, engine.ModeDirect)
+	if !ok {
+		t.Fatalf("reboot -f: expected an intrinsic ProcSpawn, got %s", effectsString(res))
+	}
+	if !e.Target.Contains("reboot") {
+		t.Errorf("reboot -f: ProcSpawn target %s must be the command itself", e.Target)
+	}
+	if _, ok := findEffect(res, engine.KindProcSignal, engine.ModeDirect); !ok {
+		t.Errorf("reboot -f: expected the -f ProcSignal alongside the intrinsic ProcSpawn, got %s", effectsString(res))
 	}
 }

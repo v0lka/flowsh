@@ -153,7 +153,7 @@ func WhyStepsFor(why []WhyTrace, key string) []WhyStep {
 // premise, "kind:text") rather than the synthetic "effect:key" fallback.
 func isConcretePremise(p string) bool {
 	i := strings.IndexByte(p, ':')
-	if i <= 0 {
+	if i < 0 {
 		return false
 	}
 	return p[:i] != "effect"

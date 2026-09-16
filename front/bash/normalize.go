@@ -48,6 +48,11 @@ const (
 	WrapTimeout = "timeout"
 	WrapXargs   = "xargs"
 	WrapSetsid  = "setsid"
+	// WrapBuiltin is the `builtin` keyword: like `command` it forces the shell
+	// builtin, bypassing functions/aliases, and its members (eval, source, …)
+	// execute arbitrary code — so it is unwrapped so the wrapped command is
+	// analysed rather than dropped.
+	WrapBuiltin = "builtin"
 )
 
 // Program is the normalized AST of a shell source: a sequence of statements
@@ -742,6 +747,8 @@ var wrapperSpecs = map[string]*wrapperSpec{
 	// setsid runs a program in a new session; like nohup it takes only flag
 	// options, so the program that follows is the effective command.
 	WrapSetsid: {},
+	// builtin forces a shell builtin; it takes no options of its own.
+	WrapBuiltin: {},
 }
 
 // takesValue reports whether opt consumes the following word as its value.

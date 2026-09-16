@@ -2,11 +2,11 @@ package bash
 
 import (
 	"fmt"
-	"path"
 	"sort"
 	"strconv"
 	"strings"
 
+	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/syntax"
 
 	"github.com/v0lka/flowsh/engine"
@@ -150,6 +150,10 @@ type interp struct {
 
 	budget int
 	depth  int
+	// loopDepth counts the enclosing loops; a break/continue is only consumed
+	// when it is > 0, so an unconsumed loop-control builtin is ignored (as bash
+	// does) instead of silently abandoning the rest of the statement list.
+	loopDepth int
 
 	// stdout/stdin fold the value flowing out of, and into, the command
 	// currently being interpreted; they are what threads a pipeline. The
@@ -173,6 +177,14 @@ type interp struct {
 	// and process substitution node encountered during expansion.
 	subst map[syntax.Node]substInfo
 
+	// substMemo/procMemo memoise the substitution side effects already performed
+	// within the statement currently being interpreted, so that a word whose
+	// substitutions are expanded twice — a `[[ … ]]` clause is walked once by
+	// expandSubstsIn and again by testFileReads — runs each substitution only
+	// once. They are non-nil only while such a clause is being executed.
+	substMemo map[*syntax.CmdSubst]substInfo
+	procMemo  map[*syntax.ProcSubst]bool
+
 	// funcRaw holds the raw bodies of the program's functions, so the
 	// interpreter can execute them.
 	funcRaw map[string]*syntax.FuncDecl
@@ -193,11 +205,10 @@ func newInterp(src string, prog *Program, r Resolver, f *syntax.File) *interp {
 		for n, fn := range prog.Funcs {
 			it.state.Funcs[n] = fn
 		}
-		for n, a := range prog.Aliases {
-			if a != nil {
-				it.state.Aliases[n] = a.Value
-			}
-		}
+		// Aliases are intentionally NOT preloaded: bash applies an alias only
+		// from the point it is declared, so they are installed by the `alias`
+		// builtin as the program executes (see builtinState). Preloading them
+		// would let a later declaration rewrite an earlier use.
 	}
 	return it
 }
@@ -226,6 +237,23 @@ func (it *interp) step() {
 	}
 }
 
+// resolutionProgram returns the program handed to the resolver, restricted to
+// the aliases declared so far. bash applies an alias only from the point it is
+// declared, so a declaration that runs after a use (or never runs) must not
+// rewrite that use; the interpreter installs aliases as the `alias` builtin
+// executes, and this view keeps the binder's own alias resolution in step.
+func (it *interp) resolutionProgram() *Program {
+	if it.prog == nil || len(it.prog.Aliases) == 0 {
+		return it.prog
+	}
+	p := *it.prog
+	p.Aliases = make(map[string]*Alias, len(it.state.Aliases))
+	for n, v := range it.state.Aliases {
+		p.Aliases[n] = &Alias{Name: n, Value: v}
+	}
+	return &p
+}
+
 // ===========================================================================
 // Entry point
 // ===========================================================================
@@ -249,6 +277,9 @@ func Exec(v Variant, name, src string, r Resolver) (res *ExecResult) {
 	lang, ok := v.langVariant()
 	if !ok {
 		return topResult(v, name, src, "unknown shell variant "+strconv.Quote(string(v)))
+	}
+	if nestingTooDeep(src) {
+		return topResult(v, name, src, "input nesting too deep")
 	}
 	parser := syntax.NewParser(syntax.Variant(lang))
 	f, err := parser.Parse(strings.NewReader(src), name)
@@ -310,12 +341,19 @@ func (it *interp) result() *ExecResult {
 			cons = true
 		}
 	}
+	// The JSON contract requires `reason` whenever `conservative` or `top` is
+	// set: a result made conservative by an ordinary ⊤ effect (rather than by
+	// markTop) still needs an explanation.
+	reason := it.reason
+	if cons && reason == "" {
+		reason = "analysis includes an unbounded (⊤) effect"
+	}
 	return &ExecResult{
 		Variant:         it.prog.Variant,
 		File:            it.prog.File,
 		Source:          it.prog.Source,
 		Top:             it.top,
-		Reason:          it.reason,
+		Reason:          reason,
 		Conservative:    cons,
 		Effects:         rep.Effects,
 		Destructiveness: rep.Destructiveness,
@@ -462,7 +500,28 @@ func defaultReversible(k engine.EffectKind) bool {
 func (it *interp) execStmts(ss []*syntax.Stmt) {
 	for _, s := range ss {
 		if it.ctl != ctlNone {
-			return
+			// A control-flow signal that no enclosing construct can consume is a
+			// no-op in bash (only `exit` is terminal everywhere): reset it and
+			// keep executing, so a stray break/continue/return cannot suppress
+			// the rest of the statement list.
+			switch it.ctl {
+			case ctlExit:
+				return
+			case ctlReturn:
+				if it.depth == 0 {
+					it.addNote("return outside a function; ignored")
+					it.ctl = ctlNone
+					break
+				}
+				return
+			default: // ctlBreak, ctlContinue
+				if it.loopDepth == 0 {
+					it.addNote("loop-control builtin outside a loop; ignored")
+					it.ctl = ctlNone
+					break
+				}
+				return
+			}
 		}
 		it.execStmt(s)
 	}
@@ -473,6 +532,12 @@ func (it *interp) execStmt(s *syntax.Stmt) {
 		return
 	}
 	it.step()
+	// Reset the exit status so a stale value from an earlier statement can never
+	// leak into a condition or an && / || operand of this one. Statements that
+	// compute no status (a bare assignment, a declaration, a function
+	// definition) leave it unknown, so both branches of a dependent operator are
+	// explored — conservative, never a miss.
+	it.status, it.statusKnown = 0, false
 	// An input redirection contributes the provenance of the file it reads to
 	// this statement's standard input; the contribution is scoped to the
 	// statement so it cannot leak into a following one.
@@ -486,12 +551,29 @@ func (it *interp) execStmt(s *syntax.Stmt) {
 	}
 	if s.Background || s.Coprocess {
 		saved := it.state
+		savedCtl := it.ctl
 		it.state = it.state.Clone()
+		// A background job (or coprocess) runs in its own subshell: a
+		// control-flow signal it raises must not escape to the enclosing
+		// statement list.
+		it.ctl = ctlNone
 		it.execCommand(s.Cmd)
 		it.state = saved
+		it.ctl = savedCtl
+		// Launching a job succeeds regardless of the job's own exit status.
+		it.status, it.statusKnown = 0, true
 		return
 	}
 	it.execCommand(s.Cmd)
+	// `! cmd` inverts the command's exit status (bash semantics), which decides
+	// the reachable branch of a following if / && / || / while.
+	if s.Negated && it.statusKnown {
+		if it.status == 0 {
+			it.status = 1
+		} else {
+			it.status = 0
+		}
+	}
 }
 
 func (it *interp) execCommand(c syntax.Command) {
@@ -506,9 +588,14 @@ func (it *interp) execCommand(c syntax.Command) {
 		it.execStmts(c.Stmts)
 	case *syntax.Subshell:
 		saved := it.state
+		savedCtl := it.ctl
 		it.state = it.state.Clone()
+		// A subshell runs in its own shell: a control-flow signal it raises must
+		// be confined to it, never abort the enclosing statement list.
+		it.ctl = ctlNone
 		it.execStmts(c.Stmts)
 		it.state = saved
+		it.ctl = savedCtl
 	case *syntax.IfClause:
 		it.execIf(c)
 	case *syntax.WhileClause:
@@ -527,16 +614,72 @@ func (it *interp) execCommand(c syntax.Command) {
 		}
 	case *syntax.CoprocClause:
 		saved := it.state
+		savedCtl := it.ctl
 		it.state = it.state.Clone()
+		it.ctl = ctlNone
 		if c.Stmt != nil {
 			it.execStmt(c.Stmt)
 		}
 		it.state = saved
-	case *syntax.ArithmCmd, *syntax.TestClause, *syntax.LetClause:
+		it.ctl = savedCtl
+	case *syntax.ArithmCmd:
+		// Walk the expression so any command/process substitution inside it is
+		// executed (its effects recorded); the command's own status is unknown.
+		it.expandSubstsIn(c)
+		it.status, it.statusKnown = 0, false
+	case *syntax.TestClause:
+		// A `[[ … ]]` clause expands each of its words twice — once by
+		// expandSubstsIn (to run any command/process substitution) and again by
+		// testFileReads (to resolve the file-test operand). Memoise within this
+		// clause so each substitution's effects run exactly once.
+		substMemo, procMemo := it.substMemo, it.procMemo
+		it.substMemo = make(map[*syntax.CmdSubst]substInfo)
+		it.procMemo = make(map[*syntax.ProcSubst]bool)
+		it.expandSubstsIn(c)
+		it.testFileReads(c)
+		it.substMemo, it.procMemo = substMemo, procMemo
+		it.status, it.statusKnown = 0, false
+	case *syntax.LetClause:
+		it.expandSubstsIn(c)
 		it.status, it.statusKnown = 0, false
 	default:
-		it.addNote("unsupported construct at " + fromMvdanPos(c.Pos()).String())
+		// An unhandled construct must not silently drop its effects: record a ⊤
+		// effect and a note rather than only a note.
+		e := it.markTopEffect("unsupported construct at " + fromMvdanPos(c.Pos()).String())
+		it.derive(e, engine.Atom{Kind: engine.AtomCommand, Text: it.src, Loc: sourceLoc(fromMvdanPos(c.Pos()), it.prog.File)})
+		it.status, it.statusKnown = 0, false
 	}
+}
+
+// testFileReads reports the filesystem read implied by a file-test operator in a
+// `[[ … ]]` conditional ([[ -f /etc/passwd ]]), which the generic expansion does
+// not model.
+func (it *interp) testFileReads(c *syntax.TestClause) {
+	if c == nil || c.X == nil {
+		return
+	}
+	syntax.Walk(c.X, func(n syntax.Node) bool {
+		ut, ok := n.(*syntax.UnaryTest)
+		if !ok {
+			return true
+		}
+		w, ok := ut.X.(*syntax.Word)
+		if !ok {
+			return true
+		}
+		switch ut.Op.String() {
+		case "-e", "-f", "-d", "-r", "-w", "-x", "-s", "-L", "-h", "-b", "-c", "-p", "-S", "-g", "-u", "-k", "-N":
+			val, known, taint := it.expandLiteral(w)
+			if !known {
+				it.emit(engine.KindFSRead, engine.ScopeTop(), engine.ModeDirect, engine.CertaintyCertain, taint, it.redirectAtom(fromMvdanPos(w.Pos()), "-test"))
+				return true
+			}
+			if val != "" {
+				it.emit(engine.KindFSRead, engine.ScopeOf(val), engine.ModeDirect, engine.CertaintyCertain, taint, it.redirectAtom(fromMvdanPos(w.Pos()), "-test"))
+			}
+		}
+		return true
+	})
 }
 
 // ===========================================================================
@@ -565,11 +708,16 @@ func (it *interp) execPipeline(b *syntax.BinaryCmd) {
 	for _, st := range stages {
 		it.stdin, it.stdinKnown, it.stdinTaint = in, inKnown, inTaint
 		savedState := it.state
+		savedCtl := it.ctl
 		it.state = it.state.Clone()
+		// Each pipeline stage runs in its own subshell; confine any control-flow
+		// signal it raises so it cannot abort the enclosing statement list.
+		it.ctl = ctlNone
 		it.stdout, it.stdoutKnown, it.stdoutTaint = "", false, engine.TaintBottom()
 		it.execStmt(st)
 		out, ok, outTaint := it.stdout, it.stdoutKnown, it.stdoutTaint
 		it.state = savedState
+		it.ctl = savedCtl
 		in, inKnown, inTaint = out, ok, outTaint
 	}
 	it.stdin, it.stdinKnown, it.stdinTaint = savedIn, savedKnown, savedTaint
@@ -609,6 +757,17 @@ func (it *interp) execAndOr(b *syntax.BinaryCmd) {
 		}
 	}
 	if run {
+		if !known {
+			// The RHS is executed only speculatively (the LHS status is
+			// unknown): a terminal control-flow signal it raises must not escape
+			// and abort the enclosing statement list.
+			savedCtl := it.ctl
+			it.ctl = ctlNone
+			it.execStmt(b.Y)
+			it.ctl = savedCtl
+			it.statusKnown = false
+			return
+		}
 		it.execStmt(b.Y)
 	}
 }
@@ -621,22 +780,35 @@ func (it *interp) execIf(c *syntax.IfClause) {
 	it.execStmts(c.Cond)
 	val, known := it.status, it.statusKnown
 	if known {
-		if val == 0 {
-			it.execStmts(c.Then)
-		} else {
+		switch {
+		case val == 0:
+			if len(c.Then) == 0 {
+				it.status, it.statusKnown = 0, true
+			} else {
+				it.execStmts(c.Then)
+			}
+		case c.Else == nil || (len(c.Else.Cond) == 0 && len(c.Else.Then) == 0):
+			// No branch taken: an `if` that runs nothing exits 0.
+			it.status, it.statusKnown = 0, true
+		default:
 			it.execElse(c.Else)
 		}
 		return
 	}
 	// Undecidable condition: execute both branches and join both the effects
-	// (already accumulated) and the two resulting states.
+	// (already accumulated) and the two resulting states. A control-flow signal
+	// raised inside a speculatively executed branch must not escape it.
+	savedCtl := it.ctl
+	it.ctl = ctlNone
 	base := it.state.Clone()
 	it.execStmts(c.Then)
 	a := it.state
 	it.state = base
+	it.ctl = ctlNone
 	it.execElse(c.Else)
 	b := it.state
 	it.state = joinStates(a, b)
+	it.ctl = savedCtl
 	it.status, it.statusKnown = 0, false
 }
 
@@ -652,6 +824,9 @@ func (it *interp) execElse(e *syntax.IfClause) {
 }
 
 func (it *interp) execWhile(c *syntax.WhileClause) {
+	it.loopDepth++
+	defer func() { it.loopDepth-- }()
+	ran := false
 	for {
 		it.step()
 		it.execStmts(c.Cond)
@@ -667,8 +842,15 @@ func (it *interp) execWhile(c *syntax.WhileClause) {
 			return
 		}
 		if !ok {
+			if !ran {
+				// The loop never ran: its exit status is 0.
+				it.status, it.statusKnown = 0, true
+			} else {
+				it.statusKnown = false
+			}
 			return
 		}
+		ran = true
 		it.execStmts(c.Do)
 		if it.handleLoopCtl() {
 			return
@@ -677,6 +859,8 @@ func (it *interp) execWhile(c *syntax.WhileClause) {
 }
 
 func (it *interp) execFor(c *syntax.ForClause) {
+	it.loopDepth++
+	defer func() { it.loopDepth-- }()
 	switch loop := c.Loop.(type) {
 	case *syntax.WordIter:
 		name := ""
@@ -716,8 +900,23 @@ func (it *interp) execFor(c *syntax.ForClause) {
 				return
 			}
 		}
+		if len(vals) == 0 {
+			// The loop ran no iterations: its exit status is 0.
+			it.status, it.statusKnown = 0, true
+		}
 
 	case *syntax.CStyleLoop:
+		// Walk the arithmetic clauses so any command/process substitution in the
+		// init/cond/post expressions is executed (its effects recorded).
+		if loop.Init != nil {
+			it.expandSubstsIn(loop.Init)
+		}
+		if loop.Cond != nil {
+			it.expandSubstsIn(loop.Cond)
+		}
+		if loop.Post != nil {
+			it.expandSubstsIn(loop.Post)
+		}
 		// Without modelling the arithmetic, a C-style loop is treated like a
 		// loop with an unknown bound: iterate until the budget stops it.
 		for {
@@ -759,33 +958,150 @@ func (it *interp) execCase(c *syntax.CaseClause) {
 		it.markTop("case subject is not statically decidable")
 		return
 	}
-	var def []*syntax.Stmt
-	for _, item := range c.Items {
+	defIdx := -1
+	for i, item := range c.Items {
 		if len(item.Patterns) == 0 {
-			def = item.Stmts
+			if defIdx < 0 {
+				defIdx = i
+			}
 			continue
 		}
-		if it.caseMatch(subj, item.Patterns) {
+		matched, unknown := it.caseMatch(subj, item.Patterns)
+		if unknown {
+			// A pattern that cannot be decided (a dynamic word) might match:
+			// run its arm and degrade to ⊤ rather than silently drop it.
 			it.execStmts(item.Stmts)
+			it.markTop("case pattern is not statically decidable")
 			return
 		}
+		if !matched {
+			continue
+		}
+		it.execStmts(item.Stmts)
+		switch item.Op.String() {
+		case ";&":
+			// Fall through: run every following arm's body until one ends in
+			// ";;" (a ";"-terminated arm does not continue the fall-through).
+			for j := i + 1; j < len(c.Items); j++ {
+				it.execStmts(c.Items[j].Stmts)
+				if c.Items[j].Op.String() != ";&" {
+					break
+				}
+			}
+		case ";;&":
+			// Resume matching: keep testing the remaining arms.
+			for j := i + 1; j < len(c.Items); j++ {
+				m2, unk2 := it.caseMatch(subj, c.Items[j].Patterns)
+				if unk2 {
+					it.execStmts(c.Items[j].Stmts)
+					it.markTop("case pattern is not statically decidable")
+					return
+				}
+				if m2 {
+					it.execStmts(c.Items[j].Stmts)
+					if c.Items[j].Op.String() != ";;&" {
+						break
+					}
+				}
+			}
+		}
+		return
 	}
-	if def != nil {
-		it.execStmts(def)
+	if defIdx >= 0 {
+		it.execStmts(c.Items[defIdx].Stmts)
+		return
 	}
+	// No arm matched and there is no default: the case exits 0.
+	it.status, it.statusKnown = 0, true
 }
 
-func (it *interp) caseMatch(subj string, pats []*syntax.Word) bool {
+// caseMatch reports whether any of pats matches subj. The second result is true
+// when a pattern cannot be decided statically (it must then be treated as
+// possibly matching, never as a non-match).
+func (it *interp) caseMatch(subj string, pats []*syntax.Word) (matched, unknown bool) {
 	for _, p := range pats {
-		pat, known, _ := it.expandLiteral(p)
-		if !known {
-			return false
+		pat, ok := it.casePattern(p)
+		if !ok {
+			return false, true
 		}
-		if ok, err := path.Match(pat, subj); err == nil && ok {
-			return true
+		m, ok := globMatch(pat, subj)
+		if !ok {
+			// The pattern uses a construct the matcher cannot faithfully
+			// evaluate: it must be treated as possibly matching, never as a
+			// non-match, so the arm is not silently dropped.
+			return false, true
+		}
+		if m {
+			return true, false
 		}
 	}
-	return false
+	return false, false
+}
+
+// casePattern expands a case pattern word to its pattern text. A pattern word is
+// "known" even when it contains shell glob syntax (a legitimate part of a case
+// pattern), so only a genuinely dynamic word yields ok=false.
+func (it *interp) casePattern(p *syntax.Word) (string, bool) {
+	if p == nil {
+		return "", true
+	}
+	if !it.patternKnown(p) {
+		return "", false
+	}
+	var out string
+	bad := false
+	func() {
+		defer func() {
+			if recover() != nil {
+				bad = true
+			}
+		}()
+		s, err := expand.Literal(it.newCfg(), p)
+		if err != nil {
+			bad = true
+			return
+		}
+		out = s
+	}()
+	if bad {
+		return "", false
+	}
+	return out, true
+}
+
+// patternKnown reports whether a case-pattern word's text is statically
+// determinable; unlike wordKnown, unquoted glob metacharacters are treated as
+// known pattern syntax rather than as unknown content.
+func (it *interp) patternKnown(w *syntax.Word) bool {
+	if w == nil {
+		return true
+	}
+	for _, p := range w.Parts {
+		if !it.patternPartKnown(p) {
+			return false
+		}
+	}
+	return true
+}
+
+func (it *interp) patternPartKnown(p syntax.WordPart) bool {
+	switch p := p.(type) {
+	case *syntax.Lit:
+		return true
+	case *syntax.SglQuoted:
+		return true
+	case *syntax.DblQuoted:
+		for _, ip := range p.Parts {
+			if !it.partKnown(ip, true) {
+				return false
+			}
+		}
+		return true
+	case *syntax.ExtGlob:
+		return true
+	default:
+		return it.partKnown(p, false)
+	}
 }
 
 func (it *interp) execFuncDecl(c *syntax.FuncDecl) {
@@ -801,19 +1117,47 @@ func (it *interp) execFuncDecl(c *syntax.FuncDecl) {
 }
 
 // execDecl applies the state component of declare/local/export/readonly and asks
-// the resolver for the effects the declaration itself contributes.
+// the resolver for the effects the declaration itself contributes. Option flags
+// are forwarded to the binder (so a KB flag such as `export -p` matches), and
+// the operand is the variable NAME (not NAME=value).
 func (it *interp) execDecl(c *syntax.DeclClause) {
 	variant := ""
 	if c.Variant != nil {
 		variant = c.Variant.Value
 	}
-	var args []string
+	var (
+		flags     []string
+		opNames   []string
+		nameref   bool
+		integer   bool
+		unmodeled bool
+	)
 	for _, a := range c.Args {
-		if a == nil || a.Name == nil {
+		if a == nil {
+			continue
+		}
+		if a.Name == nil {
+			// A flag (or a name-only operand): both carry their text in Value.
+			if a.Value == nil {
+				continue
+			}
+			v, ok := literalOf(a.Value)
+			if !ok {
+				continue
+			}
+			flags = append(flags, v)
+			switch v {
+			case "-n":
+				nameref = true
+			case "-i":
+				integer = true
+			case "-l", "-u":
+				unmodeled = true
+			}
 			continue
 		}
 		name := a.Name.Value
-		if name == "" || strings.HasPrefix(name, "-") {
+		if name == "" {
 			continue
 		}
 		val, known := "", true
@@ -821,9 +1165,22 @@ func (it *interp) execDecl(c *syntax.DeclClause) {
 		if a.Value != nil {
 			val, known, taint = it.expandLiteral(a.Value)
 		}
-		if known {
+		switch {
+		case nameref:
+			// A nameref aliases another variable; it is not resolved, so reads of
+			// it must degrade to ⊤ rather than yield the target's name.
+			it.state.SetUnknown(name, taint)
+		case unmodeled:
+			// -l/-u (case folding) are not modelled: invalidate the value.
+			it.state.SetUnknown(name, taint)
+		case integer:
+			// -i makes later assignments arithmetic; the value is not evaluated,
+			// so mark the variable integer and leave it unknown until assigned.
+			it.state.SetUnknown(name, taint)
+			it.state.MarkInteger(name)
+		case known:
 			it.state.SetKnown(name, val, taint)
-		} else {
+		default:
 			it.state.SetUnknown(name, taint)
 		}
 		if v := it.state.Get(name); v != nil {
@@ -834,17 +1191,20 @@ func (it *interp) execDecl(c *syntax.DeclClause) {
 				v.Readonly = true
 			}
 		}
-		args = append(args, name+"="+val)
+		opNames = append(opNames, name)
 	}
 	if variant == "" || it.res == nil {
 		return
 	}
 	cmd := &Command{Pos: fromMvdanPos(c.Pos()), Name: variant, NameWord: &Word{Value: variant, Literal: true}}
-	for _, a := range args {
-		cmd.Args = append(cmd.Args, &Word{Value: a, Literal: true})
+	for _, f := range flags {
+		cmd.Args = append(cmd.Args, &Word{Value: f, Literal: true})
+	}
+	for _, n := range opNames {
+		cmd.Args = append(cmd.Args, &Word{Value: n, Literal: true})
 	}
 	it.addCmd(cmd)
-	declRes := it.res(cmd, it.prog)
+	declRes := it.res(cmd, it.resolutionProgram())
 	it.effs = append(it.effs, declRes.Effects...)
 	it.ders = append(it.ders, declRes.Derivations...)
 }
@@ -881,7 +1241,28 @@ func (it *interp) execCall(c *syntax.CallExpr) {
 		name := a.Name.Value
 		val, known := "", true
 		taint := engine.TaintBottom()
-		if a.Value != nil {
+		switch {
+		case a.Index != nil:
+			// A subscripted assignment a[expr]=v: execute any substitutions in
+			// the subscript, then treat the value as unknown (the subscript's
+			// value is not modelled).
+			it.expandSubstsIn(a.Index)
+			if a.Value != nil {
+				val, _, taint = it.expandLiteral(a.Value)
+			}
+			known = false
+		case a.Array != nil:
+			// a=( … ): expand every element so nested command/process
+			// substitutions run, and record the result as unknown.
+			for _, el := range a.Array.Elems {
+				if el == nil {
+					continue
+				}
+				_, _, tel := it.expandLiteral(el.Value)
+				taint = taint.Join(tel)
+			}
+			known = false
+		case a.Value != nil:
 			val, known, taint = it.expandLiteral(a.Value)
 		}
 		as := &Assign{Pos: fromMvdanPos(a.Pos()), Name: name, Append: a.Append}
@@ -891,9 +1272,26 @@ func (it *interp) execCall(c *syntax.CallExpr) {
 		it.effs = append(it.effs, ew)
 		it.derive(ew, engine.Atom{Kind: engine.AtomLiteral, Text: name, Loc: sourceLoc(as.Pos, it.prog.File)})
 		if len(c.Args) == 0 {
-			if known {
-				it.state.SetKnown(name, val, taint)
-			} else {
+			switch {
+			case a.Array != nil || a.Index != nil:
+				it.state.SetUnknown(name, taint)
+			case a.Append:
+				// name+=value appends to the existing value.
+				if prev := it.state.Get(name); prev != nil && prev.Set && prev.Known {
+					it.state.SetKnown(name, prev.Value+val, taint.Join(prev.Taint))
+				} else if prev := it.state.Get(name); prev != nil && prev.Set {
+					it.state.SetUnknown(name, taint)
+				} else {
+					it.state.SetKnown(name, val, taint)
+				}
+			case known:
+				if prev := it.state.Get(name); prev != nil && prev.Int {
+					// `declare -i x; x=1+1` — the assignment is arithmetic.
+					it.state.SetUnknown(name, taint)
+				} else {
+					it.state.SetKnown(name, val, taint)
+				}
+			default:
 				it.state.SetUnknown(name, taint)
 			}
 		}
@@ -910,6 +1308,13 @@ func (it *interp) execCall(c *syntax.CallExpr) {
 	}
 	rest := c.Args[start:]
 
+	// The wrapper machinery drops the tokens it consumes (option values, fixed
+	// positionals). Expand them anyway so any command/process substitution there
+	// still runs and its effects are recorded.
+	for _, w := range c.Args[:start] {
+		it.expandFields(w)
+	}
+
 	// 3. Expand the effective command words.
 	var (
 		name   string
@@ -917,17 +1322,57 @@ func (it *interp) execCall(c *syntax.CallExpr) {
 		argvW  []argWord
 	)
 	if len(rest) > 0 {
-		ew0 := it.expandFields(rest[0])
-		if ew0.known && len(ew0.fields) > 0 {
-			name, nameOK = ew0.fields[0], true
-		}
-		for _, f := range ew0.fields[min(1, len(ew0.fields)):] {
-			argvW = append(argvW, argWord{val: f, lit: ew0.known, taint: ew0.taint, pos: fromMvdanPos(rest[0].Pos())})
+		if v, ok := literalOf(rest[0]); ok && (v == "[" || v == "test") {
+			// `[` is the `test` builtin; as an unquoted word its `[` would be
+			// read as a glob metacharacter and the whole invocation degraded to
+			// ⊤ (or, quoted, dropped). Map it to `test` so its file-test operand
+			// is reported.
+			it.expandFields(rest[0])
+			name, nameOK = v, true
+		} else {
+			ew0 := it.expandFields(rest[0])
+			if ew0.known && len(ew0.fields) > 0 {
+				name, nameOK = ew0.fields[0], true
+			}
+			if !ew0.known && len(ew0.fields) == 0 {
+				// A command-name word whose expansion is unknown contributes a
+				// dynamic placeholder so the invocation still degrades to ⊤.
+				argvW = append(argvW, argWord{val: "", lit: false, taint: ew0.taint, pos: fromMvdanPos(rest[0].Pos())})
+			} else {
+				for _, f := range ew0.fields[min(1, len(ew0.fields)):] {
+					argvW = append(argvW, argWord{val: f, lit: ew0.known, taint: ew0.taint, pos: fromMvdanPos(rest[0].Pos())})
+				}
+			}
 		}
 		for _, w := range rest[1:] {
 			ew := it.expandFields(w)
+			if !ew.known && len(ew.fields) == 0 {
+				// An unquoted, wholly-unknown expansion yields no field: keep a
+				// dynamic operand so the target degrades to ⊤, not to ⊥.
+				argvW = append(argvW, argWord{val: "", lit: false, taint: ew.taint, pos: fromMvdanPos(w.Pos())})
+				continue
+			}
 			for _, f := range ew.fields {
 				argvW = append(argvW, argWord{val: f, lit: ew.known, taint: ew.taint, pos: fromMvdanPos(w.Pos())})
+			}
+		}
+	}
+
+	// `test`/`[` — drop the trailing `]` operand that `[` requires.
+	if name == "[" {
+		name = "test"
+		if n := len(argvW); n > 0 && argvW[n-1].lit && argvW[n-1].val == "]" {
+			argvW = argvW[:n-1]
+		}
+	}
+
+	// An xargs -I/-i/--replace placeholder stands for the (unknown) input, so
+	// an operand equal to it must widen the target to ⊤ rather than be taken as
+	// a concrete path.
+	if repl, ok := xargsPlaceholder(wrappers); ok && repl != "" {
+		for i := range argvW {
+			if argvW[i].val == repl {
+				argvW[i].val, argvW[i].lit = "", false
 			}
 		}
 	}
@@ -948,8 +1393,15 @@ func (it *interp) execCall(c *syntax.CallExpr) {
 	}
 	it.addCmd(cmd)
 
-	// 5. No command word: a bare assignment / redirection.
+	// 5. No command word.
 	if len(rest) == 0 {
+		if len(wrappers) > 0 {
+			// The wrapper consumed its whole argument list (env -S '<cmd>',
+			// sudo -i, timeout 5, bare env/xargs, …), leaving no effective
+			// command. Degrade to ⊤ rather than fail open to an empty report.
+			e := it.markTopEffect("wrapper consumed the whole command line")
+			it.derive(e, engine.Atom{Kind: engine.AtomCommand, Text: wrapperText(wrappers), Loc: sourceLoc(pos, it.prog.File)})
+		}
 		it.stdout, it.stdoutKnown = "", true
 		return
 	}
@@ -979,24 +1431,34 @@ func (it *interp) dispatch(name string, nameOK bool, argv []string, cmd *Command
 		return nil
 	}
 
+	// An external-exec wrapper (command/env/sudo/nohup/timeout/xargs/setsid)
+	// looks the operand up in PATH and execs it in a new process, so shell
+	// aliases and functions are bypassed; `command` additionally suppresses
+	// alias expansion.
+	external := len(cmd.Wrappers) > 0
+
 	// alias expansion (bounded, then handed to the interpreter proper)
-	for depth := 0; depth < maxAliasDepth; depth++ {
-		body, ok := it.state.Aliases[name]
-		if !ok {
-			break
+	if !external {
+		for depth := 0; depth < maxAliasDepth; depth++ {
+			body, ok := it.state.Aliases[name]
+			if !ok {
+				break
+			}
+			nn, nargs, ok2 := it.expandAliasValue(body)
+			if !ok2 {
+				break
+			}
+			argv = append(append([]string{}, nargs...), argv...)
+			name = nn
 		}
-		nn, nargs, ok2 := it.expandAliasValue(body)
-		if !ok2 {
-			break
-		}
-		argv = append(append([]string{}, nargs...), argv...)
-		name = nn
 	}
 
 	// shell functions declared by the program
-	if fd := it.funcRaw[name]; fd != nil {
+	if fd := it.funcRaw[name]; fd != nil && !external {
 		it.callFunc(fd, argv)
-		it.setStatus(name)
+		// A user function's exit status is the body's last status; keying it on
+		// the (possibly builtin-matching) name would be wrong, so leave whatever
+		// the body computed (unknown for a body that computes none).
 		return nil
 	}
 
@@ -1011,8 +1473,10 @@ func (it *interp) dispatch(name string, nameOK bool, argv []string, cmd *Command
 	// builtins that mutate Σ
 	it.builtinState(name, argv)
 
-	// builtins that execute code supplied at run time
-	if isCodeExecBuiltin(name) {
+	// builtins that execute code supplied at run time. `trap` executes its
+	// ACTION only when one is registered; the bare listing/query forms
+	// (`trap`, `trap -p`, `trap - SIG`) carry no action and execute nothing.
+	if isCodeExecBuiltin(name) && (name != "trap" || trapHasAction(argv)) {
 		e := it.markTopEffect("code-executing builtin " + strconv.Quote(name))
 		it.derive(e, engine.Atom{Kind: engine.AtomCommand, Text: name, Loc: sourceLoc(cmd.Pos, it.prog.File)})
 		it.setStatus(name)
@@ -1042,7 +1506,7 @@ func (it *interp) dispatch(name string, nameOK bool, argv []string, cmd *Command
 		it.setStatus(name)
 		return nil
 	}
-	bound := it.res(cmd, it.prog)
+	bound := it.res(cmd, it.resolutionProgram())
 	it.effs = append(it.effs, bound.Effects...)
 	it.ders = append(it.ders, bound.Derivations...)
 	it.setStatus(name)
@@ -1099,6 +1563,14 @@ func (it *interp) expandAliasValue(body string) (string, []string, bool) {
 	if s == nil || s.Kind != KindSimple || s.Cmd == nil || s.Cmd.Name == "" {
 		return "", nil, false
 	}
+	// An alias body carrying redirections or embedded command/process
+	// substitutions cannot be reduced to a name plus argument words without
+	// dropping the effects those parts execute. Reject it so the invocation
+	// falls through to the binder, whose tokenizeAlias applies the same rule and
+	// degrades the body to ⊤ rather than silently under-reporting (no-silent-miss).
+	if len(s.Redirs) > 0 || aliasArgsHaveSubst(s.Cmd) {
+		return "", nil, false
+	}
 	args := make([]string, 0, len(s.Cmd.Args))
 	for _, w := range s.Cmd.Args {
 		args = append(args, w.Value)
@@ -1106,8 +1578,44 @@ func (it *interp) expandAliasValue(body string) (string, []string, bool) {
 	return s.Cmd.Name, args, true
 }
 
-// callFunc executes a function body with positional parameters bound in a fresh
-// copy of Σ.
+// aliasArgsHaveSubst reports whether an alias body's command carries a command
+// or process substitution in any of its argument words (directly or inside
+// double quotes).
+func aliasArgsHaveSubst(c *Command) bool {
+	if c == nil {
+		return false
+	}
+	for _, w := range c.Args {
+		if wordHasSubst(w) {
+			return true
+		}
+	}
+	return false
+}
+
+// wordHasSubst reports whether a word contains a command or process substitution.
+func wordHasSubst(w *Word) bool {
+	if w == nil {
+		return false
+	}
+	for _, p := range w.Parts {
+		switch p.Kind {
+		case PartCmdSubst, PartProcSubst:
+			return true
+		case PartDblQuoted:
+			for _, ip := range p.Parts {
+				if ip.Kind == PartCmdSubst || ip.Kind == PartProcSubst {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// callFunc executes a function body. bash functions share the caller's variable
+// scope — only the positional parameters are local to the call — so the body is
+// executed against the caller's Σ and the state changes it performs persist.
 func (it *interp) callFunc(fd *syntax.FuncDecl, argv []string) {
 	if fd == nil || fd.Name == nil {
 		return
@@ -1117,24 +1625,100 @@ func (it *interp) callFunc(fd *syntax.FuncDecl, argv []string) {
 		it.markTopEffect("function recursion limit reached at " + strconv.Quote(name))
 		return
 	}
-	saved := it.state
-	it.state = it.state.Clone()
+	positional := []string{"0", "#", "@", "*", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
+	savedPos := make(map[string]*Var, len(positional))
+	for _, n := range positional {
+		savedPos[n] = it.state.Vars[n]
+	}
 	it.depth++
 	it.state.SetKnown("0", name, engine.TaintBottom())
 	it.state.SetKnown("#", strconv.Itoa(len(argv)), engine.TaintBottom())
-	it.state.SetKnown("@", strings.Join(argv, " "), engine.TaintBottom())
-	it.state.SetKnown("*", strings.Join(argv, " "), engine.TaintBottom())
+	if len(argv) > 1 {
+		// "$@"/"$*" expand to N separate words; joining them into one field
+		// would mis-target the arguments, so keep them unknown.
+		it.state.SetUnknown("@", engine.TaintBottom())
+		it.state.SetUnknown("*", engine.TaintBottom())
+	} else {
+		it.state.SetKnown("@", strings.Join(argv, " "), engine.TaintBottom())
+		it.state.SetKnown("*", strings.Join(argv, " "), engine.TaintBottom())
+	}
 	for i, a := range argv {
 		it.state.SetKnown(strconv.Itoa(i+1), a, engine.TaintBottom())
+	}
+	// A body containing shift / set -- rebinds the positional parameters; that
+	// is not modelled, so invalidate them so reads degrade to ⊤ instead of
+	// keeping a stale argument.
+	if funcRebindsPositional(fd) {
+		for i := 1; i <= 9; i++ {
+			it.state.Unset(strconv.Itoa(i))
+		}
+		it.state.SetUnknown("@", engine.TaintBottom())
+		it.state.SetUnknown("*", engine.TaintBottom())
 	}
 	if fd.Body != nil {
 		it.execStmt(fd.Body)
 	}
 	it.depth--
-	it.state = saved
+	for _, n := range positional {
+		if v := savedPos[n]; v != nil {
+			it.state.Vars[n] = v
+		} else {
+			delete(it.state.Vars, n)
+		}
+	}
 	if it.ctl == ctlReturn {
 		it.ctl = ctlNone
 	}
+}
+
+// funcRebindsPositional reports whether a function body contains a shift or a
+// `set --` that rebinds the positional parameters.
+func funcRebindsPositional(fd *syntax.FuncDecl) bool {
+	if fd == nil || fd.Body == nil {
+		return false
+	}
+	found := false
+	syntax.Walk(fd.Body, func(n syntax.Node) bool {
+		if found {
+			return false
+		}
+		ce, ok := n.(*syntax.CallExpr)
+		if !ok || len(ce.Args) == 0 {
+			return true
+		}
+		lit, ok := firstLit(ce.Args[0])
+		if !ok {
+			return true
+		}
+		switch lit {
+		case "shift":
+			found = true
+			return false
+		case "set":
+			// `set -- a b` rebinds; `set -e` does not.
+			for _, w := range ce.Args[1:] {
+				if v, ok := firstLit(w); ok && v == "--" {
+					found = true
+					return false
+				}
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// firstLit returns the literal text of a word made up of a single unquoted
+// literal part.
+func firstLit(w *syntax.Word) (string, bool) {
+	if w == nil || len(w.Parts) != 1 {
+		return "", false
+	}
+	lit, ok := w.Parts[0].(*syntax.Lit)
+	if !ok {
+		return "", false
+	}
+	return lit.Value, true
 }
 
 // ===========================================================================
@@ -1156,6 +1740,12 @@ func (it *interp) redir(r *syntax.Redirect) {
 		it.redirectTarget(r.Word, false)
 	case syntax.DplOut, syntax.DplIn:
 		it.emit(engine.KindStdio, engine.ScopeBottom(), engine.ModeDirect, engine.CertaintyCertain, engine.TaintBottom(), it.redirectAtom(fromMvdanPos(r.Pos()), r.Op.String()))
+		// `>&word` / `<&word` with a non-numeric operand is bash's synonym for
+		// `&>word` / `&<word`: a file redirection, not a stream dupe, so its
+		// filesystem effect must be reported.
+		if r.Word != nil && !isFdWord(r.Word) {
+			it.redirectTarget(r.Word, r.Op == syntax.DplIn)
+		}
 	case syntax.Hdoc, syntax.DashHdoc:
 		it.heredoc(r.Hdoc)
 	case syntax.WordHdoc:
@@ -1249,10 +1839,27 @@ func (it *interp) captureSubst(cs *syntax.CmdSubst) (string, bool, engine.Taint)
 	savedTaint := it.stdoutTaint
 	savedCtl := it.ctl
 	it.state = it.state.Clone()
-	it.stdout, it.stdoutKnown, it.stdoutTaint = "", false, engine.TaintBottom()
 	it.ctl = ctlNone
-	it.execStmts(cs.Stmts)
-	out, known, taint := it.stdout, it.stdoutKnown, it.stdoutTaint
+
+	// A command substitution's stdout is the concatenation of every inner
+	// statement's output, so fold them all rather than only the last.
+	var sb strings.Builder
+	known := len(cs.Stmts) > 0
+	taint := engine.TaintBottom()
+	for _, s := range cs.Stmts {
+		if it.ctl != ctlNone {
+			break
+		}
+		it.stdout, it.stdoutKnown, it.stdoutTaint = "", false, engine.TaintBottom()
+		it.execStmt(s)
+		sb.WriteString(it.stdout)
+		if !it.stdoutKnown {
+			known = false
+		}
+		taint = taint.Join(it.stdoutTaint)
+	}
+	out := sb.String()
+
 	it.state = savedState
 	it.stdout, it.stdoutKnown, it.stdoutTaint = savedOut, savedKnown, savedTaint
 	it.ctl = savedCtl
@@ -1270,6 +1877,23 @@ func (it *interp) execProcSubst(ps *syntax.ProcSubst) {
 	it.execStmts(ps.Stmts)
 	it.state = savedState
 	it.ctl = savedCtl
+}
+
+// expandSubstsIn walks a syntax subtree and expands every word it contains, so
+// that any command or process substitution inside a construct the interpreter
+// does not otherwise execute (an arithmetic or conditional command, a C-style
+// for clause) is still executed and its effects are recorded.
+func (it *interp) expandSubstsIn(n syntax.Node) {
+	if n == nil {
+		return
+	}
+	syntax.Walk(n, func(x syntax.Node) bool {
+		if w, ok := x.(*syntax.Word); ok {
+			it.expandFields(w)
+			return false
+		}
+		return true
+	})
 }
 
 // ===========================================================================
@@ -1308,9 +1932,60 @@ func dedupStrings(xs []string) []string {
 	return out
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+// isFdWord reports whether a redirect word names a file descriptor (all digits,
+// or "-" for a closed/duplicated stream), as opposed to a file path.
+func isFdWord(w *syntax.Word) bool {
+	v, ok := literalOf(w)
+	if !ok {
+		return false
 	}
-	return b
+	if v == "-" {
+		return true
+	}
+	if v == "" {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] < '0' || v[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// wrapperText renders a wrapper chain (outermost first) for a derivation atom.
+func wrapperText(ws []*Wrapper) string {
+	names := make([]string, 0, len(ws))
+	for _, w := range ws {
+		if w != nil {
+			names = append(names, w.Name)
+		}
+	}
+	return strings.Join(names, " ")
+}
+
+// xargsPlaceholder returns the -I/-i/--replace replacement string declared by an
+// xargs wrapper, if any. The placeholder is a stand-in for the (unknown) input
+// items, so an operand equal to it must widen the target to ⊤ rather than be
+// taken as a concrete path.
+func xargsPlaceholder(wrappers []*Wrapper) (string, bool) {
+	for _, w := range wrappers {
+		if w == nil || w.Name != WrapXargs {
+			continue
+		}
+		for i := 0; i < len(w.Options); i++ {
+			opt := w.Options[i]
+			switch {
+			case opt == "-I" || opt == "-i" || opt == "--replace":
+				if i+1 < len(w.Options) {
+					return w.Options[i+1], true
+				}
+			case strings.HasPrefix(opt, "-I") && len(opt) > 2:
+				return opt[2:], true
+			case strings.HasPrefix(opt, "--replace="):
+				return strings.TrimPrefix(opt, "--replace="), true
+			}
+		}
+	}
+	return "", false
 }

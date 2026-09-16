@@ -8,7 +8,7 @@ import (
 )
 
 // ResolveKind classifies where a command name resolves. The chain followed is
-// builtin → function → alias → PATH, plus the two degenerate cases of a call
+// alias → function → builtin → PATH, plus the two degenerate cases of a call
 // that names no command at all.
 type ResolveKind string
 
@@ -62,49 +62,60 @@ type resolved struct {
 	args    []Arg
 }
 
-// resolve runs the name-resolution chain for a call: builtin → function →
-// alias → command (PATH). Aliases are expanded (bounded by maxAliasDepth) to
-// the effective command and argv, while Kind records that the name resolved
-// through an alias. A name that matches nothing resolves to ResolveUnknown, and
-// a call with no statically-known name resolves to ResolveUnknown as well.
+// resolve runs the name-resolution chain for a call: alias → function → builtin
+// → command (PATH), matching the shell's own precedence (a declared alias or
+// function shadows a builtin of the same name). Aliases are expanded (bounded by
+// maxAliasDepth) to the effective command and argv, while Kind records that the
+// name resolved through an alias. A name that matches nothing resolves to
+// ResolveUnknown, and a call with no statically-known name resolves to
+// ResolveUnknown as well.
 func (b *Binder) resolve(c *Call) resolved {
 	if !c.NameOK || c.Name == "" {
 		return resolved{res: Resolution{Kind: ResolveUnknown, Invoked: c.Name}}
 	}
 
-	// 1. builtin
+	// A wrapper-prefixed invocation (command/env/sudo/nohup/timeout/setsid) is
+	// looked up in PATH and executed by a new process, so shell aliases and
+	// functions are bypassed.
+	external := len(c.Wrappers) > 0
+
+	// 1. alias — bash/POSIX resolve a declared alias before a function or a
+	// builtin of the same name, so an alias must shadow both.
+	if !external {
+		if _, ok := c.Aliases[c.Name]; ok {
+			name, args, chain, ok := b.expandAliases(c)
+			r := Resolution{Kind: ResolveAlias, Invoked: c.Name, AliasChain: chain}
+			if !ok {
+				r.Name = c.Name
+				return resolved{res: r}
+			}
+			// The effective command may itself be shadowed by a function: report
+			// it as a function call (⊤/Transitive at Bind), not as an unresolved
+			// name.
+			if c.Funcs[name] {
+				return resolved{res: Resolution{Kind: ResolveFunction, Name: name, Invoked: c.Name, AliasChain: chain}}
+			}
+			if cmd, ok := b.k.Command(name); ok {
+				r.Name = cmd.Name
+				return resolved{res: r, command: cmd, args: args}
+			}
+			r.Name = name
+			return resolved{res: r}
+		}
+	}
+
+	// 2. function — a shell function shadows a builtin of the same name.
+	if !external && c.Funcs[c.Name] {
+		return resolved{res: Resolution{Kind: ResolveFunction, Name: c.Name, Invoked: c.Name}}
+	}
+
+	// 3. builtin
 	if cmd, ok := b.k.Command(c.Name); ok && cmd.Dialect == kb.DialectBuiltin {
 		return resolved{
 			res:     Resolution{Kind: ResolveBuiltin, Name: cmd.Name, Invoked: c.Name},
 			command: cmd,
 			args:    c.Args,
 		}
-	}
-
-	// 2. function
-	if c.Funcs[c.Name] {
-		return resolved{res: Resolution{Kind: ResolveFunction, Name: c.Name, Invoked: c.Name}}
-	}
-
-	// 3. alias
-	if _, ok := c.Aliases[c.Name]; ok {
-		name, args, chain, ok := b.expandAliases(c)
-		r := Resolution{Kind: ResolveAlias, Invoked: c.Name, AliasChain: chain}
-		if !ok {
-			r.Name = c.Name
-			return resolved{res: r}
-		}
-		// The effective command may itself be shadowed by a function.
-		if c.Funcs[name] {
-			r.Name = name
-			return resolved{res: r}
-		}
-		if cmd, ok := b.k.Command(name); ok {
-			r.Name = cmd.Name
-			return resolved{res: r, command: cmd, args: args}
-		}
-		r.Name = name
-		return resolved{res: r}
 	}
 
 	// 4. command (PATH)
@@ -177,9 +188,51 @@ func tokenizeAlias(body string) (string, []Arg, bool) {
 	if s == nil || s.Kind != bash.KindSimple || s.Cmd == nil || s.Cmd.Name == "" {
 		return "", nil, false
 	}
+	// An alias body carrying redirections or embedded command/process
+	// substitutions cannot be reduced to a name plus argument words without
+	// silently dropping their effects, so it is rejected here and the caller
+	// degrades to ⊤ rather than under-reporting.
+	if len(s.Redirs) > 0 || aliasBodyHasSubst(s) {
+		return "", nil, false
+	}
 	var args []Arg
 	for _, w := range s.Cmd.Args {
 		args = append(args, wordArg(w))
 	}
 	return s.Cmd.Name, args, true
+}
+
+// aliasBodyHasSubst reports whether an alias body's command carries a command or
+// process substitution in any of its argument words (directly or inside double
+// quotes), which would execute code the name-plus-words reduction drops.
+func aliasBodyHasSubst(s *bash.Stmt) bool {
+	if s == nil || s.Cmd == nil {
+		return false
+	}
+	for _, w := range s.Cmd.Args {
+		if wordHasSubst(w) {
+			return true
+		}
+	}
+	return false
+}
+
+// wordHasSubst reports whether a word contains a command or process substitution.
+func wordHasSubst(w *bash.Word) bool {
+	if w == nil {
+		return false
+	}
+	for _, p := range w.Parts {
+		switch p.Kind {
+		case bash.PartCmdSubst, bash.PartProcSubst:
+			return true
+		case bash.PartDblQuoted:
+			for _, ip := range p.Parts {
+				if ip.Kind == bash.PartCmdSubst || ip.Kind == bash.PartProcSubst {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

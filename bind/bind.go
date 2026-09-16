@@ -186,6 +186,17 @@ func (b *Binder) Bind(c *Call) *Result {
 		r.Resolution = res.res
 		if res.command != nil {
 			eff, ds, ms, unknown := b.bindCommand(res.command, res.args, c.StdinTaint, c.Pos)
+			if len(eff) == 0 {
+				// The name resolved to a KB command, but its invocation matched
+				// no parameter that contributes an effect (a flag-only entry
+				// such as reboot/poweroff/halt/shutdown or date/id/sync).
+				// Emitting nothing would fail open to an empty, benign result,
+				// so contribute the command's intrinsic "it ran" effect
+				// (ProcSpawn over the command's own scope).
+				e := intrinsicProcSpawn(res.command.Name, c.Pos)
+				eff = append(eff, e)
+				ds = append(ds, derive(e, []engine.Atom{commandAtom(callName(c), c.Pos)}, "proc.spawn"))
+			}
 			raw = append(raw, eff...)
 			ders = append(ders, ds...)
 			r.Destructive = destructiveEntries(b.k, res.command.Name, ms)
@@ -295,27 +306,75 @@ func (b *Binder) bindCommand(cmd *kb.Command, argv []Arg, stdinTaint engine.Tain
 		specs = append(specs, m.param.Spec)
 	}
 
-	// Positional operands, mapped to the declared positional parameters in
-	// order; the last positional parameter absorbs every remaining operand.
+	// Positional operands. A leading literal operand that names a declared
+	// positional parameter is matched by value first (the KB models CLI
+	// subcommands this way: 7z l ARCHIVE, git clone|clean, systemctl start|stop,
+	// nft list|flush); the remaining positional parameters fall back to index
+	// order for generic operands (SRC/DEST/FILE).
 	ps := positionalParams(cmd)
+	idxBySpec := make(map[string]int, len(ps))
 	for i, p := range ps {
-		var group []Arg
-		switch {
-		case i == len(ps)-1:
-			if i < len(rest) {
-				group = rest[i:]
+		idxBySpec[p.Spec] = i
+	}
+	// When the leading operand matched a declared positional BY VALUE, that
+	// parameter already consumed the rest of the operands as its group; binding
+	// those operands again to the OTHER positional parameters by index would
+	// fabricate effects (7z l ARCHIVE → bogus FSWrite{ARCHIVE}, git clean PATH →
+	// bogus NetEgress{PATH}). So the index-order fallback is skipped whenever a
+	// value match occurred: the value-matched parameter is the whole positional
+	// binding.
+	valueMatched := false
+	if len(rest) > 0 && rest[0].Literal {
+		if pi, ok := idxBySpec[rest[0].Value]; ok {
+			p := ps[pi]
+			group := rest[1:]
+			atoms := []engine.Atom{cmdAtom}
+			for _, g := range group {
+				atoms = append(atoms, operandAtom(g.Value, withFile(g.Pos, file)))
 			}
-		case i < len(rest):
-			group = rest[i : i+1]
+			effs, ds := lowerParam(cmd, p, Arg{}, argsScope(group), argsTaint(group), stdinTaint, atoms)
+			out = append(out, effs...)
+			ders = append(ders, ds...)
+			specs = append(specs, p.Spec)
+			valueMatched = true
 		}
-		if len(group) == 0 {
+	}
+	if !valueMatched {
+		for i, p := range ps {
+			var group []Arg
+			switch {
+			case i == len(ps)-1:
+				if i < len(rest) {
+					group = rest[i:]
+				}
+			case i < len(rest):
+				group = rest[i : i+1]
+			}
+			if len(group) == 0 {
+				continue
+			}
+			atoms := []engine.Atom{cmdAtom}
+			for _, g := range group {
+				atoms = append(atoms, operandAtom(g.Value, withFile(g.Pos, file)))
+			}
+			effs, ds := lowerParam(cmd, p, Arg{}, argsScope(group), argsTaint(group), stdinTaint, atoms)
+			out = append(out, effs...)
+			ders = append(ders, ds...)
+			specs = append(specs, p.Spec)
+		}
+	}
+
+	// Intrinsic parameters (kind: self): an effect the command contributes by the
+	// mere fact of being invoked, with no token on the command line to match. It
+	// is lowered unconditionally — regardless of what else matched — so a
+	// power-control command keeps its ProcSpawn even when a flag matched
+	// (reboot -f, shutdown -h now), and its effect no longer depends on the
+	// empty-match fallback in Bind.
+	for _, p := range cmd.Params {
+		if p.Kind != kb.ParamSelf {
 			continue
 		}
-		atoms := []engine.Atom{cmdAtom}
-		for _, g := range group {
-			atoms = append(atoms, operandAtom(g.Value, withFile(g.Pos, file)))
-		}
-		effs, ds := lowerParam(cmd, p, Arg{}, argsScope(group), argsTaint(group), stdinTaint, atoms)
+		effs, ds := lowerParam(cmd, p, Arg{}, engine.ScopeBottom(), engine.TaintBottom(), stdinTaint, []engine.Atom{cmdAtom})
 		out = append(out, effs...)
 		ders = append(ders, ds...)
 		specs = append(specs, p.Spec)
@@ -372,14 +431,22 @@ func parseArgs(cmd *kb.Command, argv []Arg) ([]Arg, []match, []string) {
 				default:
 					matches = append(matches, match{param: p, pos: a.Pos})
 				}
+			} else if hasVal {
+				// A declared non-option flag written as --flag=value: keep the
+				// attached value rather than silently discarding it.
+				matches = append(matches, match{param: p, value: Arg{Value: val, Literal: true, Pos: shiftCol(a.Pos, len(name)+1)}, hasVal: true, pos: a.Pos})
 			} else {
 				matches = append(matches, match{param: p, pos: a.Pos})
 			}
 
 		case len(v) >= 2 && v[0] == '-':
 			// A single-dash token is first tried whole (find -delete, tar -C,
-			// curl -o); only if it is not a declared spec is it split into a
-			// cluster of short flags (-rf → -r, -f).
+			// curl -o): a DECLARED parameter always wins, so a numeric flag
+			// (gzip -9, comm -1, join -1, printenv -0, ssh -4, ping -6,
+			// xargs -0) is never mistaken for an operand and its effect is not
+			// dropped. Only when the token is not declared is a signed number
+			// (kill -9 -1, tail -1) taken as an operand; every other undeclared
+			// token is split into a cluster of short flags (-rf → -r, -f).
 			if p, ok := cmd.Param(v); ok {
 				if p.Kind == kb.ParamOption {
 					if i+1 < len(argv) {
@@ -393,15 +460,32 @@ func parseArgs(cmd *kb.Command, argv []Arg) ([]Arg, []match, []string) {
 				}
 				continue
 			}
+			if isSignedNumber(v) {
+				operands = append(operands, a)
+				continue
+			}
 			cluster := v[1:]
 			consumed := false
+			// Dedupe by spec so a long cluster token (-rrrr…) contributes one
+			// match per distinct flag, not one per byte: this bounds the memory
+			// a single token can allocate (ADR-0006) without changing the
+			// effects of a repeated flag.
+			seenSpec := make(map[string]bool, len(cluster))
+			unknownSeen := make(map[string]bool, len(cluster))
 			for j := 0; j < len(cluster); j++ {
 				spec := "-" + string(cluster[j])
-				p, ok := cmd.Param(spec)
-				if !ok {
-					unknown = append(unknown, spec)
+				if seenSpec[spec] {
 					continue
 				}
+				p, ok := cmd.Param(spec)
+				if !ok {
+					if !unknownSeen[spec] {
+						unknownSeen[spec] = true
+						unknown = append(unknown, spec)
+					}
+					continue
+				}
+				seenSpec[spec] = true
 				if p.Kind == kb.ParamOption {
 					switch val := cluster[j+1:]; {
 					case val != "":
@@ -692,7 +776,11 @@ func targetFor(cmd *kb.Command, p kb.Param, value Arg, argScope engine.Scope) en
 		return engine.ScopeTop()
 	case kb.ValueCwd:
 		return engine.ScopeOf(".")
-	default: // stdin, env
+	case kb.ValueEnv:
+		// The target is derived from an environment variable's value, which the
+		// analysis cannot pin down: ⊤ (unknown), never ⊥ (no target).
+		return engine.ScopeTop()
+	default: // stdin
 		return engine.ScopeBottom()
 	}
 }
@@ -773,6 +861,20 @@ func topEffect(mode engine.EffectMode) engine.Effect {
 	}
 }
 
+// intrinsicProcSpawn is the "this command ran" effect emitted for a resolved
+// command whose invocation matched no parameter contributing an effect, so the
+// report can never fail open to an empty benign result.
+func intrinsicProcSpawn(name string, loc engine.SourceLoc) engine.Effect {
+	return engine.Effect{
+		Kind:       engine.KindProcSpawn,
+		Target:     engine.ScopeOf(name),
+		Mode:       engine.ModeDirect,
+		Certainty:  engine.CertaintyCertain,
+		Taint:      engine.TaintBottom(),
+		Reversible: false,
+	}
+}
+
 // destructiveEntries resolves the matched (command, spec) pairs against the
 // knowledge base's destructive-flags table, de-duplicated and sorted.
 func destructiveEntries(k *kb.KB, command string, specs []string) []kb.Destructive {
@@ -810,6 +912,17 @@ func normalizeResult(r *Result) {
 	rep.Effects = r.Effects
 	rep.Normalize()
 	r.Effects = rep.Effects
+
+	// The ⊤ shape (CodeExec over the any-target scope) and the conservative
+	// flag must agree: a result that carries a ⊤ effect is conservative even if
+	// resolution itself succeeded (e.g. a bounded command whose parameter
+	// widened its target to ⊤).
+	for _, e := range r.Effects {
+		if e.Kind == engine.KindCodeExec && e.Target.IsTop() {
+			r.Conservative = true
+			break
+		}
+	}
 
 	d := rep.Destructiveness
 	for _, e := range r.Destructive {
@@ -923,6 +1036,20 @@ func firstEnvName(c *Call) string {
 }
 
 func quote(s string) string { return "\"" + s + "\"" }
+
+// isSignedNumber reports whether s is a negative integer literal (e.g. "-1",
+// "-9"): a legitimate operand (a PID, a count) rather than a flag cluster.
+func isSignedNumber(s string) bool {
+	if len(s) < 2 || s[0] != '-' {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
 
 func dedup(xs []string) []string {
 	if len(xs) == 0 {

@@ -15,13 +15,13 @@ commands:
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: "-exec"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
       - spec: "-execdir"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
       - spec: "-ok"
         kind: option
-        effect: {kind: ProcSpawn, mode: Conditional, valueFrom: args}
+        effect: {kind: ProcSpawn, mode: Conditional, valueFrom: flagValue}
       - spec: "-print"
         kind: flag
         effect: {kind: Stdio, mode: Direct, valueFrom: args}
@@ -111,6 +111,18 @@ commands:
       - spec: "--delete"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--to-command"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "--use-compress-program"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "-I"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "--checkpoint-action"
+        kind: option
+        effect: {kind: CodeExec, mode: Conditional, valueFrom: flagValue}
       - spec: FILE
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}

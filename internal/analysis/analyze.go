@@ -376,6 +376,10 @@ func (a *Analyzer) analyzeBash(v bash.Variant, lang Lang, src, root string) *Rep
 		agg         aggregatedResolution
 		destructive []DestructiveFinding
 		binderNotes []string
+		// noResolver records that no knowledge-base binder is bound, so command
+		// names cannot be resolved to their effects and the analysis is
+		// necessarily incomplete for every non-intrinsic command.
+		noResolver bool
 		// kbDestruct is the join (max) of the destructiveness the binder
 		// computed for every call. The binder already folds the matched
 		// destructive-table entries' classes into it (bind.normalizeResult →
@@ -385,6 +389,7 @@ func (a *Analyzer) analyzeBash(v bash.Variant, lang Lang, src, root string) *Rep
 		kbDestruct engine.Destructiveness
 	)
 	if a == nil || a.binder == nil {
+		noResolver = true
 		res = bash.Exec(v, sourceName(root, "script"), src, nil)
 	} else {
 		b := a.binder
@@ -414,6 +419,22 @@ func (a *Analyzer) analyzeBash(v bash.Variant, lang Lang, src, root string) *Rep
 	rep.Conservative = res.Conservative
 	rep.Top = res.Top
 	rep.Reason = res.Reason
+	if noResolver && len(res.Cmds) > 0 && !rep.HasTop() {
+		// No resolver is bound, so a command name cannot be mapped onto its
+		// declared effects and the report is necessarily incomplete. Degrade to
+		// ⊤ (Conservative) rather than emit a fail-open empty report — the
+		// no-silent-miss invariant (SECURITY.md). The guard is "the program has
+		// at least one command statement": res.Cmds counts every command
+		// invocation, including pure shell-state builtins such as true or :, so
+		// a zero-value Analyzer{} misuse flags `true` and `rm -rf /tmp/x` alike.
+		// Only a source with no command statement at all — empty input, a bare
+		// assignment, or a lone redirection — is left untouched, so it is not
+		// escalated.
+		rep.Conservative = true
+		if rep.Reason == "" {
+			rep.Reason = "no effect resolver bound: command effects cannot be resolved"
+		}
+	}
 	rep.Commands = len(res.Cmds)
 	rep.Resolution = agg.resolution()
 	rep.Destructive = normalizeDestructive(destructive)
@@ -439,14 +460,25 @@ func analyzePS(src string, opts ps.Options, root string) *Report {
 
 	rep := newReport(LangPowerShell, src, root)
 	rep.Effects = normalizeEffects(res.Effects)
-	rep.Destructiveness = engine.ComputeDestructiveness(rep.Effects)
+	// The PowerShell frontend computes its own destructive escalation (e.g.
+	// Remove-Item -Recurse/-Force → Critical) into res.Destructiveness. Fold it
+	// into the affect-derived severity exactly as the bash path folds kbDestruct
+	// (D6, join-only): the frontend's severity can raise, never lower, the
+	// report's. Without this the documented escalation never reaches the report.
+	psDestruct := res.Destructiveness
+	rep.Destructiveness = engine.ComputeDestructiveness(rep.Effects).Join(psDestruct)
 	rep.Why = buildWhy(rep.Effects, res.Derivations, commandFallback(psFallbackName(prog)))
 	rep.Conservative = res.Conservative
 	rep.Top = prog.Top
 	rep.Reason = prog.Reason
 	rep.Commands = psCommandCount(prog)
-	rep.Notes = append(rep.Notes, res.Notes...)
+	// De-duplicate the frontend notes as the bash path does, so a note repeated
+	// by the PowerShell lowerer appears once (search A24: the two paths must
+	// agree).
+	rep.Notes = mergeNotes(res.Notes, nil)
 	rep.Score = engine.ScoreEffects(rep.Effects, psTokens(prog)...)
+	rep.Score.Destructiveness = rep.Score.Destructiveness.Join(psDestruct)
+	rep.Score.Grade = rep.Score.Grade.Join(psDestruct)
 	return rep
 }
 

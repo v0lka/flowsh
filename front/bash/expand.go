@@ -2,6 +2,8 @@ package bash
 
 import (
 	"io"
+	"strconv"
+	"strings"
 
 	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/syntax"
@@ -38,6 +40,10 @@ type Var struct {
 	Known    bool         `json:"known"`
 	Export   bool         `json:"export,omitempty"`
 	Readonly bool         `json:"readonly,omitempty"`
+	// Int records the integer attribute (declare -i): later assignments are
+	// arithmetic, which is not evaluated, so they must not be trusted as
+	// literal strings.
+	Int bool `json:"int,omitempty"`
 }
 
 // State is Σ. The zero value is not usable; build one with NewState.
@@ -156,6 +162,19 @@ func (s *State) SetUnknown(name string, taint engine.Taint) {
 	v.Value, v.Set, v.Known, v.Taint = "", true, false, taint
 }
 
+// MarkInteger records that name carries the integer attribute (declare -i).
+func (s *State) MarkInteger(name string) {
+	if s == nil || name == "" {
+		return
+	}
+	v := s.Vars[name]
+	if v == nil {
+		v = &Var{}
+		s.Vars[name] = v
+	}
+	v.Int = true
+}
+
 // Unset removes a variable from Σ.
 func (s *State) Unset(name string) {
 	if s == nil {
@@ -174,6 +193,59 @@ func (s *State) envGet(name string) string {
 		return v.Value
 	}
 	return ""
+}
+
+// stateEnviron adapts the abstract state Σ to the expansion engine. It is a
+// WriteEnviron, so assignment-expanding parameter operators (${x:=w}, ${x=w})
+// and arithmetic side effects ($((x=1)), $((x++))) succeed instead of erroring —
+// an error aborts the whole word expansion and silently drops every later
+// substitution. A set-but-unknown variable is reported as set (with an empty
+// value), so ${x:-w} does not substitute the default for it.
+type stateEnviron struct{ s *State }
+
+func (e stateEnviron) Get(name string) expand.Variable {
+	v := e.s.Get(name)
+	if v == nil || !v.Set {
+		return expand.Variable{}
+	}
+	str := v.Value
+	if !v.Known {
+		str = ""
+	}
+	return expand.Variable{Exported: true, ReadOnly: v.Readonly, Kind: expand.String, Str: str}
+}
+
+func (e stateEnviron) Each(f func(string, expand.Variable) bool) {
+	for name, v := range e.s.Vars {
+		if v == nil || !v.Set || !v.Export {
+			continue
+		}
+		if !f(name, e.Get(name)) {
+			return
+		}
+	}
+}
+
+func (e stateEnviron) Set(name string, vr expand.Variable) error {
+	if e.s == nil || name == "" {
+		return nil
+	}
+	if !vr.IsSet() {
+		e.s.Unset(name)
+		return nil
+	}
+	if v := e.s.Get(name); v != nil && v.Readonly {
+		// A read-only variable is not silently overwritten; do not error, since
+		// an error would abort the whole word expansion.
+		return nil
+	}
+	e.s.SetKnown(name, vr.String(), engine.TaintBottom())
+	if vr.Exported {
+		if v := e.s.Get(name); v != nil {
+			v.Export = true
+		}
+	}
+	return nil
 }
 
 // joinStates returns the least upper bound of two states reached by the two
@@ -240,16 +312,32 @@ type substInfo struct {
 // dynamic.
 func (it *interp) newCfg() *expand.Config {
 	return &expand.Config{
-		Env: expand.FuncEnviron(it.state.envGet),
+		Env: stateEnviron{it.state},
 		CmdSubst: func(w io.Writer, cs *syntax.CmdSubst) error {
+			if info, ok := it.substMemo[cs]; ok {
+				// The substitution was already executed while expanding this
+				// statement; reuse its folded stdout instead of running it again.
+				_, _ = io.WriteString(w, info.out)
+				return nil
+			}
 			out, known, taint := it.captureSubst(cs)
-			it.subst[cs] = substInfo{out: out, known: known, taint: taint}
+			info := substInfo{out: out, known: known, taint: taint}
+			it.subst[cs] = info
+			if it.substMemo != nil {
+				it.substMemo[cs] = info
+			}
 			_, _ = io.WriteString(w, out)
 			return nil
 		},
 		ProcSubst: func(ps *syntax.ProcSubst) (string, error) {
+			if it.procMemo[ps] {
+				return "/dev/fd/63", nil
+			}
 			it.execProcSubst(ps)
 			it.subst[ps] = substInfo{known: false, taint: engine.TaintOf(engine.TaintUntrusted)}
+			if it.procMemo != nil {
+				it.procMemo[ps] = true
+			}
 			return "/dev/fd/63", nil
 		},
 	}
@@ -262,6 +350,12 @@ type expandedWord struct {
 	taint  engine.Taint
 }
 
+// maxExpandedFields caps the number of fields a single word may expand to.
+// Brace expansion ({1..1000000}) produces one word per element with no bound
+// tied to the input length, so a short adversarial input could otherwise drive
+// unbounded memory/CPU (ADR-0006); over the cap the word degrades to ⊤.
+const maxExpandedFields = 4096
+
 // expandFields expands one word into its fields (field splitting and — were it
 // enabled — pathname expansion applied), together with whether the result is
 // statically known and the taint the word carries. Expansion never panics: a
@@ -269,6 +363,14 @@ type expandedWord struct {
 func (it *interp) expandFields(w *syntax.Word) expandedWord {
 	ew := expandedWord{taint: engine.TaintBottom()}
 	if w == nil {
+		return ew
+	}
+	// Bound brace expansion before materialising it: a word such as {1..1000000}
+	// would otherwise allocate gigabytes for a few bytes of input.
+	if braceExpansionOverflow(wordLiteralText(w)) {
+		ew.fields, ew.known = nil, false
+		it.markTop("brace expansion too large")
+		ew.taint = it.wordTaint(w)
 		return ew
 	}
 	func() {
@@ -282,11 +384,153 @@ func (it *interp) expandFields(w *syntax.Word) expandedWord {
 			ew.fields, ew.known = nil, false
 			return
 		}
+		if len(fields) > maxExpandedFields {
+			ew.fields, ew.known = nil, false
+			it.markTop("word expansion produced too many fields")
+			return
+		}
 		ew.fields = fields
 		ew.known = it.wordKnown(w)
 	}()
 	ew.taint = it.wordTaint(w)
 	return ew
+}
+
+// wordLiteralText returns the concatenated literal text of a word's unquoted
+// literal parts (the only place brace expansion applies).
+func wordLiteralText(w *syntax.Word) string {
+	if w == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, p := range w.Parts {
+		if lit, ok := p.(*syntax.Lit); ok {
+			b.WriteString(lit.Value)
+		}
+	}
+	return b.String()
+}
+
+// braceExpansionOverflow reports whether expanding the brace forms in s would
+// exceed maxExpandedFields. It is a conservative upper-bound estimator: it walks
+// the brace groups and multiplies their alternative counts (an over-estimate is
+// harmless — it only degrades to ⊤ a little sooner).
+//
+// An estimate that cannot be computed (nesting deeper than the cap, where
+// braceCount reports false) is treated as a POSSIBLE overflow: the word must
+// degrade to ⊤ rather than be materialised unbounded.
+func braceExpansionOverflow(s string) bool {
+	n, ok := braceCount(s, 0)
+	return !ok || n > maxExpandedFields
+}
+
+// braceCount estimates the number of fields a brace expression expands to, as an
+// over-approximation. The boolean is false when the estimate cannot be computed
+// (nesting beyond the cap); callers must then treat the expansion as a possible
+// overflow. A string with no brace groups returns (1, true).
+func braceCount(s string, depth int) (int, bool) {
+	if depth > maxBraceDepth {
+		return 1, false
+	}
+	total := 1
+	for i := 0; i < len(s); i++ {
+		if s[i] != '{' {
+			continue
+		}
+		end := matchBrace(s, i)
+		if end < 0 {
+			continue
+		}
+		inner := s[i+1 : end]
+		alt := 0
+		for _, part := range splitTopComma(inner) {
+			if lo, hi, isRange := braceRange(part); isRange && hi >= lo {
+				if hi-lo >= maxExpandedFields {
+					// A single range already blows the cap; cap the arithmetic
+					// so a huge bound cannot overflow the int multiplication.
+					return maxExpandedFields + 1, true
+				}
+				alt += hi - lo + 1
+				continue
+			}
+			c, ok := braceCount(part, depth+1)
+			if !ok {
+				// A nested group whose size cannot be computed makes the whole
+				// estimate uncomputable, so the caller degrades to ⊤.
+				return 1, false
+			}
+			alt += c
+		}
+		if alt < 1 {
+			alt = 1
+		}
+		total *= alt
+		if total > maxExpandedFields {
+			return total, true
+		}
+		i = end
+	}
+	return total, true
+}
+
+// maxBraceDepth bounds the brace-group nesting the estimator recurses into.
+// Beyond it the count is treated as uncomputable (a possible overflow) rather
+// than underestimated.
+const maxBraceDepth = 16
+
+// matchBrace returns the index of the '}' matching the '{' at open, or -1.
+func matchBrace(s string, open int) int {
+	depth := 0
+	for i := open; i < len(s); i++ {
+		switch s[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// splitTopComma splits s on commas that are not nested inside braces.
+func splitTopComma(s string) []string {
+	var out []string
+	depth, last := 0, 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '{':
+			depth++
+		case '}':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				out = append(out, s[last:i])
+				last = i + 1
+			}
+		}
+	}
+	out = append(out, s[last:])
+	return out
+}
+
+// braceRange parses a {lo..hi} range body (lo/hi decimal integers), returning
+// the bounds and whether it is a valid numeric range.
+func braceRange(s string) (lo, hi int, ok bool) {
+	i := strings.Index(s, "..")
+	if i < 0 {
+		return 0, 0, false
+	}
+	a, err1 := strconv.Atoi(strings.TrimSpace(s[:i]))
+	b, err2 := strconv.Atoi(strings.TrimSpace(s[i+2:]))
+	if err1 != nil || err2 != nil {
+		return 0, 0, false
+	}
+	return a, b, true
 }
 
 // expandLiteral expands one word as a single literal string (no field
@@ -373,6 +617,12 @@ func (it *interp) paramKnown(p *syntax.ParamExp) bool {
 	name := p.Param.Value
 	if it.state.IsKnown(name) {
 		return true
+	}
+	// A set-but-unknown variable is NOT the same as an unset one: the operator's
+	// alternate word is not used for it, so treating that word as the value
+	// would be a confidently-wrong concrete target.
+	if v := it.state.Get(name); v != nil && v.Set {
+		return false
 	}
 	// ${x:-word}, ${x:=word}, ${x:+word} with a known alternate word.
 	if p.Exp != nil && p.Exp.Word != nil && !p.Excl {

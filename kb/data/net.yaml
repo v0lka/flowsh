@@ -194,12 +194,15 @@ commands:
       - spec: "--cookie-jar"
         kind: option
         effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
       - spec: "--netrc"
         kind: flag
         effect: {kind: CredAccess, mode: Direct, valueFrom: args}
       - spec: "--netrc-file"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
       - spec: "-E"
         kind: option
         effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
@@ -288,6 +291,9 @@ commands:
       - spec: "--save-cookies"
         kind: option
         effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--netrc-file"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
       - spec: "--certificate"
         kind: option
         effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}

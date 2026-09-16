@@ -289,10 +289,10 @@ commands:
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
       - spec: "-M"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue, fileRef: true}
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "-X"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue, fileRef: true}
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: FILE
         kind: positional
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
@@ -439,7 +439,7 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "-if"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue, fileRef: true}
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "-i"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -483,6 +483,27 @@ commands:
       - spec: "--list-secret-keys"
         kind: flag
         effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "--delete-secret-keys"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--delete-secret-key"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--delete-secret-subkeys"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--delete-keys"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--delete-key"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--export-secret-keys"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "--export-secret-subkeys"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
       - spec: "--recv-keys"
         kind: option
         effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
@@ -500,7 +521,7 @@ commands:
         effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
       - spec: "--passphrase-file"
         kind: option
-        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue, fileRef: true}
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
       - spec: "-a"
         kind: flag
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}

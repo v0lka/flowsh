@@ -329,10 +329,15 @@ var Cmdlets = map[string][]Spec{
 	"Enter-PSSession": {
 		{engine.KindNetEgress, engine.ModeDirect, TargetName, false, "connect"},
 		{engine.KindIPC, engine.ModeDirect, TargetName, false, "session"},
+		{engine.KindCodeExec, engine.ModeDirect, TargetName, false, "exec"},
 	},
 	"Invoke-Command": {
 		{engine.KindNetEgress, engine.ModeDirect, TargetName, false, "connect"},
 		{engine.KindIPC, engine.ModeDirect, TargetName, false, "session"},
+		// -ScriptBlock/-Command evaluates arbitrary code on the (local or
+		// remote) target, so the canonical remote-execution primitive reaches
+		// code execution, not merely an IPC/network effect.
+		{engine.KindCodeExec, engine.ModeDirect, TargetName, false, "exec"},
 	},
 
 	// ---- Processes ----
@@ -404,10 +409,13 @@ var Cmdlets = map[string][]Spec{
 	"Get-AuthenticodeSignature": {{engine.KindFSRead, engine.ModeDirect, TargetPath, true, "read"}},
 	"Set-AuthenticodeSignature": {{engine.KindFSWrite, engine.ModeDirect, TargetPath, false, "sign"}},
 	"Get-PfxCertificate":        {{engine.KindFSRead, engine.ModeDirect, TargetPath, true, "read"}},
-	"New-FileCatalog":           {{engine.KindFSWrite, engine.ModeDirect, TargetPath, false, "create"}},
-	"Test-FileCatalog":          {{engine.KindFSRead, engine.ModeDirect, TargetPath, true, "verify"}},
-	"Protect-CmsMessage":        {{engine.KindFSWrite, engine.ModeDirect, TargetPath, false, "encrypt"}},
-	"Unprotect-CmsMessage":      {{engine.KindFSRead, engine.ModeDirect, TargetPath, true, "decrypt"}},
+	// The CMS/Security cmdlets read their input file; the encrypted output is
+	// written to the -OutFile data-file parameter (lowered separately), so the
+	// declared kind is a read, not a write of the input path.
+	"New-FileCatalog":      {{engine.KindFSRead, engine.ModeDirect, TargetPath, true, "hash"}},
+	"Test-FileCatalog":     {{engine.KindFSRead, engine.ModeDirect, TargetPath, true, "verify"}},
+	"Protect-CmsMessage":   {{engine.KindFSRead, engine.ModeDirect, TargetPath, true, "encrypt"}},
+	"Unprotect-CmsMessage": {{engine.KindFSRead, engine.ModeDirect, TargetPath, true, "decrypt"}},
 	// Execution policy is persisted security configuration.
 	"Set-ExecutionPolicy": {{engine.KindPersist, engine.ModeDirect, TargetNone, false, "policy"}},
 
@@ -455,7 +463,10 @@ var Cmdlets = map[string][]Spec{
 	"New-ScheduledTaskSettingsSet": {{engine.KindPersist, engine.ModeDirect, TargetNone, false, "schedule"}},
 
 	// ---- CimCmdlets ----
-	"Invoke-CimMethod":            {{engine.KindIPC, engine.ModeDirect, TargetName, false, "invoke"}},
+	"Invoke-CimMethod": {
+		{engine.KindIPC, engine.ModeDirect, TargetName, false, "invoke"},
+		{engine.KindCodeExec, engine.ModeDirect, TargetName, false, "exec"},
+	},
 	"Get-CimClass":                {{engine.KindIPC, engine.ModeDirect, TargetName, true, "read"}},
 	"Remove-CimSession":           {{engine.KindIPC, engine.ModeDirect, TargetName, false, "close"}},
 	"Register-CimIndicationEvent": {{engine.KindPersist, engine.ModeDirect, TargetName, false, "subscribe"}},
@@ -484,13 +495,35 @@ var Cmdlets = map[string][]Spec{
 	"Clear-Disk":       {{engine.KindFSWrite, engine.ModeDirect, TargetName, false, "wipe"}},
 
 	// ---- PackageManagement / PowerShellGet ----
-	"Install-Package":       {{engine.KindPersist, engine.ModeDirect, TargetName, false, "install"}},
-	"Find-Package":          {{engine.KindNetEgress, engine.ModeDirect, TargetName, true, "query"}},
-	"Save-Package":          {{engine.KindFSWrite, engine.ModeDirect, TargetPath, false, "download"}},
-	"Install-Module":        {{engine.KindPersist, engine.ModeDirect, TargetName, false, "install"}},
-	"Update-Module":         {{engine.KindPersist, engine.ModeDirect, TargetName, false, "update"}},
-	"Uninstall-Module":      {{engine.KindFSWrite, engine.ModeDirect, TargetName, false, "uninstall"}},
-	"Save-Module":           {{engine.KindFSWrite, engine.ModeDirect, TargetPath, false, "download"}},
+	// Installing/updating fetches an artefact over the network (NetEgress) and
+	// runs its install script (CodeExec), in addition to mutating persisted
+	// state (Persist). Saving a module/package downloads it, so it is an egress
+	// as well as a filesystem write.
+	"Install-Package": {
+		{engine.KindNetEgress, engine.ModeDirect, TargetName, false, "download"},
+		{engine.KindCodeExec, engine.ModeDirect, TargetName, false, "install"},
+		{engine.KindPersist, engine.ModeDirect, TargetName, false, "install"},
+	},
+	"Find-Package": {{engine.KindNetEgress, engine.ModeDirect, TargetName, true, "query"}},
+	"Save-Package": {
+		{engine.KindNetEgress, engine.ModeDirect, TargetName, false, "download"},
+		{engine.KindFSWrite, engine.ModeDirect, TargetPath, false, "download"},
+	},
+	"Install-Module": {
+		{engine.KindNetEgress, engine.ModeDirect, TargetName, false, "download"},
+		{engine.KindCodeExec, engine.ModeDirect, TargetName, false, "install"},
+		{engine.KindPersist, engine.ModeDirect, TargetName, false, "install"},
+	},
+	"Update-Module": {
+		{engine.KindNetEgress, engine.ModeDirect, TargetName, false, "download"},
+		{engine.KindCodeExec, engine.ModeDirect, TargetName, false, "update"},
+		{engine.KindPersist, engine.ModeDirect, TargetName, false, "update"},
+	},
+	"Uninstall-Module": {{engine.KindFSWrite, engine.ModeDirect, TargetName, false, "uninstall"}},
+	"Save-Module": {
+		{engine.KindNetEgress, engine.ModeDirect, TargetName, false, "download"},
+		{engine.KindFSWrite, engine.ModeDirect, TargetPath, false, "download"},
+	},
 	"Find-Module":           {{engine.KindNetEgress, engine.ModeDirect, TargetName, true, "query"}},
 	"Publish-Module":        {{engine.KindNetEgress, engine.ModeDirect, TargetName, false, "publish"}},
 	"Register-PSRepository": {{engine.KindPersist, engine.ModeDirect, TargetName, false, "register"}},
@@ -524,10 +557,13 @@ var Cmdlets = map[string][]Spec{
 	"Get-LocalGroup":          {{engine.KindPersist, engine.ModeDirect, TargetName, true, "read"}},
 
 	// ---- WSMan ----
-	"Test-WSMan":           {{engine.KindNetEgress, engine.ModeDirect, TargetName, false, "connect"}},
-	"Disconnect-WSMan":     {{engine.KindIPC, engine.ModeDirect, TargetName, false, "close"}},
-	"Get-WSManInstance":    {{engine.KindIPC, engine.ModeDirect, TargetName, true, "read"}},
-	"Invoke-WSManInstance": {{engine.KindIPC, engine.ModeDirect, TargetName, false, "invoke"}},
+	"Test-WSMan":        {{engine.KindNetEgress, engine.ModeDirect, TargetName, false, "connect"}},
+	"Disconnect-WSMan":  {{engine.KindIPC, engine.ModeDirect, TargetName, false, "close"}},
+	"Get-WSManInstance": {{engine.KindIPC, engine.ModeDirect, TargetName, true, "read"}},
+	"Invoke-WSManInstance": {
+		{engine.KindIPC, engine.ModeDirect, TargetName, false, "invoke"},
+		{engine.KindCodeExec, engine.ModeDirect, TargetName, false, "exec"},
+	},
 	"Enable-WSManCredSSP":  {{engine.KindPersist, engine.ModeDirect, TargetName, false, "credssp"}},
 	"Disable-WSManCredSSP": {{engine.KindPersist, engine.ModeDirect, TargetName, false, "credssp"}},
 	"Connect-WSMan": {
@@ -656,24 +692,30 @@ var Cmdlets = map[string][]Spec{
 	"Resume-Job":                     {},
 	"Suspend-Job":                    {},
 	"New-PSSessionConfigurationFile": {{engine.KindFSWrite, engine.ModeDirect, TargetPath, false, "create"}},
-	"Invoke-WMIMethod":               {{engine.KindIPC, engine.ModeDirect, TargetName, false, "wmi"}},
-	"Set-WMIInstance":                {{engine.KindIPC, engine.ModeDirect, TargetName, false, "wmi"}},
-	"Remove-WMIObject":               {{engine.KindIPC, engine.ModeDirect, TargetName, false, "wmi"}},
-	"powershell_ise.exe":             {{engine.KindProcSpawn, engine.ModeDirect, TargetSelf, false, "spawn"}},
+	"Invoke-WMIMethod": {
+		{engine.KindIPC, engine.ModeDirect, TargetName, false, "wmi"},
+		{engine.KindCodeExec, engine.ModeDirect, TargetName, false, "exec"},
+	},
+	"Set-WMIInstance":    {{engine.KindIPC, engine.ModeDirect, TargetName, false, "wmi"}},
+	"Remove-WMIObject":   {{engine.KindIPC, engine.ModeDirect, TargetName, false, "wmi"}},
+	"powershell_ise.exe": {{engine.KindProcSpawn, engine.ModeDirect, TargetSelf, false, "spawn"}},
 }
 
-// isSwitch reports whether a bare parameter name is a PowerShell switch (a flag
-// that takes no value), so the argument binder does not mistake the next
-// positional token for its value.
+// Parameter classification tables. Each table lists the accepted spellings of
+// one class of parameter (lower case, without the leading dash).
 //
-// A switch that is *not* listed here is (incorrectly) treated as value-taking,
-// so the token after it is bound to it instead of being seen as an operand —
-// and an operand is often the effect target (the URL of `Invoke-WebRequest
-// -UseBasicParsing https://…`, say). The table therefore lists the common
-// no-value switches across the cmdlets the frontend knows.
-func isSwitch(bare string) bool {
-	switch strings.ToLower(bare) {
-	case "recurse", "recursive", "force", "whatif", "confirm", "verbose",
+// switchNames are no-value switches: a switch that is *not* listed here is
+// (incorrectly) treated as value-taking, so the token after it is bound to it
+// instead of being seen as an operand — and an operand is often the effect
+// target (the URL of `Invoke-WebRequest -UseBasicParsing https://…`, say).
+// pathNames are filesystem-target parameters; patternNames are filesystem
+// *selection* patterns (they filter a query rather than naming the item the
+// effect applies to); nameNames are named targets (computer, process, service,
+// task, session, …); urlNames are network targets; readDataNames/writeDataNames
+// are data-file parameters a cmdlet reads from or writes to.
+var (
+	switchNames = []string{
+		"recurse", "force", "whatif", "confirm", "verbose",
 		"debug", "passthru", "all", "wait", "noexit", "noprofile",
 		"noninteractive", "asjob", "hidden", "readonly", "system", "offline",
 		"forceifreparse", "escape", "asplaintext",
@@ -688,29 +730,18 @@ func isSwitch(bare string) bool {
 		// `New-Partition -UseMaximumSize`).
 		"raw", "file", "directory", "noclobber", "usemaximumsize",
 		"casesensitive", "simplematch", "notmatch", "allmatches",
-		"autosize", "wrap", "nonewwindow", "useculture", "noenumerate":
-		return true
+		"autosize", "wrap", "nonewwindow", "useculture", "noenumerate",
 	}
-	return false
-}
-
-// pathParam reports whether a bare parameter name carries a filesystem-ish
-// target value: an item, container or path-pattern the effect applies to.
-func pathParam(bare string) bool {
-	switch strings.ToLower(bare) {
-	case "path", "literalpath", "pspath", "destination", "destinationpath",
-		"filepath", "outfile", "target", "source", "fullname", "filter",
-		"include", "exclude":
-		return true
+	// switchSynonym maps an accepted synonym spelling onto its canonical switch,
+	// so an abbreviation of either resolves to one canonical name.
+	switchSynonym = map[string]string{"recursive": "recurse"}
+	pathNames     = []string{
+		"path", "literalpath", "pspath", "destination", "destinationpath",
+		"filepath", "target", "source", "fullname",
 	}
-	return false
-}
-
-// nameParam reports whether a bare parameter name carries a named target
-// (computer, process, service, task, session, …).
-func nameParam(bare string) bool {
-	switch strings.ToLower(bare) {
-	case "name", "id", "taskname", "computername", "processname", "servicename",
+	patternNames = []string{"filter", "include", "exclude"}
+	nameNames    = []string{
+		"name", "id", "taskname", "computername", "processname", "servicename",
 		"cn", "query", "computer", "hostname", "servername", "machinename",
 		"session", "sessionname",
 		// B13: the identifiers the B11 module cmdlets (CimCmdlets, NetTCPIP,
@@ -722,24 +753,143 @@ func nameParam(bare string) bool {
 		"partitionnumber", "localport", "displayname", "ipaddress",
 		"interfacealias", "interfaceindex", "resourceuri", "role", "logname",
 		"group", "member", "account", "username", "adaptername",
-		"remoteaddress", "objectid", "poolname", "class":
-		return true
+		"remoteaddress", "objectid", "poolname", "class",
+	}
+	urlNames = []string{
+		"uri", "url", "connectionuri", "proxy",
+		// B13: the SMTP endpoint Send-MailMessage dials.
+		"smtpserver",
+	}
+	// readDataNames / writeDataNames are the data-file parameters of cmdlets
+	// that are otherwise about something else: -InFile/-Attachments name a file
+	// that is read, -OutFile names a file that is written. The catalog output
+	// path is *not* a global write parameter: New-FileCatalog writes it, but
+	// Test-FileCatalog spells the same parameters and only reads the catalog it
+	// verifies, so its classification is cmdlet-aware (catalogOutputNames).
+	readDataNames      = []string{"infile", "attachments", "attachment"}
+	writeDataNames     = []string{"outfile"}
+	catalogOutputNames = []string{"catalogfilepath", "catalogpath"}
+)
+
+// bareParam lower-cases and trims a parameter's bare name.
+func bareParam(bare string) string { return strings.ToLower(strings.TrimSpace(bare)) }
+
+// inNames reports whether b (already lower-cased) is one of names.
+func inNames(names []string, b string) bool {
+	for _, n := range names {
+		if n == b {
+			return true
+		}
 	}
 	return false
 }
 
+// isSwitch reports whether a bare parameter name is a PowerShell switch (a flag
+// that takes no value), so the argument binder does not mistake the next
+// positional token for its value.
+func isSwitch(bare string) bool { return inNames(switchNames, bareParam(bare)) }
+
+// isSwitchPrefix is isSwitch extended with PowerShell's parameter-name
+// abbreviation: a spelling that is an unambiguous prefix of a switch name (and
+// not a prefix of any value-taking parameter) is treated as that switch, so
+// `-Forc`/`-Rec` do not swallow the operand that follows them.
+func isSwitchPrefix(bare string) bool {
+	if isSwitch(bare) {
+		return true
+	}
+	_, ok := switchCanon(bare)
+	return ok
+}
+
+// switchCanon resolves a switch parameter's bare name to its canonical switch
+// name, accepting an unambiguous abbreviation. It reports ok=false for an empty
+// name, a name that prefixes a value-taking parameter, or an ambiguous one.
+func switchCanon(bare string) (string, bool) {
+	b := bareParam(bare)
+	if b == "" {
+		return "", false
+	}
+	for _, names := range [][]string{pathNames, patternNames, nameNames, urlNames, readDataNames, writeDataNames} {
+		for _, n := range names {
+			if strings.HasPrefix(n, b) {
+				return "", false
+			}
+		}
+	}
+	canon := ""
+	consider := func(c string) bool {
+		if canon != "" && canon != c {
+			return false
+		}
+		canon = c
+		return true
+	}
+	// A spelling that has another candidate as a strict prefix is shadowed by
+	// the shorter one (PowerShell resolves `-Forc` to -Force even though
+	// -ForceIfReparse also starts with it).
+	cands := make([]string, 0, len(switchNames))
+	for _, n := range switchNames {
+		if strings.HasPrefix(n, b) {
+			cands = append(cands, n)
+		}
+	}
+	for s := range switchSynonym {
+		if strings.HasPrefix(s, b) {
+			cands = append(cands, s)
+		}
+	}
+	if len(cands) == 0 {
+		return "", false
+	}
+	kept := cands[:0:0]
+	for _, x := range cands {
+		shadowed := false
+		for _, y := range cands {
+			if y != x && strings.HasPrefix(x, y) {
+				shadowed = true
+				break
+			}
+		}
+		if !shadowed {
+			kept = append(kept, x)
+		}
+	}
+	for _, x := range kept {
+		if !consider(canonSwitch(x)) {
+			return "", false
+		}
+	}
+	if canon == "" {
+		return "", false
+	}
+	return canon, true
+}
+
+// canonSwitch maps a switch spelling onto its canonical name.
+func canonSwitch(n string) string {
+	if c, ok := switchSynonym[n]; ok {
+		return c
+	}
+	return n
+}
+
+// pathParam reports whether a bare parameter name carries a filesystem target
+// value: an item or container the effect applies to.
+func pathParam(bare string) bool { return inNames(pathNames, bareParam(bare)) }
+
+// patternParam reports whether a bare parameter name carries a filesystem
+// *selection* pattern (-Include/-Exclude/-Filter). Such a value is not the item
+// the cmdlet acts on, so it is not a target on its own.
+func patternParam(bare string) bool { return inNames(patternNames, bareParam(bare)) }
+
+// nameParam reports whether a bare parameter name carries a named target
+// (computer, process, service, task, session, …).
+func nameParam(bare string) bool { return inNames(nameNames, bareParam(bare)) }
+
 // urlParam reports whether a bare parameter name carries a network target (a
 // URL, endpoint or proxy) — the TargetURL source. A cmdlet fed by -Uri/-Url
 // therefore takes its egress target from the parameter, not from an operand.
-func urlParam(bare string) bool {
-	switch strings.ToLower(bare) {
-	case "uri", "url", "connectionuri", "proxy",
-		// B13: the SMTP endpoint Send-MailMessage dials.
-		"smtpserver":
-		return true
-	}
-	return false
-}
+func urlParam(bare string) bool { return inNames(urlNames, bareParam(bare)) }
 
 // ===========================================================================
 // Providers / drives
@@ -751,6 +901,10 @@ const (
 	DriveEnv      = "Env"
 	DriveVariable = "Variable"
 	DriveRegistry = "Registry"
+	DriveCert     = "Cert"
+	DriveFunction = "Function"
+	DriveAlias    = "Alias"
+	DriveWSMan    = "WSMan"
 )
 
 // driveOf classifies a target string by the PowerShell provider its prefix
@@ -765,6 +919,14 @@ func driveOf(target string) string {
 	case strings.HasPrefix(t, "hklm:"), strings.HasPrefix(t, "hkcu:"), strings.HasPrefix(t, "hkcr:"),
 		strings.HasPrefix(t, "hku:"), strings.HasPrefix(t, "hkey_"), strings.HasPrefix(t, "registry::"):
 		return DriveRegistry
+	case strings.HasPrefix(t, "cert:"):
+		return DriveCert
+	case strings.HasPrefix(t, "function:"):
+		return DriveFunction
+	case strings.HasPrefix(t, "alias:"):
+		return DriveAlias
+	case strings.HasPrefix(t, "wsman:"):
+		return DriveWSMan
 	default:
 		return DriveFS
 	}

@@ -300,7 +300,13 @@ commands:
     params:
       - spec: "-c"
         kind: flag
-        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+        effect: {kind: FSWrite, mode: Conditional, valueFrom: args}
+      - spec: "-C"
+        kind: flag
+        effect: {kind: FSWrite, mode: Conditional, valueFrom: args}
+      - spec: "--clear"
+        kind: flag
+        effect: {kind: FSWrite, mode: Conditional, valueFrom: args}
       - spec: "-w"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -681,6 +687,12 @@ commands:
       - spec: "-u"
         kind: option
         effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-n"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "--server"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
       - spec: "-i"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -1530,9 +1542,30 @@ commands:
       - spec: "-Z"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--zap-all"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: "-o"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--clear"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--new"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--delete"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--typecode"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--info"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--print"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: DEVICE
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}

@@ -725,3 +725,157 @@ destructive:
     spec: l
     class: B
     reason: lists archive contents only
+
+  # --- review additions: device-destroying siblings (class E) -----------------
+  - command: mkfs
+    spec: DEVICE
+    class: E
+    reason: formats the device, destroying the existing filesystem
+  - command: mkswap
+    spec: DEVICE
+    class: E
+    reason: writes a swap signature over the device, destroying the filesystem it held
+  - command: blkdiscard
+    spec: DEVICE
+    class: E
+    reason: discards every block on the device, irrecoverably erasing its contents
+  - command: sfdisk
+    spec: DEVICE
+    class: E
+    reason: rewrites the partition table, invalidating all filesystems on the disk
+  - command: cfdisk
+    spec: DEVICE
+    class: E
+    reason: rewrites the partition table, invalidating all filesystems on the disk
+  - command: partx
+    spec: "-d"
+    class: E
+    reason: deletes partitions from the table, orphaning the data they held
+  - command: rm
+    spec: "-R"
+    class: E
+    reason: recursively removes a whole directory tree, with no confirmation by default
+  - command: rm
+    spec: "--recursive"
+    class: E
+    reason: recursively removes a whole directory tree, with no confirmation by default
+  - command: sgdisk
+    spec: "--zap-all"
+    class: E
+    reason: zaps the GPT and MBR structures, destroying all partition metadata and data
+  - command: sgdisk
+    spec: "-o"
+    class: E
+    reason: clears all partition data from the device, destroying the partition table
+  - command: sgdisk
+    spec: "--clear"
+    class: E
+    reason: clears all partition data from the device, destroying the partition table
+  - command: mdadm
+    spec: "--create"
+    class: E
+    reason: creates a new array over the member devices, overwriting their existing metadata
+  - command: gpg
+    spec: "--delete-secret-keys"
+    class: E
+    reason: destroys the private key material irrecoverably
+  - command: gpg
+    spec: "--delete-secret-key"
+    class: E
+    reason: destroys a private key irrecoverably
+  - command: gpg
+    spec: "--delete-secret-subkeys"
+    class: E
+    reason: destroys the private subkey material irrecoverably
+  - command: gpg
+    spec: "--delete-keys"
+    class: E
+    reason: deletes public keyrings irrecoverably
+  - command: gpg
+    spec: "--delete-key"
+    class: E
+    reason: deletes a public key irrecoverably
+
+  # --- review additions: firewall/audit teardown, reverse shells (class D) ----
+  - command: ufw
+    spec: disable
+    class: D
+    reason: disables the host firewall, dropping every rule it enforced
+  - command: ufw
+    spec: reset
+    class: D
+    reason: resets the firewall to its default state, discarding every rule
+  - command: ufw
+    spec: delete
+    class: D
+    reason: deletes a firewall rule, weakening the host's packet filter
+  - command: firewall-cmd
+    spec: "--remove-port"
+    class: D
+    reason: removes a port from the firewall, reopening it to the network
+  - command: firewall-cmd
+    spec: "--remove-service"
+    class: D
+    reason: removes a service from the firewall, reopening its ports to the network
+  - command: ip6tables
+    spec: "-F"
+    class: D
+    reason: flushes every rule in a chain, dropping the host firewall with no undo
+  - command: ip6tables
+    spec: "--flush"
+    class: D
+    reason: flushes every rule in a chain, dropping the host firewall with no undo
+  - command: ip6tables
+    spec: "-X"
+    class: D
+    reason: deletes user-defined chains, discarding the firewall rules they held
+  - command: iptables
+    spec: "--flush"
+    class: D
+    reason: flushes every rule in a chain, dropping the host firewall with no undo
+  - command: iptables
+    spec: "-X"
+    class: D
+    reason: deletes user-defined chains, discarding the firewall rules they held
+  - command: auditctl
+    spec: "-d"
+    class: D
+    reason: deletes a single audit rule, weakening the audit trail
+  - command: ncat
+    spec: "-e"
+    class: D
+    reason: runs a program on connect, the classic reverse shell
+  - command: ncat
+    spec: "--exec"
+    class: D
+    reason: runs a program on connect, the classic reverse shell
+  - command: ncat
+    spec: "--sh-exec"
+    class: D
+    reason: runs a shell command on connect, an arbitrary code-execution channel
+  - command: ncat
+    spec: "-c"
+    class: D
+    reason: runs a shell command on connect, an arbitrary code-execution channel
+  - command: ssh
+    spec: "-R"
+    class: C
+    reason: forwards a remote port back through the local host
+  - command: ssh
+    spec: "-D"
+    class: C
+    reason: opens a dynamic SOCKS proxy through the connection
+
+  # --- review additions: buffer clears (class C) ------------------------------
+  - command: dmesg
+    spec: "-c"
+    class: C
+    reason: clears the kernel ring buffer after printing it, discarding log history
+  - command: dmesg
+    spec: "-C"
+    class: C
+    reason: clears the kernel ring buffer, discarding log history
+  - command: dmesg
+    spec: "--clear"
+    class: C
+    reason: clears the kernel ring buffer, discarding log history

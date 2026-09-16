@@ -289,6 +289,31 @@ func TestPOSIXVariantCoverage(t *testing.T) {
 	t.Logf("posix: %d cases analysed in the POSIX variant", n)
 }
 
+// destructiveClassExceptions pins the destructive corpus cases that
+// intentionally do not assert a knowledge-base destructive class: their severity
+// is carried by another signal (an exfiltration pair, a code-execution ⊤, an
+// intrinsic process spawn, …) or their model is deliberately class-free. The set
+// is explicit so that a destructive case which used to match a class and stops
+// matching is a test failure rather than a silent skip (code-review finding
+// #62). Adding a case with no class entry therefore requires naming it here.
+var destructiveClassExceptions = map[string]bool{
+	"des-b1-source":     true, // executes a file: carries a code-execution effect, not a destructive-table row
+	"des-b1-trap":       true, // trap action: lowered to ⊤, not a destructive-table row
+	"des-b2-unlink":     true, // single-file removal: reported via FSWrite
+	"des-b3-chattr":     true, // attribute change: reported via FSMeta
+	"des-b4-curl-exfil": true, // credential exfiltration: reported via score.exfil, not the destructive table
+	"des-b4-scp-exfil":  true, // remote copy: reported via FSRead/FSWrite, not the destructive table
+	"des-b5-xz":         true, // decompression overwrite: reported via FSWrite
+	"des-b6-apt":        true, // package install: reported via FSWrite
+	"des-b6-dpkg":       true, // package install: reported via FSWrite
+	"des-b8-chcon":      true, // SELinux label change: reported via FSMeta
+	"des-chmod-suid":    true, // chmod MODE carries no class (a mode-keyed row over-reported every chmod); reported via FSMeta
+	"des-kb-halt":       true, // intrinsic ProcSpawn (finding #8); no destructive-table row
+	"des-kb-poweroff":   true, // intrinsic ProcSpawn (finding #8); no destructive-table row
+	"des-kb-reboot":     true, // intrinsic ProcSpawn (finding #8); no destructive-table row
+	"des-kb-shutdown":   true, // intrinsic ProcSpawn (finding #8); no destructive-table row
+}
+
 // TestDestructiveClassCorpus is acceptance criterion A3 over the corpus: every
 // destructive case that matches a knowledge-base destructive entry must expose
 // that entry (a non-empty class and reason) and must not report a
@@ -302,6 +327,9 @@ func TestDestructiveClassCorpus(t *testing.T) {
 	for _, c := range cases {
 		rep := analyzeCase(t, a, c)
 		if len(rep.Destructive) == 0 {
+			if !destructiveClassExceptions[c.ID] {
+				t.Errorf("destructive %s: matched no knowledge-base destructive entry and is not a pinned exception (%q) — its class may have regressed", c.ID, c.Input)
+			}
 			continue
 		}
 		matched++

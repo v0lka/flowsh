@@ -832,3 +832,123 @@ func TestEmbeddedFileRefParams(t *testing.T) {
 		t.Errorf("curl -H must not carry fileRef: %+v", p)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// kind <-> valueFrom coherence, and the intrinsic `self` parameter
+// ---------------------------------------------------------------------------
+
+// TestOptionValueFromValidation rejects the contradictory `kind: option` with
+// `valueFrom: args` combination. An option consumes the token that follows it,
+// so its effect always acts on the flag value and never on the positional
+// arguments; the drift this catches shipped `sed -i` (which takes no separate
+// operand) as an option, silently swallowing the following FILE operand.
+func TestOptionValueFromValidation(t *testing.T) {
+	base := "version: effect-kb/v2\n"
+	cases := []struct {
+		name, doc, want string
+	}{
+		{
+			name: "option sourced from args is rejected",
+			doc:  base + "commands:\n  - name: x\n    dialect: posix\n    params:\n      - spec: \"-i\"\n        kind: option\n        effect: {kind: FSWrite, mode: Direct, valueFrom: args}\n",
+			want: "valueFrom must be",
+		},
+		{
+			name: "option sourced from the flag value is accepted",
+			doc:  base + "commands:\n  - name: x\n    dialect: posix\n    params:\n      - spec: \"-i\"\n        kind: option\n        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}\n",
+			want: "",
+		},
+		{
+			name: "flag sourced from args is accepted",
+			doc:  base + "commands:\n  - name: x\n    dialect: posix\n    params:\n      - spec: \"-i\"\n        kind: flag\n        effect: {kind: FSWrite, mode: Direct, valueFrom: args}\n",
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := loadSrc(map[string]string{"a.yaml": tc.doc})
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestSelfParamKind proves the intrinsic `self` parameter kind parses and
+// carries its effect: a bare-name parameter sourced from the command itself, so
+// a flag-only command can still declare an unconditional "it ran" effect.
+func TestSelfParamKind(t *testing.T) {
+	doc := `version: effect-kb/v2
+commands:
+  - name: reboot
+    dialect: systemd
+    params:
+      - spec: "-f"
+        kind: flag
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: reboot
+        kind: self
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: self}
+`
+	k, err := loadSrc(map[string]string{"a.yaml": doc})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	c, ok := k.Command("reboot")
+	if !ok {
+		t.Fatal("command reboot not found")
+	}
+	p, ok := c.Param("reboot")
+	if !ok || p.Kind != ParamSelf || p.Effect.ValueFrom != ValueSelf {
+		t.Fatalf("self param not decoded: %+v", p)
+	}
+}
+
+// TestSelfParamValidation rejects a self parameter that is not sourced from the
+// command itself or that uses flag/assign surface syntax.
+func TestSelfParamValidation(t *testing.T) {
+	base := "version: effect-kb/v2\n"
+	cases := []struct {
+		name, doc, want string
+	}{
+		{
+			name: "requires valueFrom self",
+			doc:  base + "commands:\n  - name: x\n    dialect: posix\n    params:\n      - spec: self\n        kind: self\n        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}\n",
+			want: "requires valueFrom",
+		},
+		{
+			name: "rejects a flag-like spec",
+			doc:  base + "commands:\n  - name: x\n    dialect: posix\n    params:\n      - spec: \"-s\"\n        kind: self\n        effect: {kind: ProcSpawn, mode: Direct, valueFrom: self}\n",
+			want: "bare name spec",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := loadSrc(map[string]string{"a.yaml": tc.doc}); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestEmbeddedSelfParams guards the embedded dataset: the power-control
+// commands that would otherwise resolve to a flag-only entry carry an intrinsic
+// self effect, so the analysis can never fail open to an empty benign report.
+func TestEmbeddedSelfParams(t *testing.T) {
+	k := mustLoad(t)
+	for _, name := range []string{"reboot", "poweroff", "halt", "shutdown"} {
+		c, ok := k.Command(name)
+		if !ok {
+			t.Fatalf("%s not in the knowledge base", name)
+		}
+		p, ok := c.Param(name)
+		if !ok || p.Kind != ParamSelf {
+			t.Errorf("%s must declare an intrinsic self param: %+v", name, p)
+		}
+	}
+}

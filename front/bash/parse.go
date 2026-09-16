@@ -80,6 +80,13 @@ func Parse(v Variant, name, src string) (prog *Program) {
 		}
 	}()
 
+	// Deeply nested parentheses make the parser (and the recursive normalizer)
+	// recurse per level; a stack overflow cannot be recovered, so bound the
+	// nesting and degrade to ⊤ beyond the cap.
+	if nestingTooDeep(src) {
+		return topProgram(v, name, src, Pos{}, "input nesting too deep")
+	}
+
 	lang, _ := v.langVariant()
 	parser := syntax.NewParser(syntax.Variant(lang))
 	file, err := parser.Parse(strings.NewReader(src), name)
@@ -161,4 +168,30 @@ func shiftPos(p Pos, n int) Pos {
 		return p
 	}
 	return Pos{Line: p.Line, Col: p.Col + n, Offset: p.Offset + n}
+}
+
+// maxNestingDepth bounds the parenthesis nesting of an analysed source. The
+// parser and the recursive normalizer recurse once per nesting level, so a
+// deeply nested input exhausts the goroutine stack and aborts the process (a Go
+// stack overflow cannot be recovered by recover()); beyond the cap the source
+// degrades to ⊤ instead.
+const maxNestingDepth = 4096
+
+// nestingTooDeep reports whether src nests parentheses deeper than the cap.
+func nestingTooDeep(src string) bool {
+	depth := 0
+	for i := 0; i < len(src); i++ {
+		switch src[i] {
+		case '(':
+			depth++
+			if depth > maxNestingDepth {
+				return true
+			}
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+	return false
 }

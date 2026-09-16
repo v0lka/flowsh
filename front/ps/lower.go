@@ -63,6 +63,7 @@ func LowerWith(p *Program, opts Options) *Result {
 	l := &lowerer{
 		prog:    p,
 		windows: opts.Windows,
+		aliases: map[string]string{},
 	}
 	r := &Result{Style: StylePS}
 	if p == nil {
@@ -85,6 +86,11 @@ func LowerWith(p *Program, opts Options) *Result {
 		}
 		switch s.Kind {
 		case KindCommand:
+			// Record a declared alias only after it has been lowered, so it
+			// affects the statements that follow it and nothing before.
+			if name, value, ok := aliasDecl(s.Cmd); ok {
+				l.aliases[strings.ToLower(name)] = value
+			}
 			l.command(s)
 		case KindAssignment:
 			l.assignment(s.Assign)
@@ -108,6 +114,11 @@ type lowerer struct {
 	notes        []string
 	conservative bool
 	bump         engine.Destructiveness
+	// aliases holds the aliases declared by the source *before* the statement
+	// currently being lowered, keyed by folded name. Resolution is therefore
+	// order-aware: an alias only rewrites the calls that follow its declaration,
+	// as in PowerShell (a later Set-Alias must not rewrite an earlier call).
+	aliases map[string]string
 }
 
 // emitEff records one effect together with the derivation that justifies it,
@@ -140,19 +151,28 @@ func canonicalCmdlet(name string) (string, bool) {
 // resolve maps a command name to its canonical cmdlet spelling, following the
 // script's own aliases and then the built-in alias table. viaAlias reports
 // whether an alias was expanded.
+//
+// Resolution follows PowerShell's precedence alias > function > cmdlet: a
+// script-declared alias shadows a built-in alias and a cmdlet of the same name.
+// Only aliases declared *before* the current statement are consulted, so
+// resolution follows source order.
 func (l *lowerer) resolve(name string) (canonical string, viaAlias bool) {
-	if c, ok := canonicalCmdlet(name); ok {
-		return c, false
+	if l.aliases != nil {
+		if target, ok := l.aliases[strings.ToLower(name)]; ok {
+			if c, ok := canonicalCmdlet(target); ok {
+				return c, true
+			}
+			return target, true
+		}
 	}
-	var declared map[string]string
-	if l.prog != nil {
-		declared = l.prog.Aliases
-	}
-	if target, ok := LookupAlias(name, declared); ok {
+	if target, ok := LookupAlias(name, nil); ok {
 		if c, ok := canonicalCmdlet(target); ok {
 			return c, true
 		}
 		return target, true
+	}
+	if c, ok := canonicalCmdlet(name); ok {
+		return c, false
 	}
 	return name, false
 }
@@ -160,6 +180,16 @@ func (l *lowerer) resolve(name string) (canonical string, viaAlias bool) {
 func (l *lowerer) command(s *Stmt) {
 	c := s.Cmd
 	if c == nil {
+		return
+	}
+	if c.ArrayComma {
+		// A comma-separated argument list (`Remove-Item x,y`) is not modelled:
+		// the operand set cannot be bounded, so degrade to ⊤ rather than bind a
+		// garbled target.
+		l.emitEff(topEffect(engine.ModeDirect), atom(engine.AtomCommand, c.Name, c.Pos))
+		l.conservative = true
+		l.note("⊤ %s: comma-separated argument list is not modelled → CodeExec(⊤)", cmdLabel(c, c.Name))
+		l.redirs(c)
 		return
 	}
 	canonical, viaAlias := l.resolve(c.Name)
@@ -171,7 +201,7 @@ func (l *lowerer) command(s *Stmt) {
 		l.redirs(c)
 		return
 	}
-	if l.prog != nil && l.prog.Funcs[canonical] {
+	if l.prog != nil && l.prog.Funcs[strings.ToLower(canonical)] {
 		l.emitEff(topEffect(engine.ModeTransitive), atom(engine.AtomCommand, canonical, c.Pos))
 		l.conservative = true
 		l.note("⊤ shell function %s → CodeExec(⊤, transitively): body is opaque", canonical)
@@ -197,6 +227,7 @@ func (l *lowerer) command(s *Stmt) {
 	for _, sp := range specs {
 		l.emitSpec(c, canonical, sp)
 	}
+	l.dataFiles(c, canonical)
 	l.bumpFor(c, canonical)
 	l.redirs(c)
 }
@@ -213,6 +244,10 @@ func (l *lowerer) topReason(c *Command, canonical string) (string, bool) {
 		return "Add-Type compiles and loads arbitrary code", true
 	case "new-object":
 		return "New-Object instantiates an arbitrary .NET type", true
+	case "invoke-history":
+		return "Invoke-History re-executes a previous command (arbitrary code)", true
+	case "trace-command":
+		return "Trace-Command evaluates an arbitrary expression string", true
 	}
 	if c.DotSource {
 		return "dot-sourcing runs an external script in the caller's scope", true
@@ -246,6 +281,11 @@ func (l *lowerer) emitSpec(c *Command, cmd string, sp Spec) {
 		case TargetPath, TargetURL, TargetName:
 			e := effectOf(sp.Kind, engine.ScopeTop(), sp.Mode, sp.Reversible)
 			l.emitEff(e, withSink([]engine.Atom{base}, e)...)
+			// Note: the effect's *target* is ⊤, but the effect is not the ⊤
+			// shape (CodeExec over any), so the conservative flag is deliberately
+			// NOT set here: the result contract ties Conservative to a genuine
+			// CodeExec/⊤ effect, and a read/write with an unknown target is still
+			// a bounded kind.
 			l.note("%s: %s ⊤ (pipelines/default) → %s", cmd, sp.Op, sp.Kind)
 			if cred {
 				l.emitEff(effectOf(engine.KindCredAccess, engine.ScopeTop(), engine.ModeDirect, false),
@@ -294,6 +334,30 @@ func (l *lowerer) emitOne(c *Command, cmd string, sp Spec, target string, cred b
 		l.emitEff(effectOf(kind, scopeOf(target), sp.Mode, sp.Reversible), base...)
 		l.note("%s: %s %s → %s", cmd, sp.Op, target, kind)
 		return
+
+	case DriveFunction, DriveAlias:
+		// Function:/Alias: name in-memory session state, which is not durable
+		// off-process state: a write there has no external effect.
+		l.note("%s: %s %s → %s: session-local provider, no external effect", cmd, sp.Op, target, driveOf(target))
+		return
+
+	case DriveWSMan:
+		// WSMan: is durable host configuration (like the registry), so a write
+		// lowers to Persist.
+		l.emitEff(effectOf(engine.KindPersist, scopeOf(target), sp.Mode, sp.Reversible), base...)
+		l.note("%s: %s %s → Persist (WSMan configuration)", cmd, sp.Op, target)
+		return
+
+	case DriveCert:
+		// Cert: is the certificate store: reading it is credential access, while
+		// installing/removing a certificate mutates persisted host state.
+		kind := engine.KindCredAccess
+		if sp.Kind == engine.KindFSWrite || sp.Kind == engine.KindFSMeta {
+			kind = engine.KindPersist
+		}
+		l.emitEff(effectOf(kind, scopeOf(target), sp.Mode, sp.Reversible), base...)
+		l.note("%s: %s %s → %s (certificate store)", cmd, sp.Op, target, kind)
+		return
 	}
 
 	e := effectOf(sp.Kind, scopeOf(target), sp.Mode, sp.Reversible)
@@ -324,9 +388,18 @@ func (l *lowerer) targetWords(c *Command, k TargetKind) []string {
 	case TargetPath:
 		for _, b := range c.Bindings {
 			if b.Param != nil && pathParam(b.Param.Bare()) && b.Value != nil {
-				vals = append(vals, b.Value.Text)
+				vals = append(vals, cleanTarget(b.Value))
 			}
 		}
+		// A positional operand names the item the cmdlet acts on, so it is
+		// combined with the named path parameters rather than being dropped when
+		// one is present (`Move-Item C:\a -Destination C:\b` acts on both).
+		vals = append(vals, l.operands(c)...)
+		// A filesystem-selection parameter (-Include/-Exclude/-Filter) is not a
+		// path and must not be recorded as the target: it only filters a query.
+		// When no path parameter or operand names the location, no target is
+		// contributed, so emitSpec widens it to ⊤ (a bounded effect kind over an
+		// unknown target) rather than fabricating a path from the pattern.
 	case TargetURL:
 		// A network target is carried by a URL-ish parameter (-Uri/-Url/
 		// -ConnectionUri/-Proxy/-SmtpServer); a probe cmdlet may instead name its
@@ -337,29 +410,105 @@ func (l *lowerer) targetWords(c *Command, k TargetKind) []string {
 		// parameter's endpoint rather than at a decoy operand.
 		for _, b := range c.Bindings {
 			if b.Param != nil && urlParam(b.Param.Bare()) && b.Value != nil {
-				vals = append(vals, b.Value.Text)
+				vals = append(vals, cleanTarget(b.Value))
 			}
 		}
 		if len(vals) == 0 {
 			for _, b := range c.Bindings {
 				if b.Param != nil && nameParam(b.Param.Bare()) && b.Value != nil {
-					vals = append(vals, b.Value.Text)
+					vals = append(vals, cleanTarget(b.Value))
 				}
 			}
+		}
+		if len(vals) == 0 {
+			vals = append(vals, l.operands(c)...)
 		}
 	case TargetName:
 		for _, b := range c.Bindings {
 			if b.Param != nil && nameParam(b.Param.Bare()) && b.Value != nil {
-				vals = append(vals, b.Value.Text)
+				vals = append(vals, cleanTarget(b.Value))
 			}
 		}
-	}
-	if len(vals) == 0 {
-		for _, a := range c.Args {
-			vals = append(vals, a.Text)
+		if len(vals) == 0 {
+			vals = append(vals, l.operands(c)...)
 		}
 	}
 	return vals
+}
+
+// operands returns the positional operand texts of a command, with surrounding
+// quotes stripped.
+func (l *lowerer) operands(c *Command) []string {
+	if c == nil {
+		return nil
+	}
+	out := make([]string, 0, len(c.Args))
+	for _, a := range c.Args {
+		if a == nil {
+			continue
+		}
+		out = append(out, cleanTarget(a))
+	}
+	return out
+}
+
+// cleanTarget returns a word's target text with one matching pair of surrounding
+// quotes stripped, so a quoted operand records the real path (`'C:\a'` →
+// `C:\a`) rather than the quoted source spelling.
+func cleanTarget(w *Word) string {
+	if w == nil {
+		return ""
+	}
+	return unquoteWord(w.Text)
+}
+
+// dataFiles lowers the data-file parameters of a cmdlet that is otherwise about
+// something else (a network request, a mail message): -InFile and -Attachments
+// name a file that is read, -OutFile names a file that is written, and the
+// catalog output path is written by New-FileCatalog. Without this the file
+// read/write would be lost.
+func (l *lowerer) dataFiles(c *Command, cmd string) {
+	for _, b := range c.Bindings {
+		if b.Param == nil || b.Value == nil {
+			continue
+		}
+		kind, ok := dataFileKind(cmd, b.Param.Bare())
+		if !ok {
+			continue
+		}
+		t := cleanTarget(b.Value)
+		if t == "" {
+			continue
+		}
+		e := effectOf(kind, scopeOf(t), engine.ModeDirect, kind == engine.KindFSRead)
+		base := []engine.Atom{atom(engine.AtomCommand, cmd, c.Pos), atom(engine.AtomOperand, t, b.Value.Pos)}
+		l.emitEff(e, withSink(base, e)...)
+		l.note("%s: %s %s → %s", cmd, b.Param.Name, quoteTarget(t), kind)
+		if kind == engine.KindFSRead && isCredentialText(t) {
+			l.emitEff(effectOf(engine.KindCredAccess, scopeOf(t), engine.ModeDirect, false),
+				atom(engine.AtomCommand, cmd, c.Pos), atom(engine.AtomSource, "credential", b.Value.Pos))
+			l.note("%s: credential material %s → CredAccess", cmd, quoteTarget(t))
+		}
+	}
+}
+
+// dataFileKind classifies a parameter that names a data file read from or
+// written to by a cmdlet: -InFile/-Attachments are reads; -OutFile is a write.
+// The catalog output path is a write only for New-FileCatalog — Test-FileCatalog
+// accepts the same parameter names but merely reads the catalog it verifies, so
+// the classification is cmdlet-aware rather than global.
+func dataFileKind(cmd, bare string) (engine.EffectKind, bool) {
+	b := bareParam(bare)
+	if inNames(readDataNames, b) {
+		return engine.KindFSRead, true
+	}
+	if inNames(writeDataNames, b) {
+		return engine.KindFSWrite, true
+	}
+	if strings.EqualFold(cmd, "New-FileCatalog") && inNames(catalogOutputNames, b) {
+		return engine.KindFSWrite, true
+	}
+	return "", false
 }
 
 // targetPos returns the source position of the word that carries target: the
@@ -387,6 +536,12 @@ func (l *lowerer) targetPos(c *Command, target string) Pos {
 // redirs lowers a command's redirections: > and >> write their target file.
 func (l *lowerer) redirs(c *Command) {
 	for _, r := range c.Redirs {
+		if strings.Contains(r.Op, "&") {
+			// A stream merge (2>&1, *>&1): the target is a file descriptor, not
+			// a path, so no file is written.
+			l.note("redirection %s → stream merge (no file)", r.Op)
+			continue
+		}
 		if r.Word == nil || r.Word.Text == "" {
 			l.emitEff(effectOf(engine.KindFSWrite, engine.ScopeTop(), engine.ModeDirect, false),
 				atom(engine.AtomRedirect, r.Op, r.Pos))
@@ -401,10 +556,40 @@ func (l *lowerer) redirs(c *Command) {
 
 // bumpFor raises the destructiveness for confirmed destructive invocations.
 func (l *lowerer) bumpFor(c *Command, cmd string) {
-	if strings.EqualFold(cmd, "Remove-Item") && (c.HasParam("Recurse") || c.HasParam("Force")) {
-		l.bump = l.bump.Join(engine.DestructCritical)
-		l.note("Remove-Item with -Recurse/-Force: recursive/forced delete → Critical")
+	if strings.EqualFold(cmd, "Remove-Item") {
+		if c.HasParam("Recurse") || c.HasParam("Force") || hasSwitchCanon(c, "recurse") || hasSwitchCanon(c, "force") {
+			l.bump = l.bump.Join(engine.DestructCritical)
+			l.note("Remove-Item with -Recurse/-Force: recursive/forced delete → Critical")
+		}
+		return
 	}
+	// Disk-wiping Storage cmdlets destroy data irreversibly; escalate them to
+	// Critical like the equivalent util-linux/fdisk operations.
+	switch {
+	case strings.EqualFold(cmd, "Clear-Disk"),
+		strings.EqualFold(cmd, "Format-Volume"),
+		strings.EqualFold(cmd, "Remove-Partition"):
+		l.bump = l.bump.Join(engine.DestructCritical)
+		l.note("%s: disk/volume destruction → Critical", cmd)
+	}
+}
+
+// hasSwitchCanon reports whether the command carries a switch whose canonical
+// name is canon, accepting PowerShell's parameter-name abbreviation (`-Rec` →
+// recurse).
+func hasSwitchCanon(c *Command, canon string) bool {
+	if c == nil {
+		return false
+	}
+	for _, p := range c.Params {
+		if p == nil {
+			continue
+		}
+		if got, ok := switchCanon(p.Bare()); ok && got == canon {
+			return true
+		}
+	}
+	return false
 }
 
 // assignment lowers a variable/environment assignment.
@@ -443,9 +628,37 @@ func (l *lowerer) finish(r *Result) {
 	r.Effects = rep.Effects
 	r.Destructiveness = rep.Destructiveness.Join(l.bump)
 	l.stampFile()
+	l.markEgressTaint(r.Effects)
 	r.Derivations = l.ders
 	r.Conservative = l.conservative
 	r.Notes = dedupSorted(l.notes)
+}
+
+// markEgressTaint pairs a secret read with an egress sink at the program level.
+//
+// The PowerShell frontend does not track dataflow, so provenance is never
+// propagated from a credential read into the request that could carry it, and
+// the exfiltration detector therefore never fires on a PowerShell input. As a
+// conservative remedy, when the analysed program reads credential material and
+// also reaches an egress sink, the sink is marked secret-bearing so DetectExfil
+// can pair them. It over-approximates (the read need not feed the request), but
+// it cannot miss an exfiltration the way the provenance-light path did.
+func (l *lowerer) markEgressTaint(effs []engine.Effect) {
+	secret := false
+	for _, e := range effs {
+		if engine.IsSecretRead(e) {
+			secret = true
+			break
+		}
+	}
+	if !secret {
+		return
+	}
+	for i := range effs {
+		if effs[i].Kind == engine.KindNetEgress {
+			effs[i].Taint = effs[i].Taint.Join(engine.TaintOf(engine.TaintSecret))
+		}
+	}
 }
 
 // stampFile fills in the source file of every why-trace atom from the program's

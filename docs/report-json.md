@@ -133,7 +133,7 @@ Each element of `effects[]` is one implied effect:
 | `taint` | object | `{ "labels": [string], "arbitrary": bool }` — provenance labels; `arbitrary: true` marks ⊤ provenance. |
 | `reversible` | bool | Whether the effect can be undone. |
 
-An effect's stable identity — used as the key in `why[].effect` and `score.exfilPairs` — is `kind|mode|[targets]`.
+An effect's stable identity — used as the key in `why[].effect` and `score.exfilPairs` — is `kind|mode|[targets]`. The `[targets]` part is the target set with each target's `\`, `,` and `]` backslash-escaped, so a target containing them cannot forge a set boundary and the key stays injective: a Windows target `C:\Windows` renders as `C:\\Windows`, and a single target `a,b` renders as `[a\,b]` (distinct from the two-target set `[a,b]`). For targets containing none of those three bytes — ordinary POSIX text — the spelling is unchanged (e.g. `FSWrite|Direct|[/root]`).
 
 ### score
 
@@ -164,9 +164,13 @@ full effect objects in the shape of [effects](#effects).
 | `aliasChain` | array of string | The alias-expansion chain, when the name resolved through aliases. |
 
 The object always carries the *most informative* resolution observed across the
-program's calls. On the PowerShell path it is the zero value `{ "kind": "" }`,
-because PowerShell resolves through its own alias/cmdlet tables rather than the
-bash binder.
+program's calls. It is the zero value `{ "kind": "" }` whenever no call reached
+the binder: on the PowerShell path (which resolves through its own alias/cmdlet
+tables), and on the bash path for a program whose statements are not command
+invocations — a bare assignment, a redirection, or a pure shell-state builtin
+(`true`, `:`, …) — none of which are routed to the binder. The `assignment` and
+`empty` kinds are emitted only when such a statement is passed to the binder
+directly (e.g. through `bind.Bind`); the bash frontend executes them itself.
 
 ### destructive
 

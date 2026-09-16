@@ -30,13 +30,38 @@ var sinkSet = map[string]bool{
 func isSink(name string) bool { return sinkSet[name] }
 
 // codeExecBuiltins execute shell source supplied as an argument or read from a
-// file, so — like a sink — their effects cannot be bounded statically.
+// file, so — like a sink — their effects cannot be bounded statically. `trap`
+// runs its ACTION (arbitrary code) when the signal fires, so it is included
+// too.
 var codeExecBuiltins = map[string]bool{
-	"eval": true, "source": true, ".": true,
+	"eval": true, "source": true, ".": true, "trap": true,
 }
 
 // isCodeExecBuiltin reports whether name executes code supplied at run time.
 func isCodeExecBuiltin(name string) bool { return codeExecBuiltins[name] }
+
+// trapHasAction reports whether a `trap` invocation registers a non-empty
+// ACTION operand (trap 'cmd' INT). The bare listing/query forms (`trap`,
+// `trap -p`, `trap -l`) and the reset form (`trap - INT`) carry no action and
+// therefore execute no code.
+func trapHasAction(argv []string) bool {
+	skipOpts := true
+	for _, a := range argv {
+		if skipOpts {
+			if a == "--" {
+				skipOpts = false
+				continue
+			}
+			if strings.HasPrefix(a, "-") && a != "-" {
+				// An option (‑p, ‑l, a cluster): keep looking for the action.
+				continue
+			}
+		}
+		// The first operand is the action, unless it is "-" (reset) or empty.
+		return a != "-" && a != ""
+	}
+	return false
+}
 
 // shellOnlyBuiltins are builtins that only manipulate the shell's own state and
 // have no external effect. The knowledge base does not describe them, so asking
@@ -110,7 +135,8 @@ done:
 }
 
 // printfOut folds a small, well-defined subset of printf: literal text with the
-// usual backslash escapes, plus %s and %d conversions. Anything else is
+// usual backslash escapes, plus %s and %d conversions. The format is replayed
+// until the argument list is exhausted, as printf does. Anything else is
 // unknown.
 func printfOut(argv []string) (string, bool) {
 	if len(argv) == 0 {
@@ -120,6 +146,29 @@ func printfOut(argv []string) (string, bool) {
 	args := argv[1:]
 	var b strings.Builder
 	argi := 0
+	for pass := 0; ; pass++ {
+		start := argi
+		if ok := printfPass(&b, format, args, &argi); !ok {
+			return "", false
+		}
+		if argi >= len(args) {
+			break
+		}
+		if argi == start {
+			// The format consumed no argument: replaying it forever would
+			// diverge.
+			return "", false
+		}
+		if pass > len(args)+1 {
+			return "", false
+		}
+	}
+	return b.String(), true
+}
+
+// printfPass folds one pass over the format string, consuming arguments from
+// args starting at *argi. It reports false for an unsupported conversion.
+func printfPass(b *strings.Builder, format string, args []string, argi *int) bool {
 	for i := 0; i < len(format); {
 		c := format[i]
 		switch c {
@@ -156,28 +205,28 @@ func printfOut(argv []string) (string, bool) {
 				i += 2
 				continue
 			case 's', 'd', 'i':
-				if argi >= len(args) {
-					return "", false
+				if *argi >= len(args) {
+					return false
 				}
-				a := args[argi]
-				argi++
+				a := args[*argi]
+				*argi++
 				if format[i+1] != 's' {
 					if _, err := strconv.Atoi(strings.TrimSpace(a)); err != nil {
-						return "", false
+						return false
 					}
 				}
 				b.WriteString(a)
 				i += 2
 				continue
 			default:
-				return "", false
+				return false
 			}
 		default:
 			b.WriteByte(c)
 			i++
 		}
 	}
-	return b.String(), true
+	return true
 }
 
 // base64Out folds base64 encode/decode when its input (stdin) is known. It is

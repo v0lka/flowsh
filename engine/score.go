@@ -48,6 +48,17 @@ func (b Breadth) Join(o Breadth) Breadth {
 	return b
 }
 
+// Meet returns the greatest lower bound (⊓), i.e. the narrower of b and o.
+func (b Breadth) Meet(o Breadth) Breadth {
+	if o < b {
+		return o
+	}
+	return b
+}
+
+// LessOrEqual reports whether b ⊑ o.
+func (b Breadth) LessOrEqual(o Breadth) bool { return b <= o }
+
 // Severity maps breadth onto the shared severity scale: exact targets are Low,
 // globs Medium, home subtrees High, and the whole host Critical.
 func (b Breadth) Severity() Destructiveness {
@@ -81,17 +92,28 @@ func breadthOfTarget(t string) Breadth {
 	if t == "" {
 		return BreadthNone
 	}
-	trimmed := strings.TrimRight(t, "/")
-	if trimmed == "" || trimmed == "/" {
+	trimmed := strings.TrimRight(t, "/\\")
+	if trimmed == "" {
+		// Nothing but separators names the filesystem root — but only a POSIX
+		// spelling. A target of nothing but backslashes is not a root: on POSIX
+		// "\" is an ordinary filename byte, so it stays Exact.
+		if strings.ContainsRune(t, '/') {
+			return BreadthRoot
+		}
+		return BreadthExact
+	}
+	if isWindowsVolumeRoot(t, trimmed) {
 		return BreadthRoot
 	}
 	if isHomeRoot(trimmed) {
 		return BreadthHome
 	}
 	if i := strings.IndexAny(t, "*?["); i >= 0 {
-		base := strings.TrimRight(t[:i], "/")
+		base := strings.TrimRight(t[:i], "/\\")
 		switch {
 		case base == "":
+			return BreadthRoot
+		case isWindowsVolumeRoot(t, base):
 			return BreadthRoot
 		case isHomeRoot(base):
 			return BreadthHome
@@ -100,6 +122,25 @@ func breadthOfTarget(t string) Breadth {
 		}
 	}
 	return BreadthExact
+}
+
+// isWindowsVolumeRoot reports whether the target t names a bare Windows volume
+// root such as `C:` — the whole-drive extent a `C:\` (or `C:\Users\*\…`) write
+// reaches. cand is t with its trailing separators trimmed.
+//
+// Only a genuinely Windows-shaped spelling is a root: t carries a backslash
+// ("C:\", "D:\*") or ends in a separator ("C:/"). A bare POSIX `x:` — ':' is a
+// legal filename byte — is not a root. An all-backslash target trims to an
+// empty candidate and is rejected by the length check.
+func isWindowsVolumeRoot(t, cand string) bool {
+	if len(cand) != 2 || cand[1] != ':' {
+		return false
+	}
+	c := cand[0]
+	if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
+		return false
+	}
+	return strings.ContainsRune(t, '\\') || strings.HasSuffix(t, "/")
 }
 
 // BreadthOf returns the widest breadth among a scope's targets: Root for ⊤ and
@@ -176,6 +217,17 @@ func (r Irreversibility) Join(o Irreversibility) Irreversibility {
 	return r
 }
 
+// Meet returns the greatest lower bound (⊓), i.e. the less irreversible of r and o.
+func (r Irreversibility) Meet(o Irreversibility) Irreversibility {
+	if o < r {
+		return o
+	}
+	return r
+}
+
+// LessOrEqual reports whether r ⊑ o.
+func (r Irreversibility) LessOrEqual(o Irreversibility) bool { return r <= o }
+
 // Severity maps irreversibility onto the shared severity scale.
 func (r Irreversibility) Severity() Destructiveness {
 	switch r {
@@ -198,7 +250,9 @@ var irreversibleTokens = map[string]Irreversibility{
 	"truncate": IrrevPermanent,
 	"shred":    IrrevDestructive, "wipefs": IrrevDestructive, "mkswap": IrrevDestructive,
 	"sgdisk": IrrevDestructive, "fdisk": IrrevDestructive, "blkdiscard": IrrevDestructive,
-	"dd": IrrevDestructive,
+	"sfdisk": IrrevDestructive, "cfdisk": IrrevDestructive, "parted": IrrevDestructive,
+	"partx": IrrevDestructive,
+	"dd":    IrrevDestructive,
 }
 
 // IrreversibilityOfCommand classifies a command token by its base name. Unknown

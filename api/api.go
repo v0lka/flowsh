@@ -73,8 +73,10 @@ const (
 	LangPowerShell = analysis.LangPowerShell
 )
 
-// Langs is every supported dialect, in canonical order.
-var Langs = analysis.Langs
+// Langs is every supported dialect, in canonical order. It is a defensive copy
+// of the facade's slice so an embedding caller that writes to it cannot mutate
+// the shared storage behind analysis.Langs.
+var Langs = append([]analysis.Lang(nil), analysis.Langs...)
 
 // ParseLang maps a user-supplied language name onto a Lang, accepting the
 // canonical spellings ("bash", "posix", "posh") plus their common aliases.

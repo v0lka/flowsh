@@ -24,6 +24,14 @@
     { "id": "ps-b12-ogv",            "group": "ps", "lang": "posh", "input": "ogv",                                           "note": "B12 alias ogv → Out-GridView: display pipeline output" },
     { "id": "ps-b12-icm",            "group": "ps", "lang": "posh", "input": "icm -ComputerName evil",                        "note": "B12 alias icm → Invoke-Command: remote code execution" },
     { "id": "ps-b12-nmo",            "group": "ps", "lang": "posh", "input": "nmo -Name evil",                                "note": "B12 alias nmo → New-Module: create a dynamic module" },
-    { "id": "ps-b12-epsn",           "group": "ps", "lang": "posh", "input": "epsn",                                          "note": "B12 alias epsn → Enter-PSSession: interactive remote session" }
+    { "id": "ps-b12-epsn",           "group": "ps", "lang": "posh", "input": "epsn",                                          "note": "B12 alias epsn → Enter-PSSession: interactive remote session" },
+
+    { "id": "ps-comma-args",      "group": "ps", "lang": "posh", "input": "Remove-Item x,y",                                       "note": "comma-separated argument list swallowed by the grammar; must not fail open" },
+    { "id": "ps-alias-shadow",    "group": "ps", "lang": "posh", "input": "Set-Alias Write-Output Remove-Item; Write-Output -Force C:\\x", "note": "script alias shadows the cmdlet of the same name" },
+    { "id": "ps-fn-case-shadow",  "group": "ps", "lang": "posh", "input": "function get-content { Remove-Item -Force x }; Get-Content y",  "note": "function shadowing is case-insensitive" },
+    { "id": "ps-callop-paren",    "group": "ps", "lang": "posh", "input": "& (Get-Command Remove-Item) C:\\x",                      "note": "call operator with a parenthesized operand is computed" },
+    { "id": "ps-switch-file",     "group": "ps", "lang": "posh", "input": "switch -File C:\\x.txt {}",                              "note": "switch -File reads a file; unmodelled, must be top" },
+    { "id": "ps-nospace-redir",   "group": "ps", "lang": "posh", "input": "Write-Output hi >C:\\out",                               "note": "redirection written without a space is still a file write" },
+    { "id": "ps-invoke-history",  "group": "ps", "lang": "posh", "input": "Invoke-History",                                        "note": "Invoke-History re-executes a previous command (arbitrary code)" }
   ]
 }

@@ -165,6 +165,46 @@ func TestFSReadSecretPathIsExfilSource(t *testing.T) {
 	}
 }
 
+// TestSecretPathMarkers pins the secret-path classifier: private-key
+// extensions are recognised (as a basename suffix or with further extension
+// text after them), and a dot-prefixed marker matches at a component start or
+// as a basename suffix, so "prod.env" is a secret but "my.envelope" is not.
+func TestSecretPathMarkers(t *testing.T) {
+	secrets := []string{
+		"/etc/ssl/private/tls.key",
+		"/home/u/.ssh/id_rsa",
+		"/root/.aws/credentials",
+		"/tmp/.env.recon",
+		"/home/u/keys/server.p12",
+		"/x/y/keystore",
+		// A dot marker is also recognised as a basename suffix, so the common
+		// ".env" file name is caught even though ".env" does not start the
+		// component.
+		"/srv/app/prod.env",
+		// A key/cert extension is recognised when further extension text
+		// follows it (a backup or dated copy of a private key).
+		"/etc/ssl/private/server.pem.old",
+		"/home/u/.ssh/id_rsa.pem.2024",
+	}
+	for _, p := range secrets {
+		if !SecretPath(p) {
+			t.Errorf("SecretPath(%q) = false, want true", p)
+		}
+	}
+	nonSecrets := []string{
+		"/tmp/my.envelope", // ".env" mid-component and not a suffix
+		"/tmp/environment", // no dot before "env"
+		"/var/log/app.log",
+		"/tmp/data.json",
+		"/tmp/notes.pemx", // ".pem" followed by non-extension text
+	}
+	for _, p := range nonSecrets {
+		if SecretPath(p) {
+			t.Errorf("SecretPath(%q) = true, want false", p)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Acceptance criterion 2
 //
@@ -362,6 +402,24 @@ func TestSourceClassMapping(t *testing.T) {
 	}
 }
 
+// TestProvenanceUnknownClassesOrderIndependent pins that normalising the source
+// classes is order-independent even for unrecognised class names: they all
+// share the last canonical position, so without a name tie-break an unstable
+// sort would let the input order leak into the result.
+func TestProvenanceUnknownClassesOrderIndependent(t *testing.T) {
+	a := NewProvenance("Zeta", "Alpha")
+	b := NewProvenance("Alpha", "Zeta")
+	if len(a.Sources) != 2 || len(b.Sources) != 2 {
+		t.Fatalf("sources: got %v and %v, want two each", a.Sources, b.Sources)
+	}
+	if a.Sources[0] != b.Sources[0] || a.Sources[1] != b.Sources[1] {
+		t.Errorf("order-dependent result: %v vs %v", a.Sources, b.Sources)
+	}
+	if a.Sources[0] != "Alpha" || a.Sources[1] != "Zeta" {
+		t.Errorf("unknown classes not sorted by name: got %v, want [Alpha Zeta]", a.Sources)
+	}
+}
+
 func TestProvenanceFoldsSources(t *testing.T) {
 	p := NewProvenance(SourceLiteral, SourceUntrustedContent, SourceUntrustedContent)
 	if got := p.Taint(); !got.Equal(TaintOf(TaintUntrusted)) {
@@ -400,6 +458,14 @@ func TestBreadthOrderingAndSecretEscalation(t *testing.T) {
 		{"$HOME", BreadthHome},
 		{"$HOME/*", BreadthHome},
 		{"/", BreadthRoot},
+		{"C:\\", BreadthRoot},
+		{"D:\\*", BreadthRoot},
+		{`C:\Users\alice\notes.txt`, BreadthExact},
+		// A bare POSIX "x:" is a legal filename, not a Windows volume root;
+		// ':' is an ordinary filename byte off Windows.
+		{"x:", BreadthExact},
+		// A target of nothing but backslashes is not a root either.
+		{`\\`, BreadthExact},
 	}
 	for _, tc := range cases {
 		if got := BreadthOf(ScopeOf(tc.target)); got != tc.want {
@@ -434,6 +500,10 @@ func TestIrreversibilityCommandTable(t *testing.T) {
 		{"mkfs", IrrevDestructive},
 		{"mkfs.ext4", IrrevDestructive},
 		{"shred", IrrevDestructive},
+		{"sfdisk", IrrevDestructive},
+		{"cfdisk", IrrevDestructive},
+		{"parted", IrrevDestructive},
+		{"partx", IrrevDestructive},
 		{"cat", IrrevReversible},
 		{"", IrrevReversible},
 	}

@@ -262,6 +262,26 @@ func TestLatticeLaws(t *testing.T) {
 			TaintOf(TaintUntrusted, TaintUserInput), TaintOf(TaintSecret),
 		})
 	})
+
+	t.Run("breadth", func(t *testing.T) {
+		checkLatticeLaws(t, "breadth", latticeOps[Breadth]{
+			join:   func(a, b Breadth) Breadth { return a.Join(b) },
+			meet:   func(a, b Breadth) Breadth { return a.Meet(b) },
+			eq:     func(a, b Breadth) bool { return a == b },
+			bottom: BreadthNone,
+			top:    BreadthRoot,
+		}, []Breadth{BreadthNone, BreadthExact, BreadthGlob, BreadthHome, BreadthRoot})
+	})
+
+	t.Run("irreversibility", func(t *testing.T) {
+		checkLatticeLaws(t, "irreversibility", latticeOps[Irreversibility]{
+			join:   func(a, b Irreversibility) Irreversibility { return a.Join(b) },
+			meet:   func(a, b Irreversibility) Irreversibility { return a.Meet(b) },
+			eq:     func(a, b Irreversibility) bool { return a == b },
+			bottom: IrrevReversible,
+			top:    IrrevDestructive,
+		}, []Irreversibility{IrrevReversible, IrrevRecoverable, IrrevPermanent, IrrevDestructive})
+	})
 }
 
 func TestEffectJoin(t *testing.T) {
@@ -305,6 +325,73 @@ func TestEffectJoin(t *testing.T) {
 	d.Mode = ModeTransitive
 	if _, ok := a.Join(d); ok {
 		t.Errorf("join of different modes should not be ok")
+	}
+}
+
+// TestEffectKeyInjective pins that Effect.Key (via Scope.canonical) distinguishes
+// target sets that a naive comma join would collapse, so distinct effects never
+// share a key.
+func TestEffectKeyInjective(t *testing.T) {
+	comma := Effect{Kind: KindFSRead, Target: ScopeOf("a,b"), Mode: ModeDirect}
+	split := Effect{Kind: KindFSRead, Target: ScopeOf("a", "b"), Mode: ModeDirect}
+	if comma.Target.Equal(split.Target) {
+		t.Fatalf("fixture must be two distinct scopes")
+	}
+	if comma.Key() == split.Key() {
+		t.Errorf("distinct effects share a key: %q", comma.Key())
+	}
+
+	bracket := Effect{Kind: KindFSRead, Target: ScopeOf("a]b"), Mode: ModeDirect}
+	two := Effect{Kind: KindFSRead, Target: ScopeOf("a", "b]"), Mode: ModeDirect}
+	if !bracket.Target.Equal(ScopeOf("a]b")) || bracket.Key() == two.Key() {
+		t.Errorf("bracket-bearing target collides: %q vs %q", bracket.Key(), two.Key())
+	}
+
+	// The canonical spellings for the ordinary cases are unchanged.
+	if got, want := ScopeOf("a", "b").canonical(), "[a,b]"; got != want {
+		t.Errorf("canonical([a,b]) = %q, want %q", got, want)
+	}
+	if got, want := ScopeTop().canonical(), "*"; got != want {
+		t.Errorf("canonical(⊤) = %q, want %q", got, want)
+	}
+	if got, want := ScopeBottom().canonical(), "[]"; got != want {
+		t.Errorf("canonical(⊥) = %q, want %q", got, want)
+	}
+
+	// A Windows target's backslashes are escaped, so the key is injective and
+	// renders the spelling documented in docs/report-json.md.
+	if got, want := ScopeOf(`C:\Windows`).canonical(), `[C:\\Windows]`; got != want {
+		t.Errorf(`canonical(C:\Windows) = %q, want %q`, got, want)
+	}
+}
+
+// TestNormalizeRemapsWhy is the regression test for the invariant that
+// Normalize keeps the why-trace in step with the merged effects: a report whose
+// two effects merge under join must not report the merged effect as an
+// unexplained gap.
+func TestNormalizeRemapsWhy(t *testing.T) {
+	a := Effect{Kind: KindFSRead, Target: ScopeOf("a"), Mode: ModeDirect, Certainty: CertaintyCertain, Reversible: true}
+	b := Effect{Kind: KindFSRead, Target: ScopeOf("b"), Mode: ModeDirect, Certainty: CertaintyCertain, Reversible: true}
+	why := BuildWhy([]Derivation{
+		{Effect: a, Atoms: []Atom{{Kind: AtomOperand, Text: "a"}}},
+		{Effect: b, Atoms: []Atom{{Kind: AtomOperand, Text: "b"}}},
+	})
+	if gaps := WhyGaps([]Effect{a, b}, why); len(gaps) != 0 {
+		t.Fatalf("pre-normalize gaps: %v", gaps)
+	}
+	rep := &Report{SchemaVersion: SchemaVersion, Effects: []Effect{a, b}, Why: why}
+	rep.Normalize()
+	if len(rep.Effects) != 1 {
+		t.Fatalf("effects did not merge: %+v", rep.Effects)
+	}
+	if gaps := WhyGaps(rep.Effects, rep.Why); len(gaps) != 0 {
+		t.Errorf("after normalize, unexplained effects: %v (why=%v)", gaps, rep.Why)
+	}
+	// Normalize must be idempotent.
+	before := append([]WhyTrace(nil), rep.Why...)
+	rep.Normalize()
+	if !reflect.DeepEqual(before, rep.Why) {
+		t.Errorf("Normalize is not idempotent on Why:\n before=%+v\n after=%+v", before, rep.Why)
 	}
 }
 

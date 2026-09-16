@@ -52,8 +52,8 @@ options:
 exit status:
   0  analysis produced a report
   1  analysis failed internally
-  2  usage error (bad flags or no input)
-  3  input error (the source could not be read, or was empty)`
+  2  usage error (bad flags, bad --lang, or conflicting sources)
+  3  input error (the source could not be read, or the command was empty)`
 
 // The stable exit-code contract. run returns exactly one of these; new error
 // classes must be mapped onto one of them rather than inventing ad-hoc codes.
@@ -96,6 +96,18 @@ func exitCode(err error) int {
 	return exitInternal
 }
 
+// errorLine renders err for the CLI's stderr with the "flowsh: " prefix,
+// adding it only when the message does not already carry it. Errors surfaced
+// from the facade (and from api.ParseLang) are already prefixed, so a bare
+// "flowsh: " here would print "flowsh: flowsh: …".
+func errorLine(err error) string {
+	msg := err.Error()
+	if strings.HasPrefix(msg, "flowsh: ") {
+		return msg
+	}
+	return "flowsh: " + msg
+}
+
 // options is the parsed command line.
 type options struct {
 	lang       string
@@ -119,7 +131,7 @@ type options struct {
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	o, err := parseArgs(args)
 	if err != nil {
-		fprint(stderr, "flowsh: %v\n", err)
+		fprint(stderr, "%s\n", errorLine(err))
 		fprintln(stderr, usage)
 		return exitUsage
 	}
@@ -141,20 +153,20 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if !auto {
 		lang, err = api.ParseLang(o.lang)
 		if err != nil {
-			fprint(stderr, "flowsh: %v\n", err)
+			fprint(stderr, "%s\n", errorLine(err))
 			return exitUsage
 		}
 	}
 
 	src, err := readInput(o, stdin)
 	if err != nil {
-		fprint(stderr, "flowsh: %v\n", err)
+		fprint(stderr, "%s\n", errorLine(err))
 		return exitInput
 	}
 
 	if o.batch {
 		if err := runBatch(o, src, lang, auto, stdout); err != nil {
-			fprint(stderr, "flowsh: %v\n", err)
+			fprint(stderr, "%s\n", errorLine(err))
 			return exitCode(err)
 		}
 		return exitOK
@@ -176,7 +188,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 	rep, err := api.AnalyzeWith(lang, src.src, opts)
 	if err != nil {
-		fprint(stderr, "flowsh: %v\n", err)
+		fprint(stderr, "%s\n", errorLine(err))
 		return exitInternal
 	}
 
@@ -265,6 +277,9 @@ func parseArgs(args []string) (options, error) {
 	if o.fileSet && o.useStdin {
 		return o, &usageError{fmt.Errorf("--file and the \"-\" stdin argument are mutually exclusive")}
 	}
+	if o.useStdin && o.commandSet {
+		return o, &usageError{fmt.Errorf("the \"-\" stdin argument and a positional command are mutually exclusive")}
+	}
 	if o.batch && o.commandSet {
 		return o, &usageError{fmt.Errorf("--batch and a positional command are mutually exclusive")}
 	}
@@ -300,7 +315,7 @@ func readInput(o options, stdin io.Reader) (input, error) {
 		if err != nil {
 			return input{}, &inputError{fmt.Errorf("read %s: %w", o.file, err)}
 		}
-		s := strings.TrimRight(string(data), "\n")
+		s := strings.TrimRight(string(data), "\r\n")
 		if strings.TrimSpace(s) == "" {
 			return input{}, &inputError{fmt.Errorf("%s: empty command", o.file)}
 		}
@@ -312,7 +327,11 @@ func readInput(o options, stdin io.Reader) (input, error) {
 		}
 		return input{src: s, root: api.RootStdin}, nil
 	default:
-		return input{src: o.command, root: api.RootArgument}, nil
+		cmd := strings.TrimSpace(o.command)
+		if cmd == "" {
+			return input{}, &inputError{fmt.Errorf("empty command argument")}
+		}
+		return input{src: cmd, root: api.RootArgument}, nil
 	}
 }
 
@@ -322,7 +341,7 @@ func readStdin(stdin io.Reader) (string, error) {
 	if err != nil {
 		return "", &inputError{fmt.Errorf("read stdin: %w", err)}
 	}
-	s := strings.TrimRight(string(data), "\n")
+	s := strings.TrimRight(string(data), "\r\n")
 	if strings.TrimSpace(s) == "" {
 		return "", &inputError{fmt.Errorf("no command given and stdin is empty")}
 	}
