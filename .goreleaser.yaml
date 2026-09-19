@@ -42,7 +42,7 @@ builds:
     ldflags:
       # -s -w drop the symbol table and DWARF. main.buildVersion is the additive
       # build stamp printed by `flowsh --version`; the frozen report-contract
-      # versions (flowsh/v1, effect-ir/v1) are source constants and unaffected.
+      # versions (flowsh/v2, effect-ir/v1) are source constants and unaffected.
       - -s -w -X main.buildVersion={{ .Version }}
     mod_timestamp: "{{ .CommitTimestamp }}"
 

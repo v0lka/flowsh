@@ -44,10 +44,18 @@ const (
 // Arg is one normalized argument word. Literal is true when the word's text is
 // fully known at analysis time; a non-literal word (parameter expansion, command
 // substitution, …) has an unreliable Value and forces the targets derived from
-// it to ⊤.
+// it to ⊤ — unless Dir is set: the directory its expansion is provably confined
+// to, which the derived targets use instead of ⊤.
 type Arg struct {
 	Value   string `json:"value"`
 	Literal bool   `json:"literal"`
+
+	// Dir names the directory a non-literal word is confined to when every one
+	// of its dynamic parts is numeric-class (an exit status, a pid, a length:
+	// digits cannot form a path structure). Empty for literal words and for
+	// dynamic words the analysis cannot bound, which stay ⊤. It is analysis
+	// metadata and is deliberately not part of the serialized call.
+	Dir string `json:"-"`
 
 	// Taint is the provenance of the value, propagated from the frontend's
 	// dataflow (variable reads, command substitutions, …). It is analysis
@@ -521,13 +529,29 @@ func lowerParam(cmd *kb.Command, p kb.Param, value Arg, argScope engine.Scope, a
 	cert := certaintyOf(p.Effect.Mode)
 	target := targetFor(cmd, p, value, argScope)
 	taint := taintFor(p, value, argTaint, stdinTaint)
+	path, fromStdin, fileRef := fileRefPath(value)
 
-	if !p.Effect.FileRef {
-		e := p.Effect.EngineEffect(target, taint, cert)
-		return []engine.Effect{e}, []engine.Derivation{derive(e, withSink(atoms, e), ruleForKind(e.Kind))}
+	// Egress target gate: a NetEgress effect may only carry a target that
+	// passes the host/URL grammar. A literal operand that names no address (a
+	// git subcommand, a SHA, a pathspec force-fit onto a network positional)
+	// creates no egress effect at all; an unresolved (⊤) target passes through
+	// as the unresolved egress and keeps participating in the network
+	// controls. A declared network client (curl, wget, nc, ssh/scp, rsync and
+	// the net-tools family) has destination positionals, so its bare
+	// single-label host names are accepted; every other dialect must spell a
+	// dotted name, an address or a URL. A fileRef parameter that actually uses
+	// the @file convention is exempt: its declared effect carries the payload,
+	// not a destination (⊥ target), and the destination is another
+	// parameter's business.
+	if p.Effect.Kind == engine.KindNetEgress && (!p.Effect.FileRef || !fileRef) {
+		filtered, keep := engine.FilterEgressTargets(target, lenientHostDialect(cmd))
+		if !keep {
+			return nil, nil
+		}
+		target = filtered
 	}
-	path, fromStdin, ok := fileRefPath(value)
-	if !ok {
+
+	if !p.Effect.FileRef || !fileRef {
 		e := p.Effect.EngineEffect(target, taint, cert)
 		return []engine.Effect{e}, []engine.Derivation{derive(e, withSink(atoms, e), ruleForKind(e.Kind))}
 	}
@@ -758,6 +782,25 @@ func taintEgress(effs []engine.Effect, stdinTaint engine.Taint) []engine.Effect 
 	return effs
 }
 
+// lenientHostDialect reports whether cmd is a declared network client — a
+// command whose HOST/URL positionals are destination slots by construction.
+// For such a command a bare single-label host name (an intranet name: nc evil
+// 4444, ssh bastion) is accepted as an egress target; every other dialect
+// (VCS clients, package managers, …) must spell a dotted name, an address or a
+// URL, because its operands are refs, pathspecs and subcommands first.
+func lenientHostDialect(cmd *kb.Command) bool {
+	if cmd == nil {
+		return false
+	}
+	switch cmd.Dialect {
+	case kb.DialectCurl, kb.DialectWget, kb.DialectNetcat,
+		kb.DialectOpenSSH, kb.DialectNetTools, kb.DialectRsync,
+		kb.DialectUtilLinux: // logger -n/--server: the flag value is the syslog server
+		return true
+	}
+	return false
+}
+
 // targetFor computes the target scope an effect applies to from its value
 // source and the tokens the invocation supplied.
 func targetFor(cmd *kb.Command, p kb.Param, value Arg, argScope engine.Scope) engine.Scope {
@@ -786,7 +829,11 @@ func targetFor(cmd *kb.Command, p kb.Param, value Arg, argScope engine.Scope) en
 }
 
 // argsScope returns the target scope of a group of operand words: their literal
-// values, or ⊤ as soon as one operand is not statically known.
+// values, or ⊤ as soon as one operand is neither statically known nor confined.
+// A confined operand (Dir set: every dynamic part is numeric-class, so the
+// expansion lands inside that directory) contributes its directory as a target
+// — precise enough for containment checks and strictly sound, since no
+// expansion can name a path outside it.
 func argsScope(g []Arg) engine.Scope {
 	if len(g) == 0 {
 		return engine.ScopeBottom()
@@ -794,6 +841,10 @@ func argsScope(g []Arg) engine.Scope {
 	vals := make([]string, 0, len(g))
 	for _, a := range g {
 		if !a.Literal {
+			if a.Dir != "" {
+				vals = append(vals, a.Dir)
+				continue
+			}
 			return engine.ScopeTop()
 		}
 		if a.Value != "" {
@@ -1011,7 +1062,7 @@ func wordArg(w *bash.Word) Arg {
 	if w == nil {
 		return Arg{}
 	}
-	return Arg{Value: w.Value, Literal: w.Literal, Taint: w.Taint,
+	return Arg{Value: w.Value, Literal: w.Literal, Dir: w.Dir, Taint: w.Taint,
 		Pos: engine.SourceLoc{Line: w.Pos.Line, Col: w.Pos.Col}}
 }
 

@@ -6,13 +6,16 @@
 
 ## Key Files
 
-- `internal/analysis/analyze.go` — the facade: `Lang`, `ParseLang`, `Report`, `DestructiveFinding`, `Analyzer`, `NewAnalyzer`, `defaultAnalyzer`, `Options` (incl. `Root`, `Windows`), `Bool`, `RootArgument`/`RootStdin`, `Analyze`, `AnalyzeWith`.
+- `internal/analysis/analyze.go` — the facade: `Lang`, `ParseLang`, `Report`, `DestructiveFinding`, `Analyzer`, `NewAnalyzer`, `defaultAnalyzer`, `Options` (incl. `Root`, `Windows`, `Vars`), `Bool`, `RootArgument`/`RootStdin`, `Analyze`, `AnalyzeWith`.
 - `internal/corpus/corpus.go` — the test-only corpus harness: `Case`, group constants, `GuardFallClasses`, `LoadCorpus`, `Filter`, `CorpusDir`, `CorpusDirFrom` (language resolution stays in `internal/analysis`).
 - `internal/analysis/corpus_test.go` — conformance tests over the corpus (GuardFall coverage, destructive recall, PowerShell recall, benign precision, why-trace coverage).
 - `internal/analysis/exfil_test.go` — exfiltration regression tests.
 - `internal/analysis/destructive_test.go` — knowledge-base destructive-class raising (a class-E entry raises to Critical; a KB class never lowers the effect-derived severity).
 - `internal/analysis/loc_test.go` — why-trace source locations and `Options.Root` → `Report.Root`.
 - `internal/analysis/analyze_ps_test.go` — PowerShell provider options (`Options.Windows` toggles the Registry independently of the host OS).
+- `internal/analysis/vars_test.go` — host-table option (`Options.Vars`) end to end: seeded bindings resolve `$name`-derived targets, and the option never loosens the unseeded ⊤ default.
+- `internal/analysis/canonical.go` — the per-command resolution view (`CommandCall`, `CallRedirect`) with binary-name normalization (`normalizeBinary`), and the effect-based canonical form (`Canonical`, `buildCanonical`: staging fold + non-path target filter + deterministic key).
+- `internal/analysis/canonical_test.go` — the retry-splitting repros (npx vs `node_modules/.bin` binary path; staged write + `mv` vs `sed -i`), the normalization table, the staging-fold boundary rules and the ⊤-survival invariant.
 - `cmd/flowsh/main.go` — the CLI front-end that consumes this facade (see [CLI](cli.md)).
 - `api/api.go` — the public embedding surface: a thin type-alias re-export of this facade for external Go modules (see [Public Embedding Surface](#public-embedding-surface-api)).
 - `testdata/corpus/*.json` — the corpus documents loaded by `LoadCorpus` (`benign_bash.json`, `destructive_bash.json`, `guardfall_bash.json`, `guardfall_posix.json`, `guardfall_posh.json`, `resolution_bash.json`, `ps_cases.json`).
@@ -78,7 +81,7 @@ The JSON field contract (a flowsh report is an engine report plus CLI metadata):
 | --- | --- | --- |
 | `schemaVersion` | string | Always `effect-ir/v1` (`engine.SchemaVersion`). |
 | `tool` | string | Always `flowsh` (`ToolName`). |
-| `toolVersion` | string | Always `flowsh/v1` (`ToolVersion`). |
+| `toolVersion` | string | Always `flowsh/v2` (`ToolVersion`; v2 adds the additive `commandCalls` and `canonical` fields). |
 | `lang` | string | `"bash"`, `"posix"` or `"posh"`. |
 | `input` | string | The analysed source text verbatim. |
 | `root` | string | The source name the input was read from (a file path, or `RootArgument`/`RootStdin`); present (`omitempty`) only when the caller named one via `Options.Root`. |
@@ -91,6 +94,8 @@ The JSON field contract (a flowsh report is an engine report plus CLI metadata):
 | `reason` | string | Present (`omitempty`) only when `top`/`conservative`; explains the degradation. |
 | `commands` | int | Number of commands/statements analysed. |
 | `resolution` | `bind.Resolution` | Aggregated name-resolution outcome across the calls (`kind` `builtin`/`function`/`alias`/`command`/…); the zero value (`kind: ""`) on the PowerShell path. |
+| `commandCalls` | array of `CommandCall` | Per-command resolution view: every call the binder saw with its `invoked` name (as written), its `resolved` binary (basename, `node_modules/.bin` segment stripped, package runners such as `npx` consumed — `npx tsc -b` and `./node_modules/.bin/tsc -b` both resolve to `tsc`), its non-empty argument values and its statement's resolved `redirs` (`omitempty`; absent on the PowerShell path and when no call reached the binder). |
+| `canonical` | `Canonical` | The effect-based canonical form for signature comparison: the report's effects normalized (a staged temp write folded onto the destination of the trailing `mv` — `sed … > tmp && mv tmp file` ≡ `sed -i … file`; non-path operand targets such as a sed script or a grep pattern dropped) plus the deterministic `key` (sorted `Effect.Key()` values joined by `;`). Present whenever the report has effects. |
 | `destructive` | array of `DestructiveFinding` | Matched knowledge-base destructive-flags entries (`command`, `spec`, `class` `A`–`E`, `reason`), de-duplicated and sorted (`omitempty`). |
 | `notes` | array of string | Frontend diagnostics (`omitempty`). |
 
@@ -121,10 +126,14 @@ var defaultAnalyzer = sync.OnceValues(NewAnalyzer)
 // Options tunes the analysis. The zero value is the host default; Windows is
 // tri-state — nil keeps the host default (Registry active only on Windows),
 // a non-nil value forces the PowerShell Registry provider on or off
-// independently of the host OS.
+// independently of the host OS. Vars seeds the bash/POSIX abstract state with
+// host-known variable bindings (a session temp directory, a workspace root)
+// that behave exactly like literal in-script assignments; nil is identical to
+// Analyze.
 type Options struct {
-	Windows *bool  // tri-state Registry toggle: nil = host default
-	Root    string // source name stamped into Report.Root; empty = unset
+	Windows *bool             // tri-state Registry toggle: nil = host default
+	Root    string            // source name stamped into Report.Root; empty = unset
+	Vars    map[string]string // host-known shell variable bindings (bash/POSIX only)
 }
 
 func Bool(v bool) *bool // helper for the tri-state Options.Windows field
@@ -209,7 +218,7 @@ Analyze(lang, src)                       analyze.go (package func)
 - `Analyze` is total and deterministic: the frontends degrade to ⊤ rather than fail, so the returned `*Report` is never nil.
 - `Report.Effects` is never `null`: `normalizeEffects` replaces a nil slice with `[]engine.Effect{}`, so JSON always carries `[]`.
 - `Report.Covered()` is true iff the analysis produced at least one effect, degraded to ⊤ (`Top`), or is `Conservative` — the "no silent miss" property the GuardFall corpus checks.
-- `Report.SchemaVersion`, `Report.Tool` and `Report.ToolVersion` always equal `engine.SchemaVersion` (`effect-ir/v1`), `"flowsh"`, `"flowsh/v1"` respectively.
+- `Report.SchemaVersion`, `Report.Tool` and `Report.ToolVersion` always equal `engine.SchemaVersion` (`effect-ir/v1`), `"flowsh"`, `"flowsh/v2"` respectively.
 - `Report.Destructiveness` is the join (max) of `engine.ComputeDestructiveness(effects)` and the join of the binder's per-call `Destructiveness` (which already folds each matched destructive-table class severity); the same KB-class severity is joined into `Score.Destructiveness` and `Score.Grade`, so a matched destructive class can only raise — never lower — the reported severity.
 - `ParseLang` returns `LangBash`, `LangPOSIX` or `LangPowerShell`, otherwise a non-nil error; it never returns an unknown `Lang` with a nil error.
 - `defaultAnalyzer` loads the knowledge base at most once per process (`sync.OnceValues`), and every `Analyze` call shares that analyser.
@@ -224,7 +233,7 @@ Compile-time constants in `internal/analysis/analyze.go`:
 | --- | --- | --- |
 | `ToolName` | `"flowsh"` | Stamped into `report.tool`. |
 | `SchemaVersion` | `engine.SchemaVersion` = `"effect-ir/v1"` | Stamped into `report.schemaVersion`. |
-| `ToolVersion` | `"flowsh/v1"` | Stamped into `report.toolVersion`. |
+| `ToolVersion` | `"flowsh/v2"` | Stamped into `report.toolVersion`. |
 | `RootArgument` | `"<argument>"` | `report.root` when the command came from the positional argument. |
 | `RootStdin` | `"<stdin>"` | `report.root` when the command came from stdin (`-` or no argument). |
 
@@ -234,7 +243,7 @@ Corpus location resolution (`internal/corpus/corpus.go`):
 - `CorpusDirFrom(start)` is the testable core that resolves the same path relative to an explicit starting directory (absolute-ised first).
 - Failure to find `go.mod` above the start yields `flowsh: go.mod not found above <dir>`.
 
-The facade reads no environment variables; its only runtime configuration is the `lang` argument and the optional `Options` (notably `Options.Windows`, the tri-state PowerShell Registry toggle).
+The facade reads no environment variables; its only runtime configuration is the `lang` argument and the optional `Options` — notably `Options.Windows` (the tri-state PowerShell Registry toggle) and `Options.Vars` (host-known shell variable bindings seeded into the bash/POSIX abstract state; the PowerShell path ignores the table).
 
 ## Public Embedding Surface (`api/`)
 
@@ -251,7 +260,7 @@ The facade is consumed by external Go programs through the sibling top-level pac
 
 Because every exported type is a type **alias**, the boundary is transparent — an embedding caller passes `api.Options` where an `analysis.Options` is expected and reads the same `Report` the CLI emits. A consequence of the alias (and not duplicating types) is that a change to an internal type is, by construction, a change to the public API.
 
-The embedding contract is versioned by the two report constants, not by the module version: a consumer pins to `Report.SchemaVersion` (`effect-ir/v1`, the effect IR shape) and `Report.ToolVersion` (`flowsh/v1`, the document as a whole), as described in [Report Contract](../contracts/report-json.md).
+The embedding contract is versioned by the two report constants, not by the module version: a consumer pins to `Report.SchemaVersion` (`effect-ir/v1`, the effect IR shape) and `Report.ToolVersion` (`flowsh/v2`, the document as a whole), as described in [Report Contract](../contracts/report-json.md).
 
 The corpus harness is deliberately **not** re-exported: `Case`, `LoadCorpus`, `CorpusDir`, `CorpusDirFrom`, `Filter`, the `Group*` constants and `GuardFallClasses` live in the test-only `internal/corpus` package — testing aids, not part of the embedding surface (in-module tests, including the external `engine_test` benchmark, reach them there).
 
@@ -260,7 +269,7 @@ The corpus harness is deliberately **not** re-exported: `Case`, `LoadCorpus`, `C
 - **Add a dialect**: add a `Lang` constant (and to `Langs`), extend `ParseLang`'s switch with its canonical name + aliases, add a `case` in `(*Analyzer).AnalyzeWith`, and implement `<lang>Analyze` producing a normalized report.
 - **Add a corpus group**: add a `Group*` constant, accept it in `Case.validate`'s group switch, and add the matching conformance test using `Filter`.
 - **Add corpus cases**: drop a new `*.json` document (`{name, description, cases[]}`) into `testdata/corpus`; `LoadCorpus` picks it up automatically. GuardFall cases must carry a valid `Category` (`A`–`E`); non-GuardFall cases must not.
-- **Add a report field**: extend `Report` with a JSON tag and, if it affects validity, `Report.Validate`. Consumers pin to `schemaVersion`, so additive fields are the safe path — but a new `Report` field is a change to the CLI envelope, so bump `ToolVersion` (the starting `flowsh/v1` contract already carries `why`, `resolution` and `destructive`) and update [Report Contract](../contracts/report-json.md).
+- **Add a report field**: extend `Report` with a JSON tag and, if it affects validity, `Report.Validate`. Consumers pin to `schemaVersion`, so additive fields are the safe path — but a new `Report` field is a change to the CLI envelope, so bump `ToolVersion` (v1 carried `why`, `resolution` and `destructive`; v2 added `commandCalls` and `canonical`) and update [Report Contract](../contracts/report-json.md).
 - **Rebind the knowledge base**: swap `NewAnalyzer`'s `bind.NewDefault()` for another binder; the rest of the pipeline is unchanged.
 
 ## Related Specs

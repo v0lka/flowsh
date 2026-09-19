@@ -44,6 +44,16 @@ type Var struct {
 	// arithmetic, which is not evaluated, so they must not be trusted as
 	// literal strings.
 	Int bool `json:"int,omitempty"`
+	// Numeric records the numeric class: the value is an unknown but bounded
+	// integer (an exit status, a pid, a line number, …) or a join of such
+	// integers. The exact digits stay unknowable, so a word reading the
+	// variable is still dynamic — but its expansion can only ever be digits,
+	// which cannot introduce a path separator, a ".." segment or any other
+	// path-structural byte. The interpreter uses that invariant to confine a
+	// path-shaped word such as out-$?.log to its literal directory instead of
+	// degrading the target to ⊤ (see numericConfinedDir). An assignment
+	// replaces the value wholesale and clears the class.
+	Numeric bool `json:"numeric,omitempty"`
 }
 
 // State is Σ. The zero value is not usable; build one with NewState.
@@ -70,11 +80,34 @@ var defaultVars = map[string]string{
 // defaultUmask is the file-creation mask assumed unless the program sets one.
 const defaultUmask = "0022"
 
+// numericVars are the shell's status and identity parameters whose values are
+// integers bounded by construction: an exit status ($?, ${PIPESTATUS[*]}) is
+// 0–255, and the pid/uid/line-number family is likewise a plain integer. The
+// analysis never knows the exact digits, so the variables are seeded as
+// set-but-unknown with the Numeric class: reads stay dynamic, but a
+// path-shaped word containing them is confined to its literal directory
+// (numericConfinedDir) instead of degrading to ⊤. Assignment replaces the
+// value and clears the class; the readonly names cannot be assigned at all,
+// matching bash.
+var numericVars = map[string]bool{
+	"?":          true, // last exit status (readonly)
+	"PIPESTATUS": true, // per-pipeline-stage exit statuses (readonly)
+	"#":          true, // positional parameter count
+	"!":          true, // pid of the last background job
+	"RANDOM":     true, // 0–32767 pseudo-random (assignable, then ordinary)
+	"LINENO":     true, // current line number
+	"SECONDS":    true, // seconds since shell start
+	"UID":        true, // real uid (readonly)
+	"EUID":       true, // effective uid (readonly)
+	"PPID":       true, // parent pid (readonly)
+	"BASHPID":    true, // current bash process id
+}
+
 // NewState returns the initial abstract state: the well-known defaults, an empty
 // function table and an empty alias table.
 func NewState() *State {
 	s := &State{
-		Vars:    make(map[string]*Var, len(defaultVars)),
+		Vars:    make(map[string]*Var, len(defaultVars)+len(numericVars)),
 		PWD:     defaultVars["PWD"],
 		Umask:   defaultUmask,
 		Funcs:   map[string]*Func{},
@@ -82,6 +115,10 @@ func NewState() *State {
 	}
 	for k, v := range defaultVars {
 		s.Vars[k] = &Var{Value: v, Set: true, Known: true, Taint: engine.TaintBottom()}
+	}
+	for name := range numericVars {
+		readonly := name == "?" || name == "PIPESTATUS" || name == "UID" || name == "EUID" || name == "PPID"
+		s.Vars[name] = &Var{Set: true, Known: false, Numeric: true, Readonly: readonly, Taint: engine.TaintBottom()}
 	}
 	return s
 }
@@ -142,7 +179,7 @@ func (s *State) SetKnown(name, value string, taint engine.Taint) {
 	if v.Readonly {
 		return
 	}
-	v.Value, v.Set, v.Known, v.Taint = value, true, true, taint
+	v.Value, v.Set, v.Known, v.Taint, v.Numeric = value, true, true, taint, false
 }
 
 // SetUnknown assigns a value whose content is not statically known: reads of it
@@ -159,7 +196,7 @@ func (s *State) SetUnknown(name string, taint engine.Taint) {
 	if v.Readonly {
 		return
 	}
-	v.Value, v.Set, v.Known, v.Taint = "", true, false, taint
+	v.Value, v.Set, v.Known, v.Taint, v.Numeric = "", true, false, taint, false
 }
 
 // MarkInteger records that name carries the integer attribute (declare -i).
@@ -272,7 +309,7 @@ func joinStates(a, b *State) *State {
 		case av == nil || bv == nil:
 			delete(out.Vars, n) // defined on only one path → not surely set
 		case !av.Set || !bv.Set || !av.Known || !bv.Known || av.Value != bv.Value:
-			out.Vars[n] = &Var{Set: true, Known: false, Taint: av.Taint.Join(bv.Taint)}
+			out.Vars[n] = &Var{Set: true, Known: false, Numeric: av.Numeric && bv.Numeric, Taint: av.Taint.Join(bv.Taint)}
 		default:
 			out.Vars[n] = &Var{Set: true, Known: true, Value: av.Value,
 				Taint: av.Taint.Join(bv.Taint), Export: av.Export, Readonly: av.Readonly}
@@ -647,6 +684,172 @@ func (it *interp) arithKnown(p *syntax.ArithmExp) bool {
 		ok = err == nil
 	}()
 	return ok
+}
+
+// ===========================================================================
+// Numeric-class expansions
+// ===========================================================================
+//
+// A numeric-class expansion is one whose every possible value is a plain
+// integer (a bounded status, pid, count or arithmetic result): it can vary the
+// digits of a word but never its path structure. A word whose dynamic parts are
+// all numeric-class is therefore confined to the directory named by its literal
+// prefix — `out-$?.log` stays in the working directory, `/tmp/x-$?.log` stays
+// in /tmp — which is strictly more precise than the ⊤ target a fully dynamic
+// word degrades to, and just as sound: digits cannot introduce "/", ".." or an
+// absolute prefix.
+
+// numericParam reports whether the parameter expansion p is numeric-class: it
+// reads a numeric-class variable, takes a length (${#x}), or evaluates to
+// digits. Operators that could splice non-numeric text into the value (an
+// alternate word or a replacement carrying a path separator) disqualify it.
+func (it *interp) numericParam(p *syntax.ParamExp) bool {
+	if p == nil || p.Param == nil {
+		return false
+	}
+	// ${!x} is indirection: the value is another variable's NAME, which is not
+	// bounded to digits.
+	if p.Excl {
+		return false
+	}
+	// ${#x} is a length: always a non-negative integer.
+	if p.Length {
+		return true
+	}
+	v := it.state.Get(p.Param.Value)
+	if v == nil || !v.Set || !v.Numeric {
+		return false
+	}
+	// The value itself is numeric; an operator may still substitute its own
+	// word. An alternate/replacement that carries a path separator could move
+	// the expansion out of the confined directory, so it disqualifies. A
+	// dynamic alternate (empty literal text) whose variable is itself set does
+	// not fire at all, and one that would fire is rejected conservatively only
+	// when its literal text names a path.
+	if p.Exp != nil && p.Exp.Word != nil && strings.Contains(wordLiteralText(p.Exp.Word), "/") {
+		return false
+	}
+	if p.Repl != nil && p.Repl.With != nil && strings.Contains(wordLiteralText(p.Repl.With), "/") {
+		return false
+	}
+	return true
+}
+
+// knownParamText returns the exact value a bare parameter read resolves to when
+// the variable holds a statically-known value — the same text a literal written
+// in its place would contribute. Anything but a plain read (an operator, an
+// index, indirection, a declared-integer variable whose assignments are
+// arithmetic) reports false: its value is not the stored string.
+func (it *interp) knownParamText(p *syntax.ParamExp) (string, bool) {
+	if p == nil || p.Param == nil || p.Excl || p.Length || p.Exp != nil || p.Index != nil || p.Slice != nil || p.Repl != nil {
+		return "", false
+	}
+	v := it.state.Get(p.Param.Value)
+	if v == nil || !v.Set || !v.Known || v.Int {
+		return "", false
+	}
+	return v.Value, true
+}
+
+// numericConfinedDir reports the directory every expansion of w is confined to
+// when each of w's dynamic parts is numeric-class, and false when w has any
+// non-numeric dynamic part (an unknown variable, a command or process
+// substitution, a glob extension, …) or its literal text contains a ".." path
+// segment, either of which could escape the directory.
+//
+// The directory is the literal text preceding the FIRST numeric part truncated
+// at its last separator: digits may only lengthen the final component written
+// so far, and every component after the prefix is checked free of ".." so no
+// expansion can climb out of the directory it lands in.
+func (it *interp) numericConfinedDir(w *syntax.Word) (string, bool) {
+	if w == nil {
+		return "", false
+	}
+	var (
+		prefix     strings.Builder // literal text before the first numeric part
+		full       strings.Builder // all literal text, for the ".." check
+		sawNumeric bool
+	)
+	// walk folds one run of word parts; it returns false as soon as a
+	// non-numeric dynamic part disqualifies the word.
+	var walk func(parts []syntax.WordPart, quoted bool) bool
+	walk = func(parts []syntax.WordPart, quoted bool) bool {
+		for _, p := range parts {
+			switch p := p.(type) {
+			case *syntax.Lit:
+				full.WriteString(p.Value)
+				if !sawNumeric {
+					prefix.WriteString(p.Value)
+				}
+			case *syntax.SglQuoted:
+				full.WriteString(p.Value)
+				if !sawNumeric {
+					prefix.WriteString(p.Value)
+				}
+			case *syntax.DblQuoted:
+				if !walk(p.Parts, true) {
+					return false
+				}
+			case *syntax.ParamExp:
+				if it.numericParam(p) {
+					sawNumeric = true
+					continue
+				}
+				// A plain read of a statically-known variable (a host binding,
+				// a literal in-script assignment, a literal for-loop item)
+				// contributes its exact value: it is as literal as the text
+				// around it. Only bare reads fold — an operator would change
+				// the value.
+				if s, ok := it.knownParamText(p); ok {
+					full.WriteString(s)
+					if !sawNumeric {
+						prefix.WriteString(s)
+					}
+					continue
+				}
+				return false
+			case *syntax.ArithmExp:
+				if !it.arithKnown(p) {
+					return false
+				}
+				sawNumeric = true
+			default:
+				return false
+			}
+		}
+		return true
+	}
+	if !walk(w.Parts, false) || !sawNumeric {
+		return "", false
+	}
+	if hasDotDotSegment(full.String()) {
+		return "", false
+	}
+	return dirPrefix(prefix.String()), true
+}
+
+// dirPrefix truncates a literal path prefix at its last separator, yielding the
+// deepest directory that certainly contains it: "a/b/c" → "a/b", "/x" → "/",
+// "name" → "." (the working directory).
+func dirPrefix(s string) string {
+	if i := strings.LastIndexByte(s, '/'); i > 0 {
+		return s[:i]
+	} else if i == 0 {
+		return "/"
+	}
+	return "."
+}
+
+// hasDotDotSegment reports whether the path s contains a ".." component: such a
+// component climbs out of the directory that would otherwise confine the word,
+// so a word whose literal text has one is never treated as confined.
+func hasDotDotSegment(s string) bool {
+	for _, seg := range strings.Split(s, "/") {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // ===========================================================================

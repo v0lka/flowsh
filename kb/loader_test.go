@@ -952,3 +952,63 @@ func TestEmbeddedSelfParams(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// NetEgress dialect inventory
+// ---------------------------------------------------------------------------
+
+// egressDialects maps every dialect whose commands carry NetEgress parameters
+// to the egress-target grammar tier the binder applies to it (see
+// bind.lenientHostDialect and engine.HostShaped). The inventory is pinned so
+// that adding NetEgress parameters to a command of a NEW dialect — or moving a
+// network command into a new dialect — is a conscious decision reviewed here,
+// not a silent default onto the strict tier.
+var egressDialects = map[Dialect]string{
+	DialectCurl:      "lenient", // destination positionals (URL)
+	DialectWget:      "lenient", // destination positionals (URL)
+	DialectNetcat:    "lenient", // destination positionals (HOST/PORT)
+	DialectOpenSSH:   "lenient", // destination positionals (HOST)
+	DialectNetTools:  "lenient", // destination positionals (dig/ping/telnet/…)
+	DialectRsync:     "lenient", // destination positionals (remote specs)
+	DialectUtilLinux: "lenient", // logger -n/--server names the syslog server
+	DialectGit:       "strict",  // operands are subcommands/refs/pathspecs first
+	DialectVCS:       "strict",  // ditto for svn/hg/bzr/fossil/darcs
+	DialectPkgmgr:    "strict",  // operands are packages/subcommands
+	DialectSystemd:   "strict",  // -H/--host flag values
+	DialectSecurity:  "strict",  // gpg key servers
+}
+
+// TestNetEgressDialectInventory pins that every KB command declaring a
+// NetEgress parameter belongs to a dialect recorded in egressDialects, and
+// reports the tier the binder will apply. A new dialect in this set must be
+// mirrored by bind.lenientHostDialect (lenient tier) or reviewed for the
+// strict tier.
+func TestNetEgressDialectInventory(t *testing.T) {
+	k := mustLoad(t)
+
+	seen := map[Dialect]bool{}
+	for i := range k.Commands {
+		c := &k.Commands[i]
+		hasEgress := false
+		for _, p := range c.Params {
+			if p.Effect.Kind == engine.KindNetEgress {
+				hasEgress = true
+				break
+			}
+		}
+		if !hasEgress {
+			continue
+		}
+		seen[c.Dialect] = true
+		if _, ok := egressDialects[c.Dialect]; !ok {
+			t.Errorf("%s: dialect %q carries NetEgress parameters but is not in the egress inventory — decide its tier (see bind.lenientHostDialect)", c.Name, c.Dialect)
+		}
+	}
+	// Every recorded dialect must actually be in use, so the inventory cannot
+	// rot with stale entries.
+	for d, tier := range egressDialects {
+		if !seen[d] {
+			t.Errorf("egress inventory lists dialect %q (%s tier), but no KB command of that dialect declares NetEgress parameters", d, tier)
+		}
+	}
+}

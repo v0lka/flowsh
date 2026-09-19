@@ -14,7 +14,7 @@
 //   - SchemaVersion (SchemaVersion, "effect-ir/v1") tags the effect IR and the
 //     report's effect schema; it is bumped only when the shape of an effect
 //     changes.
-//   - ToolVersion (ToolVersion, "flowsh/v1") tags the report contract as a
+//   - ToolVersion (ToolVersion, "flowsh/v2") tags the report contract as a
 //     whole; it is bumped when the emitted document gains, loses or changes a
 //     field.
 //
@@ -41,6 +41,24 @@ type Report = analysis.Report
 // analysis.DestructiveFinding.
 type DestructiveFinding = analysis.DestructiveFinding
 
+// CommandCall is one command invocation as the report surfaces it for
+// effect-based comparison: the invoked name, the normalized binary it resolves
+// to (basename, node_modules/.bin stripped, package runners consumed), its
+// argument values and its statement's resolved redirections. It is an alias of
+// analysis.CommandCall.
+type CommandCall = analysis.CommandCall
+
+// CallRedirect is one resolved redirection of a command's statement. It is an
+// alias of analysis.CallRedirect.
+type CallRedirect = analysis.CallRedirect
+
+// Canonical is the effect-based canonical form of the analysed program: the
+// normalized effect set plus the deterministic key a consumer can compare
+// across invocations that differ in form but not in effect (a staged temp write
+// folded onto its mv destination, non-path operand targets dropped). It is an
+// alias of analysis.Canonical.
+type Canonical = analysis.Canonical
+
 // Analyzer holds reusable analysis state (the loaded command knowledge base) so
 // that analysing many commands does not pay the KB load on every call. It is
 // safe for concurrent use. It is an alias of analysis.Analyzer.
@@ -55,7 +73,7 @@ const (
 	ToolName = analysis.ToolName
 	// SchemaVersion tags the report's effect schema ("effect-ir/v1").
 	SchemaVersion = analysis.SchemaVersion
-	// ToolVersion is the semantic version of the report contract ("flowsh/v1").
+	// ToolVersion is the semantic version of the report contract ("flowsh/v2").
 	ToolVersion = analysis.ToolVersion
 
 	// RootArgument and RootStdin are the source-name markers stamped into

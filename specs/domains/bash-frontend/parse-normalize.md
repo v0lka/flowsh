@@ -55,7 +55,7 @@ Statement-level flags (`Negated`, `Background`, `Coprocess`) and `Redirs` are ca
 
 ### Word parts
 
-A `Word` records `Value`/`Literal` when the whole word is fully literal, plus its structural `Parts` (each with a `PartKind`): `lit`, `sglQuoted`, `dblQuoted` (with inner `Parts`), `paramExp` (with `Param`/`Op`), `cmdSubst`/`procSubst` (with their `Stmts`), `arithmExp`, `extGlob`, `unknown`. `Word.Taint` is analysis metadata attached later by abstract execution and is not serialized.
+A `Word` records `Value`/`Literal` when the whole word is fully literal, plus its structural `Parts` (each with a `PartKind`): `lit`, `sglQuoted`, `dblQuoted` (with inner `Parts`), `paramExp` (with `Param`/`Op`), `cmdSubst`/`procSubst` (with their `Stmts`), `arithmExp`, `extGlob`, `unknown`. `Word.Taint` and `Word.Dir` (the numeric-class confinement of a dynamic word, set by abstract execution) are analysis metadata attached later and are not serialized.
 
 ### Wrapper unwrapping (`wrapperSpecs` / `unwrap`)
 

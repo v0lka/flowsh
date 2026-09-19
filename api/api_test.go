@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/v0lka/flowsh/api"
+	"github.com/v0lka/flowsh/engine"
 )
 
 // probe is one effect-producing invocation per dialect. Every source was chosen
@@ -59,8 +60,8 @@ func TestExportedSurfaceAnalyze(t *testing.T) {
 			if rep.ToolVersion != api.ToolVersion {
 				t.Errorf("ToolVersion = %q, want api.ToolVersion %q", rep.ToolVersion, api.ToolVersion)
 			}
-			if rep.ToolVersion != "flowsh/v1" {
-				t.Errorf("ToolVersion = %q, want %q", rep.ToolVersion, "flowsh/v1")
+			if rep.ToolVersion != "flowsh/v2" {
+				t.Errorf("ToolVersion = %q, want %q", rep.ToolVersion, "flowsh/v2")
 			}
 			if rep.SchemaVersion != api.SchemaVersion {
 				t.Errorf("SchemaVersion = %q, want api.SchemaVersion %q", rep.SchemaVersion, api.SchemaVersion)
@@ -204,6 +205,46 @@ func TestExportedAnalyzeWithOptions(t *testing.T) {
 	}
 }
 
+// TestExportedAnalyzeWithOptionsVars drives the host-table option through the
+// public embedding surface: Options.Vars seeds host-known bindings (a session
+// temp directory) that resolve later $name reads, turning an unresolved ⊤
+// redirect target into the concrete session-root path. Without the table the
+// same input keeps ⊤ — the option resolves, it never loosens.
+func TestExportedAnalyzeWithOptionsVars(t *testing.T) {
+	const sessTemp = "/sess/ebefdbe1-54b0-46eb-9b2b-3564ab1c928f/temp"
+	const src = `git diff main...HEAD -- core/tools/registry.go > $D/registry.diff`
+
+	bound, err := api.AnalyzeWith(api.LangBash, src, api.Options{Vars: map[string]string{"D": sessTemp}})
+	if err != nil {
+		t.Fatalf("AnalyzeWith(Vars): %v", err)
+	}
+	if bound.Top || bound.Conservative {
+		t.Fatalf("host-bound input must stay bounded: top=%v conservative=%v", bound.Top, bound.Conservative)
+	}
+	found := false
+	for _, e := range bound.Effects {
+		if e.Kind != engine.KindFSWrite {
+			continue
+		}
+		if targets := e.Target.Targets(); len(targets) == 1 && targets[0] == sessTemp+"/registry.diff" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("Vars-bound redirect must write %s/registry.diff", sessTemp)
+	}
+
+	plain, err := api.Analyze(api.LangBash, src)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	for _, e := range plain.Effects {
+		if e.Kind == engine.KindFSWrite && !e.Target.IsTop() {
+			t.Errorf("unbound $D must leave the write target ⊤, got %v", e.Target)
+		}
+	}
+}
+
 // TestAnalyzeConcurrentMatchesSequential is the load-bearing test for the race
 // step: many goroutines call api.Analyze (which reaches the process-wide
 // sync.OnceValues analyser singleton) concurrently, and every result must be a
@@ -262,8 +303,8 @@ func TestAnalyzeConcurrentMatchesSequential(t *testing.T) {
 		if len(rep.Effects) == 0 {
 			t.Fatalf("sequential Analyze(%s, %q): no effects (want >= 1)", p.lang, p.src)
 		}
-		if rep.ToolVersion != "flowsh/v1" {
-			t.Fatalf("sequential Analyze(%s, %q): ToolVersion = %q, want flowsh/v1", p.lang, p.src, rep.ToolVersion)
+		if rep.ToolVersion != "flowsh/v2" {
+			t.Fatalf("sequential Analyze(%s, %q): ToolVersion = %q, want flowsh/v2", p.lang, p.src, rep.ToolVersion)
 		}
 		data, err := rep.Encode()
 		if err != nil {

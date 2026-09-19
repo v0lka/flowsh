@@ -22,9 +22,13 @@ const (
 
 // Arg is one normalized argument word. Literal is true when the word's text is
 // fully known at analysis time; Taint is its provenance and is not serialized.
+// Dir names the directory a non-literal word is provably confined to (every
+// dynamic part numeric-class); such an operand lowers that directory as its
+// target instead of ⊤. Analysis metadata, not serialized.
 type Arg struct {
 	Value   string       `json:"value"`
 	Literal bool         `json:"literal"`
+	Dir     string       `json:"-"`
 	Taint   engine.Taint `json:"-"`
 	// Pos is the source position of the word this argument was lowered from,
 	// when the frontend knows it; it rides on the why-trace atoms so an effect
@@ -146,12 +150,23 @@ Name resolution and effect binding are reported independently: `Resolution` answ
 - `--` ends option parsing (everything after it is an operand); a lone `-` is an operand.
 - `--name` (long): `--name=value` binds the value inline; `--name value` consumes the next word for an option; a flag matches with no value. An unknown long name is recorded as unrecognized.
 - `-x` (short): the token is **first tried whole** (so `find -delete`, `tar -C`, `curl -o` match as options); only if it is not a declared spec is it split into a **cluster** of short flags (`-rf` → `-r`, `-f`). Inside a cluster, an option consumes the rest of the cluster as its value, else the next word.
-- A non-literal word is conservatively an operand with an unknown value (its targets then go to ⊤).
+- A non-literal word is conservatively an operand with an unknown value (its targets then go to ⊤) — unless the frontend marked it numeric-confined (`Arg.Dir`: every dynamic part is a bounded-integer expansion), in which case `argsScope` lowers the confining directory as the target.
 - Positional parameters map to declared `param` specs in order; the **last** positional parameter absorbs every remaining operand.
 
 ### `@file` convention (`lowerParam` / `fileRefPath`)
 
 For a parameter marked `fileRef` whose value uses `@file`, `@path` names a file whose *content* the command consumes, and `@-` names standard input. `name=@path` (curl's multipart syntax) is accepted too. The binder then contributes the filesystem read of the named file (unless it came from stdin), joins the payload's provenance (including `secret` when `engine.SecretPath` matches) into the parameter's own effect taint. The value is a payload *reference*, not a destination, so the declared effect keeps the payload's provenance but is lowered with an empty target scope (⊥): it does not reuse the file spec as its target.
+
+### Egress target gate (`lowerParam` / `engine.HostShaped`)
+
+A `NetEgress` effect may only carry a target that passes the host/URL grammar (`engine.HostShaped`, `engine.FilterEgressTargets`): a scheme-prefixed URL, an IPv4/IPv6 literal (including the `0x7f000001` hex and `2130706433` decimal obfuscations), an scp-style `[user@]host:path` remote over a host-shaped host, or a dotted DNS name optionally with `:port`. The gate runs in `lowerParam` on every parameter whose effect kind is `NetEgress`, at both target-consuming lowering sites (a plain parameter, and a `fileRef` parameter whose value does *not* use `@file`); a `fileRef` parameter that does use `@file` is exempt — its declared effect is the payload egress with a ⊥ target.
+
+- A **literal** target that names no address (a git subcommand, a SHA, a ref, a pathspec — the words the index-order positional fallback used to force-fit onto `clone`/`fetch`/`pull`/`push` network positionals) is dropped from the target set; when nothing host-shaped remains, **the effect is not created at all**. A command whose every parameter effect is so dropped falls back to its intrinsic `ProcSpawn` (never an empty, benign report).
+- An **unresolved** target (⊤ — the operand came from a dynamic word, `$URL`) passes through unchanged: it is the *unresolved egress* and keeps participating in the network controls. The safe side is never weakened.
+- A ⊥ target (payload-only egress) also passes through unchanged.
+- **Leniency tier**: a command of a *network-client dialect* (`curl`, `wget`, `netcat`, `openssh`, `net-tools`, `rsync`, and `util-linux` for `logger -n`) has destination positionals by construction, so its bare single-label host names (`nc evil 4444`, `ssh bastion`) are accepted via `engine.HostShapedLenient`. Every other dialect (git, VCS, package managers, systemd, gpg) is strict: its operands are subcommands/refs/pathspecs first. The dialect inventory is pinned by `kb`'s `TestNetEgressDialectInventory`.
+
+The same gate applies at the two frontend-side egress creation points: the bash `/dev/tcp|/dev/udp` redirection (`redirectTarget` — the construct declares the destination, so the lenient grammar is used and a known-but-unaddressable token widens to ⊤ instead of being dropped) and the PowerShell cmdlet specs with `TargetURL`/`TargetName` targets (a `$variable` target is unresolved → ⊤; a non-host-shaped literal creates no egress).
 
 ### Taint egress (`taintEgress`)
 
@@ -168,6 +183,7 @@ For a parameter marked `fileRef` whose value uses `@file`, `@path` names a file 
 - `Result.Conservative` is true exactly when the outcome includes a ⊤ (`CodeExec`) effect.
 - A matched destructive-flags entry folds its class severity into `Result.Destructiveness` with `Join` (max), so a destructive class raises the binder result's destructiveness even when the matched parameter's own effects are mild.
 - Unrecognized flag names are surfaced as a note, not dropped silently.
+- A `NetEgress` effect's target is host-shaped or ⊤/⊥ (see the egress target gate above); a literal non-host-shaped operand never becomes egress evidence. `engine.IsEgressSink` is kind-strict — an exfiltration *sink* is a tainted `NetEgress`, never a filesystem write, so a local file redirect (`git diff > $D/x.diff`) cannot fabricate an exfil pair.
 
 ## Configuration
 

@@ -6,8 +6,8 @@ This component is the frontend's transfer-function engine: it walks the parsed s
 
 ## Key Files
 
-- `front/bash/exec.go` — the interpreter: `Resolver`, `ExecResult`, bounds, `interp`, `Exec`/`ExecBash`, statement/command execution, pipelines, control flow, redirections, substitution capture, dispatch, and the ⊤/budget machinery.
-- `front/bash/expand.go` — Σ (`State`, `Var`, `NewState`, `Clone`, `joinStates`), the expansion configuration (`newCfg`), word expansion (`expandFields`/`expandLiteral`), static knownness (`wordKnown`/`partKnown`/`paramKnown`/`arithKnown`) and taint (`wordTaint`/`partTaint`).
+- `front/bash/exec.go` — the interpreter: `Resolver`, `ExecResult`, bounds, `interp`, `Exec`/`ExecBash`/`ExecWithVars`, statement/command execution, pipelines, control flow, redirections, substitution capture, dispatch, and the ⊤/budget machinery.
+- `front/bash/expand.go` — Σ (`State`, `Var`, `NewState`, `Clone`, `joinStates`), the expansion configuration (`newCfg`), word expansion (`expandFields`/`expandLiteral`), static knownness (`wordKnown`/`partKnown`/`paramKnown`/`arithKnown`), the numeric-class predicates (`numericParam`/`knownParamText`/`numericConfinedDir`) and taint (`wordTaint`/`partTaint`).
 - `front/bash/builtins.go` — the sink set, code-executing/shell-only builtins, stdout folding (`stdoutOf`, `echoOut`, `printfOut`, `base64Out`) and builtin state transfer (`builtinState`).
 
 ## Behavior
@@ -72,7 +72,7 @@ The right-hand side runs only when the left-hand side's exit status makes it rea
 
 ### Redirections (`redir` / `redirectTarget`)
 
-- Output (`>`, `>>`, `>|`, `&>`, `&>>`) ⇒ `FSWrite` of the target (⊤ when the target is unknown); input (`<`) ⇒ `FSRead`, and the file's provenance is joined into the statement's stdin taint so an egress fed only by the redirection is still seen to carry the data out.
+- Output (`>`, `>>`, `>|`, `&>`, `&>>`) ⇒ `FSWrite` of the target; input (`<`) ⇒ `FSRead`, and the file's provenance is joined into the statement's stdin taint so an egress fed only by the redirection is still seen to carry the data out. An unknown target is ⊤ — unless the word is numeric-confined (below), in which case the effect targets the word's literal directory.
 - In/out (`<>`) emits both read and write.
 - Dup (`>&`, `<&`) and heredocs (`<<`, `<<-`, `<<<`) ⇒ `Stdio` (with a `Stdio` effect for the here-string).
 - `/dev/tcp/HOST/PORT` and `/dev/udp/HOST/PORT` pseudo-files are recognised: reading ⇒ `NetIngress`, writing ⇒ `NetEgress` (scoped to `host:port` when known, else ⊤), plus an `IPC` ambient effect.
@@ -96,6 +96,16 @@ dispatch(name, nameOK, argv, cmd)
 ### Stdout folding and substitution (`stdoutOf`, `captureSubst`)
 
 A command substitution is statically known only when the command producing its stdout is. `stdoutOf` folds commands whose output is a pure function of their expanded arguments (and, for the deliberately simple `base64` case, of stdin): `echo`, a subset of `printf` (`%s`/`%d`/`%i`/`%%` and backslash escapes), the no-output commands (`true`, `sleep`, `export`, `read`, …), and `base64` encode/decode when its stdin is known. Everything else reports unknown, which keeps the analysis sound. Command substitutions run their body in a cloned Σ and record the folded stdout (and its knownness/taint) in `it.subst`; process substitutions are recorded as unknown/untrusted.
+
+### Numeric-class status parameters and word confinement
+
+Σ seeds the shell's status/identity parameters (`?`, `PIPESTATUS`, `#`, `!`, `RANDOM`, `LINENO`, `SECONDS`, `UID`, `EUID`, `PPID`, `BASHPID`) as set-but-unknown with the **numeric** class: the exact digits are unknowable, but every possible value is a bounded plain integer. `Var.Numeric` records the class; an assignment replaces the value and clears it (the readonly seeds reject assignment), and `joinStates` keeps it only when both branches agree.
+
+A word whose dynamic parts are all numeric-class (`$?`, `${PIPESTATUS[*]}`, `${#x}`, a decidable arithmetic expansion, and plain reads of statically-known variables folding their literal value) cannot change path structure — digits never form `/`, `..` or an absolute prefix. `numericConfinedDir` therefore lowers such a word (in a redirection target, a `[[ -e … ]]` operand, or a command operand reaching the binder through `Word.Dir`/`Arg.Dir` → `argsScope`) to its **literal directory** — the text before the first numeric part, truncated at the last separator — instead of ⊤. Two refusals keep it sound: any non-numeric dynamic part (an unknown variable, a command/process substitution, an operator supplying a `/`-bearing word) and any `..` segment in the literal text keep the historical ⊤. Resolution adds precision; it never loosens the degrade-to-⊤ default.
+
+### Host-seeded bindings (`ExecWithVars`)
+
+`ExecWithVars` runs `Exec` with the abstract state pre-seeded from a host-supplied `map[string]string`: bindings the embedding host knows from its own context (a session temp directory, a workspace root) that the script text alone does not determine. Each becomes a set, statically-known variable — exactly the state a literal in-script assignment produces — so later `$name` reads (and paths built from them) resolve concretely. Empty names and readonly collisions (the seeded status parameters) are skipped; an in-script assignment overrides a seed from the point it executes. A nil/empty table reproduces plain `Exec`.
 
 ### Taint
 

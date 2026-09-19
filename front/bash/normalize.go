@@ -146,6 +146,13 @@ type Command struct {
 	// analysis metadata produced by abstract execution and is deliberately not
 	// part of the serialized normalized AST.
 	StdinTaint engine.Taint `json:"-"`
+
+	// Redirs are the I/O redirections of the statement the command runs in, as
+	// the abstract interpreter resolved them (operator plus expanded target
+	// text). They are attached while the statement executes and feed the
+	// report's per-command view; they are deliberately not part of the
+	// serialized normalized AST.
+	Redirs []ExecRedirect `json:"-"`
 }
 
 // Wrapper is one command wrapper that normalization unwrapped (sudo, env,
@@ -179,6 +186,19 @@ type Redirect struct {
 	Hdoc *Word  `json:"hdoc,omitempty"`
 }
 
+// ExecRedirect is one redirection of the statement a command runs in, as the
+// abstract interpreter resolved it: the operator verbatim and the expanded
+// target text (a file path, an fd word for stream dupes, a host:port for the
+// /dev/tcp pseudo-file; empty for heredocs). Known reports whether the target
+// text is statically known — an unknown target is the expanded word's
+// placeholder, not a path the analysis can bound. It rides on Command.Redirs
+// for the report's per-command view and is not part of the serialized AST.
+type ExecRedirect struct {
+	Op     string
+	Target string
+	Known  bool
+}
+
 // Word is a shell word: its source position, the literal text when it is fully
 // literal, and the structural parts that make it up.
 type Word struct {
@@ -186,6 +206,14 @@ type Word struct {
 	Value   string `json:"value,omitempty"`
 	Literal bool   `json:"literal"`
 	Parts   []Part `json:"parts,omitempty"`
+
+	// Dir is the directory a non-literal word is confined to when every one of
+	// its dynamic parts is numeric-class (an exit status, a pid, a length: see
+	// the numeric-class section of expand.go). Empty for literal words and for
+	// dynamic words the analysis cannot bound, which stay ⊤. It is analysis
+	// metadata consumed by the binding layer and is deliberately not part of
+	// the serialized normalized AST.
+	Dir string `json:"-"`
 
 	// Taint is the provenance of the word's value, as computed by abstract
 	// execution (variable reads, command substitutions, …). It is analysis

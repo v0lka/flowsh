@@ -2,30 +2,201 @@
   "name": "benign-bash",
   "description": "Ordinary, non-adversarial commands. The precision control: none of these may be classified as top/conservative (no false top on ordinary input).",
   "cases": [
-    { "id": "ben-ls",       "group": "benign", "lang": "bash", "input": "ls",                 "note": "list the current directory" },
-    { "id": "ben-ls-la",    "group": "benign", "lang": "bash", "input": "ls -la",             "note": "long listing including hidden entries" },
-    { "id": "ben-cat",      "group": "benign", "lang": "bash", "input": "cat readme.txt",     "note": "read a file" },
-    { "id": "ben-echo",     "group": "benign", "lang": "bash", "input": "echo hello",         "note": "write to stdout" },
-    { "id": "ben-grep",     "group": "benign", "lang": "bash", "input": "grep -n foo file.txt", "note": "search a file" },
-    { "id": "ben-cp",       "group": "benign", "lang": "bash", "input": "cp a b",            "note": "copy a file" },
-    { "id": "ben-mkdir",    "group": "benign", "lang": "bash", "input": "mkdir newdir",      "note": "create a directory" },
-    { "id": "ben-sort",     "group": "benign", "lang": "bash", "input": "sort file.txt",     "note": "sort a file" },
-    { "id": "ben-pwd",      "group": "benign", "lang": "bash", "input": "pwd",               "note": "print the working directory" },
-    { "id": "ben-cat-redir","group": "benign", "lang": "bash", "input": "cat < in.txt",      "note": "read a file via a redirection" },
-
-    { "id": "ben-b1-type",      "group": "benign", "lang": "bash", "input": "type ls",                       "note": "B1 shell builtin: report how a name resolves" },
-    { "id": "ben-b1-shopt",     "group": "benign", "lang": "bash", "input": "shopt -s nullglob",             "note": "B1 shell builtin: toggle a shell option" },
-    { "id": "ben-b2-head",      "group": "benign", "lang": "bash", "input": "head -n 5 notes.txt",           "note": "B2 GNU coreutils: read the first lines of a file" },
-    { "id": "ben-b2-sha256sum", "group": "benign", "lang": "bash", "input": "sha256sum notes.txt",           "note": "B2 GNU coreutils: hash a file" },
-    { "id": "ben-b2-date",      "group": "benign", "lang": "bash", "input": "date",                          "note": "B2 GNU coreutils: print the current time" },
-    { "id": "ben-b3-pgrep",     "group": "benign", "lang": "bash", "input": "pgrep firefox",                 "note": "B3 procps: look up processes by name" },
-    { "id": "ben-b3-getfacl",   "group": "benign", "lang": "bash", "input": "getfacl notes.txt",             "note": "B3: read a file's access control list" },
-    { "id": "ben-b4-dig",       "group": "benign", "lang": "bash", "input": "dig example.com",               "note": "B4 network: resolve a DNS name" },
-    { "id": "ben-b4-ss",        "group": "benign", "lang": "bash", "input": "ss -tlnp",                      "note": "B4 network: list listening sockets" },
-    { "id": "ben-b5-gzip",      "group": "benign", "lang": "bash", "input": "gzip -k notes.txt",             "note": "B5 archive: compress a file, keeping the original" },
-    { "id": "ben-b5-gunzip",    "group": "benign", "lang": "bash", "input": "gunzip notes.txt.gz",           "note": "B5 archive: decompress a single archive" },
-    { "id": "ben-b6-diff",      "group": "benign", "lang": "bash", "input": "diff a.txt b.txt",              "note": "B6 build tooling: compare two files" },
-    { "id": "ben-b6-readelf",   "group": "benign", "lang": "bash", "input": "readelf -h binary",             "note": "B6 build tooling: inspect an ELF header" },
-    { "id": "ben-b9-git-clone", "group": "benign", "lang": "bash", "input": "git clone https://example.com/repo.git", "note": "B9 VCS: clone a repository" }
+    {
+      "id": "ben-ls",
+      "group": "benign",
+      "lang": "bash",
+      "input": "ls",
+      "note": "list the current directory"
+    },
+    {
+      "id": "ben-ls-la",
+      "group": "benign",
+      "lang": "bash",
+      "input": "ls -la",
+      "note": "long listing including hidden entries"
+    },
+    {
+      "id": "ben-cat",
+      "group": "benign",
+      "lang": "bash",
+      "input": "cat readme.txt",
+      "note": "read a file"
+    },
+    {
+      "id": "ben-echo",
+      "group": "benign",
+      "lang": "bash",
+      "input": "echo hello",
+      "note": "write to stdout"
+    },
+    {
+      "id": "ben-grep",
+      "group": "benign",
+      "lang": "bash",
+      "input": "grep -n foo file.txt",
+      "note": "search a file"
+    },
+    {
+      "id": "ben-cp",
+      "group": "benign",
+      "lang": "bash",
+      "input": "cp a b",
+      "note": "copy a file"
+    },
+    {
+      "id": "ben-mkdir",
+      "group": "benign",
+      "lang": "bash",
+      "input": "mkdir newdir",
+      "note": "create a directory"
+    },
+    {
+      "id": "ben-sort",
+      "group": "benign",
+      "lang": "bash",
+      "input": "sort file.txt",
+      "note": "sort a file"
+    },
+    {
+      "id": "ben-pwd",
+      "group": "benign",
+      "lang": "bash",
+      "input": "pwd",
+      "note": "print the working directory"
+    },
+    {
+      "id": "ben-cat-redir",
+      "group": "benign",
+      "lang": "bash",
+      "input": "cat < in.txt",
+      "note": "read a file via a redirection"
+    },
+    {
+      "id": "ben-b1-type",
+      "group": "benign",
+      "lang": "bash",
+      "input": "type ls",
+      "note": "B1 shell builtin: report how a name resolves"
+    },
+    {
+      "id": "ben-b1-shopt",
+      "group": "benign",
+      "lang": "bash",
+      "input": "shopt -s nullglob",
+      "note": "B1 shell builtin: toggle a shell option"
+    },
+    {
+      "id": "ben-b2-head",
+      "group": "benign",
+      "lang": "bash",
+      "input": "head -n 5 notes.txt",
+      "note": "B2 GNU coreutils: read the first lines of a file"
+    },
+    {
+      "id": "ben-b2-sha256sum",
+      "group": "benign",
+      "lang": "bash",
+      "input": "sha256sum notes.txt",
+      "note": "B2 GNU coreutils: hash a file"
+    },
+    {
+      "id": "ben-b2-date",
+      "group": "benign",
+      "lang": "bash",
+      "input": "date",
+      "note": "B2 GNU coreutils: print the current time"
+    },
+    {
+      "id": "ben-b3-pgrep",
+      "group": "benign",
+      "lang": "bash",
+      "input": "pgrep firefox",
+      "note": "B3 procps: look up processes by name"
+    },
+    {
+      "id": "ben-b3-getfacl",
+      "group": "benign",
+      "lang": "bash",
+      "input": "getfacl notes.txt",
+      "note": "B3: read a file's access control list"
+    },
+    {
+      "id": "ben-b4-dig",
+      "group": "benign",
+      "lang": "bash",
+      "input": "dig example.com",
+      "note": "B4 network: resolve a DNS name"
+    },
+    {
+      "id": "ben-b4-ss",
+      "group": "benign",
+      "lang": "bash",
+      "input": "ss -tlnp",
+      "note": "B4 network: list listening sockets"
+    },
+    {
+      "id": "ben-b5-gzip",
+      "group": "benign",
+      "lang": "bash",
+      "input": "gzip -k notes.txt",
+      "note": "B5 archive: compress a file, keeping the original"
+    },
+    {
+      "id": "ben-b5-gunzip",
+      "group": "benign",
+      "lang": "bash",
+      "input": "gunzip notes.txt.gz",
+      "note": "B5 archive: decompress a single archive"
+    },
+    {
+      "id": "ben-b6-diff",
+      "group": "benign",
+      "lang": "bash",
+      "input": "diff a.txt b.txt",
+      "note": "B6 build tooling: compare two files"
+    },
+    {
+      "id": "ben-b6-readelf",
+      "group": "benign",
+      "lang": "bash",
+      "input": "readelf -h binary",
+      "note": "B6 build tooling: inspect an ELF header"
+    },
+    {
+      "id": "ben-b9-git-clone",
+      "group": "benign",
+      "lang": "bash",
+      "input": "git clone https://example.com/repo.git",
+      "note": "B9 VCS: clone a repository"
+    },
+    {
+      "id": "ben-a-git-status",
+      "group": "benign",
+      "lang": "bash",
+      "input": "git status --porcelain=v1 | sort | uniq -c",
+      "note": "audit track A: read-only git pipeline; subcommand names are not egress targets (phantom NetEgress regression)"
+    },
+    {
+      "id": "ben-a-git-diff-redirect",
+      "group": "benign",
+      "lang": "bash",
+      "input": "git diff main...HEAD -- core/tools/registry.go > /tmp/x.diff",
+      "note": "audit track A: diff to a local file; refs/pathspecs are not egress targets and a file redirect is not a sink"
+    },
+    {
+      "id": "ben-a-git-show-refspec",
+      "group": "benign",
+      "lang": "bash",
+      "input": "git show main:backend/config/defaults.go | head -40",
+      "note": "audit track A: git object spec (ref:path) is not a host"
+    },
+    {
+      "id": "ben-a-git-log-pathspec",
+      "group": "benign",
+      "lang": "bash",
+      "input": "git log --oneline --all -- code-review.md | head",
+      "note": "audit track A: dotted pathspec is a filename, not a dotted DNS name"
+    }
   ]
 }

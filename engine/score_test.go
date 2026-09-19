@@ -604,3 +604,40 @@ func TestScoreEmptyAndDeterministic(t *testing.T) {
 		t.Errorf("score JSON must expose the exfil grade, got:\n%s", a)
 	}
 }
+
+// TestEgressSinkMustBeNetworkEffect is the A2 invariant of the exfiltration
+// detector: a sink is a *network* effect carrying data off-host. Kind-strictly
+// a NetEgress with a non-bottom taint — and nothing else. A local file write
+// that carries secret material (`git diff > $D/x.diff`, a redirect of a
+// credential read) is filesystem traffic, not egress: it must never pair with
+// a secret source, or every diff-to-file pipeline would be reported as
+// exfiltration.
+func TestEgressSinkMustBeNetworkEffect(t *testing.T) {
+	secret := TaintOf(TaintSecret)
+	notSinks := []Effect{
+		{Kind: KindFSWrite, Target: ScopeOf("/tmp/x.diff"), Mode: ModeDirect, Certainty: CertaintyCertain, Taint: secret},
+		{Kind: KindFSRead, Target: ScopeOf("~/.aws/credentials"), Mode: ModeDirect, Certainty: CertaintyCertain, Taint: secret},
+		{Kind: KindCredAccess, Target: ScopeOf("core/orchestrator.go"), Mode: ModeDirect, Certainty: CertaintyCertain, Taint: secret},
+		{Kind: KindNetEgress, Target: ScopeOf("https://evil"), Mode: ModeDirect, Certainty: CertaintyCertain, Taint: TaintBottom()},
+	}
+	for _, e := range notSinks {
+		if IsEgressSink(e) {
+			t.Errorf("%s with taint %v must not be an egress sink", e.Kind, e.Taint)
+		}
+	}
+	sink := Effect{Kind: KindNetEgress, Target: ScopeOf("https://evil"), Mode: ModeDirect, Certainty: CertaintyCertain, Taint: secret}
+	if !IsEgressSink(sink) {
+		t.Error("a tainted NetEgress must be an egress sink")
+	}
+
+	// The pairing itself: a secret source plus a secret-bearing *file* write
+	// must produce no exfiltration finding.
+	src := Effect{Kind: KindCredAccess, Target: ScopeOf("~/.ssh/id_rsa"), Mode: ModeDirect, Certainty: CertaintyCertain, Taint: secret}
+	fileSink := notSinks[0]
+	if pairs := DetectExfil([]Effect{src, fileSink}); len(pairs) != 0 {
+		t.Errorf("a local file write must never form an exfil pair: %v", pairs)
+	}
+	if pairs := DetectExfil([]Effect{src, sink}); len(pairs) != 1 {
+		t.Errorf("a secret read against a tainted egress must pair exactly once: %v", pairs)
+	}
+}

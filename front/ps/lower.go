@@ -360,7 +360,28 @@ func (l *lowerer) emitOne(c *Command, cmd string, sp Spec, target string, cred b
 		return
 	}
 
-	e := effectOf(sp.Kind, scopeOf(target), sp.Mode, sp.Reversible)
+	// Egress target gate: a NetEgress target must pass the host/URL grammar.
+	// A target that references a variable or an expression is unresolved: the
+	// egress stays, widened to ⊤ (the unresolved egress keeps participating in
+	// the network controls). A literal that names no network address creates
+	// no egress effect at all. Destination parameters (-Uri, -ComputerName)
+	// name hosts by declaration, so the lenient grammar accepts single-label
+	// computer names.
+	scope := scopeOf(target)
+	if sp.Kind == engine.KindNetEgress {
+		switch {
+		case target == "":
+			// No target text (TargetNone/TargetSelf specs): the effect keeps
+			// the ⊥ target it always had.
+		case strings.Contains(target, "$"):
+			scope = engine.ScopeTop()
+		case engine.HostShapedLenient(target):
+		default:
+			l.note("%s: %s %s names no network address → no egress", cmd, sp.Op, quoteTarget(target))
+			return
+		}
+	}
+	e := effectOf(sp.Kind, scope, sp.Mode, sp.Reversible)
 	l.emitEff(e, withSink(base, e)...)
 	l.note("%s: %s %s → %s", cmd, sp.Op, quoteTarget(target), sp.Kind)
 	if cred {

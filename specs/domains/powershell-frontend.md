@@ -215,7 +215,7 @@ A target string is classified by the PowerShell provider its prefix selects (an 
 ## Related Specs
 
 - [Binding](binding.md) — the frontend-agnostic binder; `ps` deliberately does not use it, but its `Result` mirrors `bind.Result`.
-- [Report Contract](../contracts/report-json.md) — the JSON envelope the facade stamps around this frontend's `Result` (`tool` = `flowsh`, `toolVersion` = `flowsh/v1`); because `ps` does not use the binder, `report.resolution` and `report.destructive` stay the zero value on the PowerShell path.
+- [Report Contract](../contracts/report-json.md) — the JSON envelope the facade stamps around this frontend's `Result` (`tool` = `flowsh`, `toolVersion` = `flowsh/v2`); because `ps` does not use the binder, `report.resolution` and `report.destructive` stay the zero value and `report.commandCalls` stays absent on the PowerShell path, while `report.canonical` is derived from the effects alone (no staging folds — there are no `mv` calls to read).
 - [Bash Frontend](bash-frontend/README.md) — the sibling frontend, whose `Variant`/`Program` differ; PowerShell has its own alias and cmdlet tables.
 - [Knowledge Base](knowledge-base.md) — used by bash binding, **not** by the PowerShell frontend.
 - engine core (`engine/effect.go`, `engine/lattice.go`) — the `Effect` IR and lattices this frontend lowers into.

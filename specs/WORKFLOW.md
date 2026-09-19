@@ -131,7 +131,7 @@ After updating, verify:
 ### "Change the report JSON contract" (domains: `engine` and `analysis-report`)
 
 1. Read `domains/engine/effect-ir.md`, `domains/engine/scoring.md` and `domains/analysis-report.md`.
-2. Read `contracts/report-json.md` — the outward report is the `flowsh` JSON contract (`ToolVersion = flowsh/v1`).
+2. Read `contracts/report-json.md` — the outward report is the `flowsh` JSON contract (`ToolVersion = flowsh/v2`).
 3. Change `engine/report.go` and the `Report` type in `internal/analysis/analyze.go` together, and bump the version tags.
 4. **After implementation**: update the affected specs and the CLI smoke assertions in `cmd/flowsh/smoke_test.go` (run by `go test ./...`, gated in `.github/workflows/ci.yml`).
 

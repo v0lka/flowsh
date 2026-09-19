@@ -17,6 +17,7 @@ For formats and update rules, see [META.md](META.md). For how to use the system,
 | Change bash parsing / abstract execution | [bash Frontend](domains/bash-frontend/README.md), [Parse & Normalize](domains/bash-frontend/parse-normalize.md), [Abstract Execution](domains/bash-frontend/abstract-exec.md) |
 | Change PowerShell parsing / lowering | [PowerShell Frontend](domains/powershell-frontend.md) |
 | Change command resolution or flag binding | [Binding](domains/binding.md), [bind <-> kb Contract](contracts/bind-kb.md) |
+| Add a NetEgress parameter or change the egress-target grammar | [Binding](domains/binding.md) (egress target gate), [Knowledge Base](domains/knowledge-base.md), [SECURITY.md](../SECURITY.md) (known risks) |
 | Change the frontend/binder seam (`Resolver`) | [Resolver Contract](contracts/exec-resolver.md), [Layer Architecture](architecture/layers.md) |
 | Add a CLI flag or change output | [CLI](domains/cli.md), [Report Contract](contracts/report-json.md) |
 | Bump the report/tool version tag (`flowsh/vN`) or add `--version` | [Report Contract](contracts/report-json.md), [CLI](domains/cli.md) |

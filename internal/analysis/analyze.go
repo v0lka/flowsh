@@ -32,9 +32,11 @@ const (
 	// ToolVersion is the semantic version of the report contract. It is bumped
 	// when the shape of the CLI report changes; command-line additions that do
 	// not alter the emitted document (such as --version) do not bump it. The
-	// v2 contract added the additive report fields why, resolution, destructive
-	// and root (see specs/contracts/report-json.md).
-	ToolVersion = "flowsh/v1"
+	// v2 contract added the additive report fields commandCalls and canonical
+	// (the per-command resolution view and the effect-based canonical form for
+	// signature comparison); v1 carried why, resolution, destructive and root
+	// from its first public cut (see specs/contracts/report-json.md).
+	ToolVersion = "flowsh/v2"
 
 	// RootArgument and RootStdin are the source-name markers stamped into
 	// Report.Root when the analysed command does not come from a file: it was
@@ -103,6 +105,20 @@ type Report struct {
 	// value (empty Kind) when no call reached the binder — e.g. on the
 	// PowerShell path, which resolves through its own alias/cmdlet tables.
 	Resolution bind.Resolution `json:"resolution"`
+	// CommandCalls is the per-command resolution view: every call the binder
+	// saw, with its invoked name, its normalized binary (basename,
+	// node_modules/.bin stripped, package runners consumed), its argument
+	// values and its statement's resolved redirections. It is the
+	// per-command companion of the aggregated Resolution, giving a signature
+	// the data to recognize a retried invocation that differs in form but not
+	// in effect. It is omitted when no call reached the binder.
+	CommandCalls []CommandCall `json:"commandCalls,omitempty"`
+	// Canonical is the effect-based canonical form of the program: the effect
+	// set normalized for signature comparison (staged temp writes folded onto
+	// the destination of the trailing mv; non-path operand targets dropped)
+	// plus the deterministic key derived from it. It is present whenever the
+	// report has effects.
+	Canonical *Canonical `json:"canonical,omitempty"`
 	// Destructive lists the destructive-flags entries the program's calls
 	// matched, de-duplicated and sorted. It is omitted when no call matched one.
 	Destructive []DestructiveFinding `json:"destructive,omitempty"`
@@ -307,6 +323,17 @@ type Options struct {
 	// Report.Root (and used as the source name positions are reported against).
 	// Empty leaves the report's root unset, as for an in-memory analysis.
 	Root string
+
+	// Vars seeds the shell's abstract state with variable bindings the host
+	// knows from its own context — a session temp directory, a workspace path,
+	// a run identifier — that the script text alone does not determine. Each
+	// binding behaves exactly as though the script had assigned it a literal
+	// value before its first statement, so a later $name read resolves to the
+	// concrete value instead of degrading its word (and every path derived
+	// from it) to ⊤. The zero value (nil) is identical to Analyze: nothing is
+	// seeded and unknown variables stay ⊤. Only the bash/POSIX frontends
+	// consume the table; the PowerShell path ignores it.
+	Vars map[string]string
 }
 
 // psOptions resolves o into the PowerShell frontend's provider options. When
@@ -358,9 +385,9 @@ func (a *Analyzer) AnalyzeWith(lang Lang, src string, opts Options) *Report {
 	case LangPowerShell:
 		return analyzePS(src, opts.psOptions(), opts.Root)
 	case LangPOSIX:
-		return a.analyzeBash(bash.POSIX, LangPOSIX, src, opts.Root)
+		return a.analyzeBash(bash.POSIX, LangPOSIX, src, opts.Root, opts.Vars)
 	default:
-		return a.analyzeBash(bash.Bash, LangBash, src, opts.Root)
+		return a.analyzeBash(bash.Bash, LangBash, src, opts.Root, opts.Vars)
 	}
 }
 
@@ -369,11 +396,13 @@ func (a *Analyzer) AnalyzeWith(lang Lang, src string, opts Options) *Report {
 // when the analyser holds no binder the shell's own intrinsic effects are still
 // reported. lang is stamped into the report (LangBash or LangPOSIX), so it is
 // kept distinct from the frontend variant v; root names the source (a file path
-// or a stdin/argument marker).
-func (a *Analyzer) analyzeBash(v bash.Variant, lang Lang, src, root string) *Report {
+// or a stdin/argument marker); vars optionally seeds host-known variable
+// bindings into the initial abstract state.
+func (a *Analyzer) analyzeBash(v bash.Variant, lang Lang, src, root string, vars map[string]string) *Report {
 	var (
 		res         *bash.ExecResult
 		agg         aggregatedResolution
+		calls       []CommandCall
 		destructive []DestructiveFinding
 		binderNotes []string
 		// noResolver records that no knowledge-base binder is bound, so command
@@ -390,12 +419,13 @@ func (a *Analyzer) analyzeBash(v bash.Variant, lang Lang, src, root string) *Rep
 	)
 	if a == nil || a.binder == nil {
 		noResolver = true
-		res = bash.Exec(v, sourceName(root, "script"), src, nil)
+		res = bash.ExecWithVars(v, sourceName(root, "script"), src, nil, vars)
 	} else {
 		b := a.binder
-		res = bash.Exec(v, sourceName(root, "script"), src, func(cmd *bash.Command, prog *bash.Program) bash.Resolution {
+		res = bash.ExecWithVars(v, sourceName(root, "script"), src, func(cmd *bash.Command, prog *bash.Program) bash.Resolution {
 			br := b.BindBash(cmd, prog)
 			agg.observe(br.Resolution)
+			calls = append(calls, commandCallOf(cmd, br.Resolution))
 			kbDestruct = kbDestruct.Join(br.Destructiveness)
 			for _, d := range br.Destructive {
 				destructive = append(destructive, DestructiveFinding{
@@ -407,7 +437,7 @@ func (a *Analyzer) analyzeBash(v bash.Variant, lang Lang, src, root string) *Rep
 			}
 			binderNotes = append(binderNotes, br.Notes...)
 			return bash.Resolution{Effects: br.Effects, Derivations: br.Derivations}
-		})
+		}, vars)
 	}
 
 	rep := newReport(lang, src, root)
@@ -437,7 +467,9 @@ func (a *Analyzer) analyzeBash(v bash.Variant, lang Lang, src, root string) *Rep
 	}
 	rep.Commands = len(res.Cmds)
 	rep.Resolution = agg.resolution()
+	rep.CommandCalls = calls
 	rep.Destructive = normalizeDestructive(destructive)
+	rep.Canonical = buildCanonical(rep.Effects, calls)
 	rep.Notes = mergeNotes(res.Notes, binderNotes)
 	rep.Score = engine.ScoreEffects(rep.Effects, bashTokens(res.Cmds)...)
 	// Carry the KB class severity into the score too, so the report's
@@ -479,6 +511,10 @@ func analyzePS(src string, opts ps.Options, root string) *Report {
 	rep.Score = engine.ScoreEffects(rep.Effects, psTokens(prog)...)
 	rep.Score.Destructiveness = rep.Score.Destructiveness.Join(psDestruct)
 	rep.Score.Grade = rep.Score.Grade.Join(psDestruct)
+	// The canonical form needs no binder (the PowerShell path resolves through
+	// its own tables), so it derives from the effects alone: no staging folds,
+	// only the target-shape normalization.
+	rep.Canonical = buildCanonical(rep.Effects, nil)
 	return rep
 }
 

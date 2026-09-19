@@ -177,6 +177,15 @@ type interp struct {
 	// and process substitution node encountered during expansion.
 	subst map[syntax.Node]substInfo
 
+	// stmtRedirs accumulates the resolved redirections of the statement
+	// currently executing; cmdRedirs is the snapshot taken once the statement's
+	// own redirections are done, which the command dispatched by that statement
+	// carries on Command.Redirs. Both are saved/restored around each statement
+	// so nested statements (a command substitution expanding its own redirects)
+	// can never leak into an enclosing command's view.
+	stmtRedirs []ExecRedirect
+	cmdRedirs  []ExecRedirect
+
 	// substMemo/procMemo memoise the substitution side effects already performed
 	// within the statement currently being interpreted, so that a word whose
 	// substitutions are expanded twice — a `[[ … ]]` clause is walked once by
@@ -190,7 +199,16 @@ type interp struct {
 	funcRaw map[string]*syntax.FuncDecl
 }
 
-func newInterp(src string, prog *Program, r Resolver, f *syntax.File) *interp {
+// newInterpVars builds an interpreter whose abstract state is additionally
+// seeded with vars: name→value bindings the embedding host knows from its own
+// context (a session temp directory, a workspace path, …) that the script text
+// alone does not determine. Each binding becomes a set, statically-known
+// variable, so later $name reads resolve exactly like a literal in-script
+// assignment would have made them. Seeding never weakens a variable the shell
+// model already knows: an empty name and a readonly collision (the seeded
+// status parameters) are skipped. A nil/empty table reproduces the plain
+// interpreter state.
+func newInterpVars(src string, prog *Program, r Resolver, f *syntax.File, vars map[string]string) *interp {
 	it := &interp{
 		src:     src,
 		prog:    prog,
@@ -200,6 +218,15 @@ func newInterp(src string, prog *Program, r Resolver, f *syntax.File) *interp {
 		budget:  defaultBudget,
 		subst:   map[syntax.Node]substInfo{},
 		funcRaw: collectFuncsRaw(f),
+	}
+	for name, value := range vars {
+		if name == "" {
+			continue
+		}
+		if v := it.state.Get(name); v != nil && v.Readonly {
+			continue
+		}
+		it.state.SetKnown(name, value, engine.TaintBottom())
 	}
 	if prog != nil {
 		for n, fn := range prog.Funcs {
@@ -263,6 +290,12 @@ func (it *interp) resolutionProgram() *Program {
 // no command binding). Exec never panics: a parse failure, an internal error, or
 // an exhausted budget all degrade to a ⊤ result.
 func Exec(v Variant, name, src string, r Resolver) (res *ExecResult) {
+	return execVars(v, name, src, r, nil)
+}
+
+// execVars is Exec with an optional host-supplied set of variable bindings
+// seeded into the initial abstract state (nil/empty reproduces Exec).
+func execVars(v Variant, name, src string, r Resolver, vars map[string]string) (res *ExecResult) {
 	var it *interp
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -291,9 +324,17 @@ func Exec(v Variant, name, src string, r Resolver) (res *ExecResult) {
 	prog := &Program{Variant: v, File: name, Source: src, Stmts: []*Stmt{}}
 	newNormalizer(src).fill(f, prog)
 
-	it = newInterp(src, prog, r, f)
+	it = newInterpVars(src, prog, r, f, vars)
 	it.execStmts(f.Stmts)
 	return it.result()
+}
+
+// ExecWithVars is Exec with the abstract state pre-seeded from vars: host-known
+// variable bindings (a session temp directory, …) resolved before the first
+// statement runs, as though the script had assigned them literally. See
+// newInterpVars for the seeding semantics.
+func ExecWithVars(v Variant, name, src string, r Resolver, vars map[string]string) (res *ExecResult) {
+	return execVars(v, name, src, r, vars)
 }
 
 // ExecBash is Exec for the bash dialect.
@@ -542,10 +583,20 @@ func (it *interp) execStmt(s *syntax.Stmt) {
 	// this statement's standard input; the contribution is scoped to the
 	// statement so it cannot leak into a following one.
 	savedInTaint := it.stdinTaint
-	defer func() { it.stdinTaint = savedInTaint }()
+	// The resolved redirections of this statement feed the command it dispatches
+	// (Command.Redirs); they are scoped the same way, so a nested statement —
+	// a command substitution expanding redirects of its own — can never leak
+	// into the enclosing command's view.
+	savedStmtRedirs, savedCmdRedirs := it.stmtRedirs, it.cmdRedirs
+	defer func() {
+		it.stdinTaint = savedInTaint
+		it.stmtRedirs, it.cmdRedirs = savedStmtRedirs, savedCmdRedirs
+	}()
+	it.stmtRedirs = nil
 	for _, r := range s.Redirs {
 		it.redir(r)
 	}
+	it.cmdRedirs = it.stmtRedirs
 	if s.Cmd == nil {
 		return
 	}
@@ -671,7 +722,13 @@ func (it *interp) testFileReads(c *syntax.TestClause) {
 		case "-e", "-f", "-d", "-r", "-w", "-x", "-s", "-L", "-h", "-b", "-c", "-p", "-S", "-g", "-u", "-k", "-N":
 			val, known, taint := it.expandLiteral(w)
 			if !known {
-				it.emit(engine.KindFSRead, engine.ScopeTop(), engine.ModeDirect, engine.CertaintyCertain, taint, it.redirectAtom(fromMvdanPos(w.Pos()), "-test"))
+				// Same numeric-class confinement as a redirection: a file test
+				// on out-$?.log reads within the literal directory, not ⊤.
+				target := engine.ScopeTop()
+				if dir, ok := it.numericConfinedDir(w); ok {
+					target = engine.ScopeOf(dir)
+				}
+				it.emit(engine.KindFSRead, target, engine.ModeDirect, engine.CertaintyCertain, taint, it.redirectAtom(fromMvdanPos(w.Pos()), "-test"))
 				return true
 			}
 			if val != "" {
@@ -1216,12 +1273,27 @@ func (it *interp) execDecl(c *syntax.DeclClause) {
 // argWord is one expanded argument together with whether it is statically known
 // and the provenance of its value. pos is the source position of the word it
 // came from, so the normalized invocation keeps a location for the binding
-// layer's why-trace atoms.
+// layer's why-trace atoms. dir carries the numeric-class confinement of a
+// dynamic word (see numericConfinedDir); empty means unconfined.
 type argWord struct {
 	val   string
 	lit   bool
 	taint engine.Taint
 	pos   Pos
+	dir   string
+}
+
+// wordDir computes the confinement of one source word for the fields it
+// contributed: a fully known word is literal (no confinement needed), and a
+// dynamic word is confined only when every dynamic part is numeric-class.
+func (it *interp) wordDir(w *syntax.Word, known bool) string {
+	if w == nil || known {
+		return ""
+	}
+	if dir, ok := it.numericConfinedDir(w); ok {
+		return dir
+	}
+	return ""
 }
 
 func (it *interp) execCall(c *syntax.CallExpr) {
@@ -1334,26 +1406,28 @@ func (it *interp) execCall(c *syntax.CallExpr) {
 			if ew0.known && len(ew0.fields) > 0 {
 				name, nameOK = ew0.fields[0], true
 			}
+			dir0 := it.wordDir(rest[0], ew0.known)
 			if !ew0.known && len(ew0.fields) == 0 {
 				// A command-name word whose expansion is unknown contributes a
 				// dynamic placeholder so the invocation still degrades to ⊤.
-				argvW = append(argvW, argWord{val: "", lit: false, taint: ew0.taint, pos: fromMvdanPos(rest[0].Pos())})
+				argvW = append(argvW, argWord{val: "", lit: false, taint: ew0.taint, pos: fromMvdanPos(rest[0].Pos()), dir: dir0})
 			} else {
 				for _, f := range ew0.fields[min(1, len(ew0.fields)):] {
-					argvW = append(argvW, argWord{val: f, lit: ew0.known, taint: ew0.taint, pos: fromMvdanPos(rest[0].Pos())})
+					argvW = append(argvW, argWord{val: f, lit: ew0.known, taint: ew0.taint, pos: fromMvdanPos(rest[0].Pos()), dir: dir0})
 				}
 			}
 		}
 		for _, w := range rest[1:] {
 			ew := it.expandFields(w)
+			dirW := it.wordDir(w, ew.known)
 			if !ew.known && len(ew.fields) == 0 {
 				// An unquoted, wholly-unknown expansion yields no field: keep a
 				// dynamic operand so the target degrades to ⊤, not to ⊥.
-				argvW = append(argvW, argWord{val: "", lit: false, taint: ew.taint, pos: fromMvdanPos(w.Pos())})
+				argvW = append(argvW, argWord{val: "", lit: false, taint: ew.taint, pos: fromMvdanPos(w.Pos()), dir: dirW})
 				continue
 			}
 			for _, f := range ew.fields {
-				argvW = append(argvW, argWord{val: f, lit: ew.known, taint: ew.taint, pos: fromMvdanPos(w.Pos())})
+				argvW = append(argvW, argWord{val: f, lit: ew.known, taint: ew.taint, pos: fromMvdanPos(w.Pos()), dir: dirW})
 			}
 		}
 	}
@@ -1385,10 +1459,10 @@ func (it *interp) execCall(c *syntax.CallExpr) {
 	} else if len(rest) > 0 {
 		nameWord = &Word{Value: "", Literal: false}
 	}
-	cmd := &Command{Pos: pos, Name: name, NameWord: nameWord, Wrappers: wrappers, Assigns: assigns, StdinTaint: it.stdinTaint}
+	cmd := &Command{Pos: pos, Name: name, NameWord: nameWord, Wrappers: wrappers, Assigns: assigns, StdinTaint: it.stdinTaint, Redirs: it.cmdRedirs}
 	argv := make([]string, 0, len(argvW))
 	for _, a := range argvW {
-		cmd.Args = append(cmd.Args, &Word{Value: a.val, Literal: a.lit, Taint: a.taint, Pos: a.pos})
+		cmd.Args = append(cmd.Args, &Word{Value: a.val, Literal: a.lit, Taint: a.taint, Pos: a.pos, Dir: a.dir})
 		argv = append(argv, a.val)
 	}
 	it.addCmd(cmd)
@@ -1732,41 +1806,73 @@ func (it *interp) redir(r *syntax.Redirect) {
 	it.step()
 	switch r.Op {
 	case syntax.RdrOut, syntax.AppOut, syntax.ClbOut, syntax.RdrAll, syntax.AppAll:
-		it.redirectTarget(r.Word, false)
+		it.redirectTarget(r, false)
 	case syntax.RdrIn:
-		it.redirectTarget(r.Word, true)
+		it.redirectTarget(r, true)
 	case syntax.RdrInOut:
-		it.redirectTarget(r.Word, true)
-		it.redirectTarget(r.Word, false)
+		it.redirectTarget(r, true)
+		it.redirectTarget(r, false)
 	case syntax.DplOut, syntax.DplIn:
 		it.emit(engine.KindStdio, engine.ScopeBottom(), engine.ModeDirect, engine.CertaintyCertain, engine.TaintBottom(), it.redirectAtom(fromMvdanPos(r.Pos()), r.Op.String()))
+		// A stream dupe's operand is the fd it duplicates (2>&1): record it as
+		// the resolved target text; a non-numeric operand is a file
+		// redirection, recorded by redirectTarget below.
+		if r.Word != nil && isFdWord(r.Word) {
+			if fd, ok := literalOf(r.Word); ok {
+				it.recordRedir(r.Op.String(), fd, true)
+			}
+		}
 		// `>&word` / `<&word` with a non-numeric operand is bash's synonym for
 		// `&>word` / `&<word`: a file redirection, not a stream dupe, so its
 		// filesystem effect must be reported.
 		if r.Word != nil && !isFdWord(r.Word) {
-			it.redirectTarget(r.Word, r.Op == syntax.DplIn)
+			it.redirectTarget(r, r.Op == syntax.DplIn)
 		}
 	case syntax.Hdoc, syntax.DashHdoc:
 		it.heredoc(r.Hdoc)
+		it.recordRedir(r.Op.String(), "", true)
 	case syntax.WordHdoc:
 		it.expandLiteral(r.Word)
 		it.emit(engine.KindStdio, engine.ScopeBottom(), engine.ModeDirect, engine.CertaintyCertain, engine.TaintBottom(), it.redirectAtom(fromMvdanPos(r.Pos()), r.Op.String()))
+		it.recordRedir(r.Op.String(), "", true)
 	default:
 		it.emit(engine.KindStdio, engine.ScopeBottom(), engine.ModeDirect, engine.CertaintyCertain, engine.TaintBottom(), it.redirectAtom(fromMvdanPos(r.Pos()), r.Op.String()))
+		it.recordRedir(r.Op.String(), "", true)
 	}
 }
 
+// recordRedir appends one resolved redirection to the current statement's
+// accumulation, collapsing an immediate duplicate (the <> operator walks its
+// target twice — once reading, once writing — but is one redirection).
+func (it *interp) recordRedir(op, target string, known bool) {
+	if n := len(it.stmtRedirs); n > 0 &&
+		it.stmtRedirs[n-1].Op == op && it.stmtRedirs[n-1].Target == target {
+		return
+	}
+	it.stmtRedirs = append(it.stmtRedirs, ExecRedirect{Op: op, Target: target, Known: known})
+}
+
 // redirectTarget emits the effect of a file redirection, recognizing the bash
-// /dev/tcp and /dev/udp pseudo-files as network effects.
-func (it *interp) redirectTarget(w *syntax.Word, reading bool) {
+// /dev/tcp and /dev/udp pseudo-files as network effects. It also records the
+// resolved redirection (operator plus expanded target text) on the statement's
+// accumulation, for the report's per-command view.
+func (it *interp) redirectTarget(r *syntax.Redirect, reading bool) {
+	w := r.Word
 	val, known, taint := it.expandLiteral(w)
+	it.recordRedir(r.Op.String(), val, known)
 	if host, port, isTCP, ok := devNet(val); ok {
 		kind := engine.KindNetEgress
 		if reading {
 			kind = engine.KindNetIngress
 		}
+		// The /dev/tcp construct is an explicit socket: the host token's role
+		// as a destination is declared by the construct itself, so a bare
+		// single-label name passes the host grammar. A known-but-unaddressable
+		// token widens to ⊤ (the unresolved egress) rather than being dropped
+		// — the safe side is not weakened — and an unexpanded word was already
+		// ⊤.
 		target := engine.ScopeTop()
-		if known {
+		if known && engine.HostShapedLenient(host) {
 			target = engine.ScopeOf(host + ":" + port)
 		}
 		it.emit(kind, target, engine.ModeDirect, engine.CertaintyCertain, taint, it.redirectAtom(fromMvdanPos(w.Pos()), host+":"+port))
@@ -1781,7 +1887,15 @@ func (it *interp) redirectTarget(w *syntax.Word, reading bool) {
 	target := engine.ScopeBottom()
 	switch {
 	case !known:
-		target = engine.ScopeTop()
+		// A dynamic redirection target degrades to ⊤ — unless every dynamic
+		// part of the word is numeric-class (out-$?.log), in which case the
+		// write/read is confined to the literal directory named before the
+		// numeric part; digits cannot move it elsewhere.
+		if dir, ok := it.numericConfinedDir(w); ok {
+			target = engine.ScopeOf(dir)
+		} else {
+			target = engine.ScopeTop()
+		}
 	case val != "":
 		target = engine.ScopeOf(val)
 	}
