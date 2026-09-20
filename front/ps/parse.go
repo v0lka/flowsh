@@ -263,6 +263,11 @@ type Stmt struct {
 	Loop   *LoopStmt `json:"loop,omitempty"`
 	Try    *TryStmt  `json:"try,omitempty"`
 	Reason string    `json:"reason,omitempty"` // KindTop only
+	// Pipe is the pipeline group id shared by the stages of one PowerShell
+	// pipeline (0 when the statement is not part of a pipeline). The lowerer
+	// uses it to establish the value flow between stages — a network fetch
+	// piped into a code-execution sink is the download cradle.
+	Pipe int `json:"pipe,omitempty"`
 }
 
 // Program is the normalized AST of a PowerShell source: its statements, plus
@@ -462,6 +467,11 @@ type walker struct {
 	lang *gotreesitter.Language
 	src  []byte
 	prog *Program
+	// pipeSeq numbers the pipelines seen; pipeGroup is the group id stamped
+	// onto the command statements currently being emitted (0 outside a
+	// pipeline).
+	pipeSeq   int
+	pipeGroup int
 	// stmts redirects statement emission while a sub-tree is walked into a
 	// side list (an assignment's right-hand side) instead of the program's
 	// top-level statement list. nil means top-level.
@@ -470,6 +480,9 @@ type walker struct {
 
 // emit appends a statement to the current collection target.
 func (w *walker) emit(s *Stmt) {
+	if s.Kind == KindCommand && s.Pipe == 0 {
+		s.Pipe = w.pipeGroup
+	}
 	if w.stmts != nil {
 		*w.stmts = append(*w.stmts, s)
 		return
@@ -517,6 +530,13 @@ func (w *walker) walk(n *gotreesitter.Node) {
 		// (conditionally executed) bodies are not reported as if unconditional.
 		w.emit(&Stmt{Kind: KindTop, Pos: w.pos(n), Reason: w.switchReason(n)})
 		return
+	case "pipeline_chain":
+		// A pipeline's stages share a group id so the lowerer can establish
+		// the value flow between them — a network fetch piped into a
+		// code-execution sink is the download cradle. A pipeline with fewer
+		// than two stages carries no flow and is walked transparently.
+		w.pipelineNode(n)
+		return
 	case "command":
 		c := w.command(n)
 		w.emit(&Stmt{Kind: KindCommand, Pos: c.Pos, Cmd: c})
@@ -561,6 +581,26 @@ func (w *walker) walk(n *gotreesitter.Node) {
 	for i := 0; i < n.ChildCount(); i++ {
 		w.walk(n.Child(i))
 	}
+}
+
+// pipelineNode walks a pipeline's stages under a shared group id (stamped onto
+// the command statements by emit) so the lowerer can establish the value flow
+// between stages. A pipeline with fewer than two direct command stages carries
+// no flow and is walked transparently.
+func (w *walker) pipelineNode(n *gotreesitter.Node) {
+	if len(directChildren(n, "command", w.lang)) < 2 {
+		for i := 0; i < n.ChildCount(); i++ {
+			w.walk(n.Child(i))
+		}
+		return
+	}
+	w.pipeSeq++
+	prev := w.pipeGroup
+	w.pipeGroup = w.pipeSeq
+	for i := 0; i < n.ChildCount(); i++ {
+		w.walk(n.Child(i))
+	}
+	w.pipeGroup = prev
 }
 
 // function records a function definition's name without descending into its

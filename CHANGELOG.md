@@ -11,6 +11,19 @@ the two *frozen* wire-contract tags that the analyser emits — `effect-ir/v2`
 frozen contract is called out in the entry that makes it; the contract tags move
 only on a breaking shape change, not on every module release.
 
+## [v0.3.1] - 2026-09-20
+
+### Fixed
+
+- **PowerShell download-cradle flow.** The PowerShell frontend now establishes
+  the network→code-execution flow through a pipeline, so a fetch piped into a
+  code-execution sink (`Invoke-WebRequest … | Invoke-Expression`, `curl … | iex`)
+  is reported as a cradle flow exactly like its bash counterpart. Pipeline
+  stages now carry a shared group id so the lowerer can key the flow on the
+  value flow between stages — never on the mere co-occurrence of a `NetEgress`
+  and a code-execution sink — and the sink `CodeExec` is marked with the
+  additive `netFlow: cradle` role.
+
 ## [v0.3.0] - 2026-09-20
 
 ### Added

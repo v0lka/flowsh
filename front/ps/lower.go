@@ -67,6 +67,7 @@ func LowerWith(p *Program, opts Options) (res *Result) {
 		state:      NewState(),
 		budget:     defaultBudget,
 		envEmitted: map[string]bool{},
+		pipeNet:    map[int]bool{},
 	}
 	// Lowering never panics (SECURITY.md): an exhausted analysis budget or an
 	// internal error is converted into a ⊤ conclusion that preserves every
@@ -114,6 +115,9 @@ func LowerWith(p *Program, opts Options) (res *Result) {
 // for the program's top-level statements and for an assignment's right-hand
 // side alike.
 func (l *lowerer) stmt(s *Stmt) {
+	prevPipe := l.curPipe
+	l.curPipe = s.Pipe
+	defer func() { l.curPipe = prevPipe }()
 	switch s.Kind {
 	case KindCommand:
 		// Record a declared alias only after it has been lowered, so it
@@ -525,11 +529,22 @@ type lowerer struct {
 	// the command currently being lowered, so the intrinsic ProcSpawn fallback
 	// knows the command would otherwise contribute no effect.
 	gatedEgress bool
+	// pipeNet records, per pipeline group, whether a network egress was emitted
+	// in an earlier stage of the pipeline, so a later code-execution sink in the
+	// same pipeline can be marked as the cradle sink (fetched content reaching a
+	// shell/interpreter — the download cradle).
+	pipeNet map[int]bool
+	// curPipe is the pipeline group of the statement being lowered (0 when it
+	// is not part of a pipeline).
+	curPipe int
 }
 
 // emitEff records one effect together with the derivation that justifies it,
 // citing the concrete source atoms (command, operand, redirect, source, sink).
 func (l *lowerer) emitEff(e engine.Effect, atoms ...engine.Atom) {
+	if e.Kind == engine.KindNetEgress && l.curPipe != 0 {
+		l.pipeNet[l.curPipe] = true
+	}
 	l.effects = append(l.effects, e)
 	l.ders = append(l.ders, engine.Derivation{Effect: e, Atoms: atoms, Rules: []string{ruleForKind(e.Kind)}})
 }
@@ -545,6 +560,20 @@ func (l *lowerer) top(reason string) {
 	l.emitEff(topEffect(engine.ModeDirect), atom(engine.AtomLiteral, reason, Pos{}))
 	l.conservative = true
 	l.note("⊤ %s → CodeExec(⊤)", reason)
+}
+
+// emitTopCodeExec records a ⊤ CodeExec, marking it as the sink of a network
+// data flow when an earlier stage of the same pipeline carried a network egress
+// — the download cradle (fetched content reaching a code-execution sink). The
+// flow is established from the pipeline's value flow, never from the mere
+// co-occurrence of an egress and a sink, so a canonical cradle verdict is
+// always backed by the flow it ships.
+func (l *lowerer) emitTopCodeExec(mode engine.EffectMode, atoms ...engine.Atom) {
+	e := topEffect(mode)
+	if l.curPipe != 0 && l.pipeNet[l.curPipe] {
+		e.NetFlow = engine.FlowCradle
+	}
+	l.emitEff(e, atoms...)
 }
 
 // canonicalCmdlet returns the canonical spelling of name if it is a known
@@ -619,7 +648,7 @@ func (l *lowerer) command(s *Stmt) {
 	}
 
 	if reason, ok := l.topReason(c, canonical); ok {
-		l.emitEff(topEffect(engine.ModeDirect), atom(engine.AtomCommand, canonical, c.Pos))
+		l.emitTopCodeExec(engine.ModeDirect, atom(engine.AtomCommand, canonical, c.Pos))
 		l.conservative = true
 		l.note("⊤ %s → CodeExec(⊤): %s", cmdLabel(c, canonical), reason)
 		l.redirs(c)
