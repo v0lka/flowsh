@@ -105,13 +105,14 @@ type Report struct {
 	// value (empty Kind) when no call reached the binder — e.g. on the
 	// PowerShell path, which resolves through its own alias/cmdlet tables.
 	Resolution bind.Resolution `json:"resolution"`
-	// CommandCalls is the per-command resolution view: every call the binder
-	// saw, with its invoked name, its normalized binary (basename,
+	// CommandCalls is the per-command resolution view: every distinct call the
+	// binder saw, with its invoked name, its normalized binary (basename,
 	// node_modules/.bin stripped, package runners consumed), its argument
 	// values and its statement's resolved redirections. It is the
 	// per-command companion of the aggregated Resolution, giving a signature
 	// the data to recognize a retried invocation that differs in form but not
-	// in effect. It is omitted when no call reached the binder.
+	// in effect. A call site reached many times (a loop body) contributes one
+	// entry. It is omitted when no call reached the binder.
 	CommandCalls []CommandCall `json:"commandCalls,omitempty"`
 	// Canonical is the effect-based canonical form of the program: the effect
 	// set normalized for signature comparison (staged temp writes folded onto
@@ -403,6 +404,7 @@ func (a *Analyzer) analyzeBash(v bash.Variant, lang Lang, src, root string, vars
 		res         *bash.ExecResult
 		agg         aggregatedResolution
 		calls       []CommandCall
+		seenCalls   = map[string]bool{}
 		destructive []DestructiveFinding
 		binderNotes []string
 		// noResolver records that no knowledge-base binder is bound, so command
@@ -425,7 +427,16 @@ func (a *Analyzer) analyzeBash(v bash.Variant, lang Lang, src, root string, vars
 		res = bash.ExecWithVars(v, sourceName(root, "script"), src, func(cmd *bash.Command, prog *bash.Program) bash.Resolution {
 			br := b.BindBash(cmd, prog)
 			agg.observe(br.Resolution)
-			calls = append(calls, commandCallOf(cmd, br.Resolution))
+			// The resolver callback fires once per abstract execution, so a
+			// loop body reaches it tens of thousands of times for one call
+			// site. Keep one entry per distinct call (identity) so the view
+			// stays a bounded, per-command resolution view rather than an
+			// uncapped per-execution trace.
+			cc := commandCallOf(cmd, br.Resolution)
+			if key := cc.identity(); !seenCalls[key] {
+				seenCalls[key] = true
+				calls = append(calls, cc)
+			}
 			kbDestruct = kbDestruct.Join(br.Destructiveness)
 			for _, d := range br.Destructive {
 				destructive = append(destructive, DestructiveFinding{
@@ -469,7 +480,12 @@ func (a *Analyzer) analyzeBash(v bash.Variant, lang Lang, src, root string, vars
 	rep.Resolution = agg.resolution()
 	rep.CommandCalls = calls
 	rep.Destructive = normalizeDestructive(destructive)
-	rep.Canonical = buildCanonical(rep.Effects, calls)
+	// The canonical form is present only when the report has effects, matching
+	// its documented conditional presence (omitempty suppresses only a nil
+	// pointer, so it is set conditionally here).
+	if len(rep.Effects) > 0 {
+		rep.Canonical = buildCanonical(rep.Effects, calls)
+	}
 	rep.Notes = mergeNotes(res.Notes, binderNotes)
 	rep.Score = engine.ScoreEffects(rep.Effects, bashTokens(res.Cmds)...)
 	// Carry the KB class severity into the score too, so the report's
@@ -513,8 +529,11 @@ func analyzePS(src string, opts ps.Options, root string) *Report {
 	rep.Score.Grade = rep.Score.Grade.Join(psDestruct)
 	// The canonical form needs no binder (the PowerShell path resolves through
 	// its own tables), so it derives from the effects alone: no staging folds,
-	// only the target-shape normalization.
-	rep.Canonical = buildCanonical(rep.Effects, nil)
+	// only the target-shape normalization. It is present only when the report
+	// has effects, matching its documented conditional presence.
+	if len(rep.Effects) > 0 {
+		rep.Canonical = buildCanonical(rep.Effects, nil)
+	}
 	return rep
 }
 

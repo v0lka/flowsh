@@ -272,3 +272,26 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// TestNumericConfinementEscapesDegradeToTop pins code-review #1, #22 and #25:
+// a word whose numeric-class expansion can splice a fresh — possibly absolute —
+// path component (an alternate/replacement operator, an empty-capable
+// expansion, or a backslash-escaped "..") must degrade to ⊤ rather than be
+// confined to the working directory, which would under-approximate the target.
+func TestNumericConfinementEscapesDegradeToTop(t *testing.T) {
+	cases := []string{
+		`echo hi > $!/etc/passwd`,            // $! may be empty (not a class member any more)
+		`cat $!/etc/passwd`,                  //
+		`echo hi > ${RANDOM:0:0}/etc/passwd`, // zero-length slice
+		`cat ${PIPESTATUS[9]}/etc/passwd`,    // out-of-range index
+		`echo hi > ${RANDOM:+..}/x`,          // alternate carrying a ".." segment
+		`echo hi > ${RANDOM:+$EVIL}/x`,       // dynamic alternate
+		`echo hi > \.\./$?.log`,              // backslash-escaped ".."
+	}
+	for _, src := range cases {
+		res := bash.ExecBash(src, newResolver(t))
+		if !hasTopEffect(res, engine.KindFSWrite) && !hasTopEffect(res, engine.KindFSRead) {
+			t.Errorf("%q: word must degrade to ⊤, effects:\n%s", src, effectKeys(res))
+		}
+	}
+}

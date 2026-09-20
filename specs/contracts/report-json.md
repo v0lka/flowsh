@@ -58,7 +58,7 @@ The emitted document has the envelope:
   "toolVersion": "flowsh/v2",
   "lang": "bash",
   "input": "rm -rf $HOME",
-  "effects": [ { "kind": "FSWrite", "target": { "targets": ["/home/user"], "arbitrary": false },
+  "effects": [ { "kind": "FSWrite", "target": { "targets": ["/root"], "arbitrary": false },
                  "mode": "Direct", "certainty": "Certain",
                  "taint": { "labels": [], "arbitrary": false }, "reversible": false } ],
   "destructiveness": "High",
@@ -69,11 +69,11 @@ The emitted document has the envelope:
   "top": false,
   "commands": 1,
   "resolution": { "kind": "command", "invoked": "rm", "name": "rm" },
-  "commandCalls": [ { "invoked": "rm", "resolved": "rm", "args": [ "-rf", "/home/user" ] } ],
-  "canonical": { "effects": [ { "kind": "FSWrite", "target": { "targets": [ "/home/user" ], "arbitrary": false },
+  "commandCalls": [ { "invoked": "rm", "resolved": "rm", "args": [ "-rf", "/root" ] } ],
+  "canonical": { "effects": [ { "kind": "FSWrite", "target": { "targets": [ "/root" ], "arbitrary": false },
                                "mode": "Direct", "certainty": "Certain",
                                "taint": { "labels": [], "arbitrary": false }, "reversible": false } ],
-                 "key": "FSWrite|Direct|[/home/user]" }
+                 "key": "FSWrite|Direct|[/root]" }
 }
 ```
 

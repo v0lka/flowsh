@@ -65,25 +65,72 @@ func HostShapedLenient(s string) bool {
 	return hostShaped(s, true)
 }
 
+// localURLSchemes are URI schemes that name a local or non-network resource: a
+// file, an in-document payload, an email address. A token carrying one of
+// these never names a network address, so the gate rejects it even though it is
+// scheme-prefixed (file:///etc/passwd, data:…, mailto:a@b).
+var localURLSchemes = map[string]bool{
+	"file": true, "data": true, "mailto": true, "about": true,
+	"blob": true, "javascript": true, "ws+file": true,
+}
+
 // hostShaped is the shared core of the two exported predicates.
 func hostShaped(s string, lenient bool) bool {
 	s = strings.TrimSpace(s)
-	if s == "" || strings.ContainsAny(s, " \t\r\n\\") {
-		// Whitespace never appears in an address; a backslash only appears in
-		// a Windows path or an escaped token — neither is a network address.
+	if s == "" {
 		return false
 	}
 
 	// A scheme-prefixed URL: scheme://… — the scheme prefix itself declares
-	// network intent, so anything after it is accepted as-is (http://evil,
-	// ftp://10.0.0.1/pub, https://2130706433/x).
+	// network intent, so the authority after it is accepted as-is (http://evil,
+	// ftp://10.0.0.1/pub, https://2130706433/x). A scheme that names a
+	// non-network resource is rejected: it declares no address.
 	if i := strings.Index(s, "://"); i > 0 {
-		return validScheme(s[:i]) && len(s) > i+3
+		if !validScheme(s[:i]) || localURLSchemes[strings.ToLower(s[:i])] {
+			return false
+		}
+		return len(s) > i+3
+	}
+	// The same non-network schemes in their scheme:specific-part spelling
+	// (file:/etc/passwd, data:text/plain,…, mailto:a@b.example): no address.
+	if i := strings.IndexByte(s, ':'); i > 0 && localURLSchemes[strings.ToLower(s[:i])] {
+		return false
 	}
 
-	// Strip a leading userinfo (user@host, git@github.com:…). LastIndex, so a
-	// password containing '@' still leaves the host intact.
+	// Whitespace never appears in an address; a backslash only appears in a
+	// Windows path or an escaped token — neither is a network address.
+	if strings.ContainsAny(s, " \t\r\n\\") {
+		return false
+	}
+
+	// A Windows drive path (C:/x, C:\x, C:) is a filesystem path, not a host.
+	if isDrivePath(s) {
+		return false
+	}
+
+	// A UNC / SMB authority (//host[/share]): the leading double slash is the
+	// authority introducer, not the path boundary the cut below would take it
+	// for.
+	if strings.HasPrefix(s, "//") {
+		rest := strings.TrimLeft(s, "/")
+		if i := strings.IndexAny(rest, `/\`); i >= 0 {
+			rest = rest[:i]
+		}
+		if i := strings.LastIndexByte(rest, ':'); i > 0 {
+			if tail := rest[i+1:]; tail == "" || validPort(tail) {
+				rest = rest[:i]
+			}
+		}
+		return rest != "" && hostNameShaped(rest, lenient)
+	}
+
+	// Strip a leading userinfo (user@host, git@github.com:…) only when what
+	// precedes the last '@' is an authority prefix and not a path: a token whose
+	// text before '@' contains a separator is a path carrying '@', not userinfo.
 	if i := strings.LastIndexByte(s, '@'); i >= 0 {
+		if strings.ContainsAny(s[:i], `/\`) {
+			return false
+		}
 		s = s[i+1:]
 		if s == "" {
 			return false
@@ -98,24 +145,47 @@ func hostShaped(s string, lenient bool) bool {
 		}
 	}
 
-	// A bracketed IPv6 literal, optionally with a port: [::1]:4444.
+	// A bracketed IPv6 literal, optionally with a port or an scp-style path:
+	// [::1], [::1]:4444, [2001:db8::1]:/tmp/x.
 	if strings.HasPrefix(s, "[") {
 		end := strings.IndexByte(s, ']')
 		if end < 0 || end == 1 {
 			return false
 		}
-		if net.ParseIP(s[1:end]) == nil {
+		if net.ParseIP(stripZone(s[1:end])) == nil {
 			return false
 		}
 		rest := s[end+1:]
-		return rest == "" || (strings.HasPrefix(rest, ":") && validPort(rest[1:]))
+		if rest == "" {
+			return true
+		}
+		// The tail is an optional ":port" or the scp ":path" spelling; both
+		// name an address-bearing remote, unlike a stray suffix.
+		return strings.HasPrefix(rest, ":")
 	}
 
-	// Split an optional :port (or the scp-form :path, handled below). A bare
-	// IPv6 literal contains several colons and is validated as a whole.
+	// A token with several colons is an IPv6 literal (optionally with a zone
+	// id), an scp-form remote over an IPv6 host (host:path), or — for a
+	// declared-destination caller — a client's protocol-prefixed address
+	// (socat TCP:host:port, rclone :backend:host:/path).
 	if colons := strings.Count(s, ":"); colons >= 2 {
-		return net.ParseIP(s) != nil
+		if net.ParseIP(stripZone(s)) != nil {
+			return true
+		}
+		if i := strings.LastIndexByte(s, ':'); i > 0 {
+			if net.ParseIP(stripZone(s[:i])) != nil {
+				return true
+			}
+		}
+		if lenient {
+			if rest, ok := stripEgressPrefix(s); ok {
+				return hostShaped(rest, true)
+			}
+		}
+		return false
 	}
+
+	// Split an optional :port (or the scp-form :path, handled below).
 	if i := strings.LastIndexByte(s, ':'); i >= 0 {
 		host, tail := s[:i], s[i+1:]
 		switch {
@@ -128,12 +198,59 @@ func hostShaped(s string, lenient bool) bool {
 			// host:path with a non-numeric path: the scp/git remote form. It is
 			// a network address only when the host part is itself host-shaped
 			// (git@github.com:org/repo.git — "github.com" is; the git object
-			// spec main:backend/config.go — "main" is not).
-			return host != "" && hostShaped(host, false)
+			// spec main:backend/config.go — "main" is not). The caller's
+			// leniency is forwarded, so a declared-destination slot also accepts
+			// a bare single-label remote (rclone remote:bucket, ssh bastion:path).
+			return host != "" && hostShaped(host, lenient)
 		}
 	}
 
 	return hostNameShaped(s, lenient)
+}
+
+// isDrivePath reports whether s is a Windows drive path (C:/x, C:\x or a bare
+// C:) rather than a host. A single-letter label followed by ':' and a separator
+// (or the end of the token) is a drive, never a network host.
+func isDrivePath(s string) bool {
+	return len(s) >= 2 && isAlpha(s[0]) && s[1] == ':' &&
+		(len(s) == 2 || s[2] == '/' || s[2] == '\\')
+}
+
+// stripZone removes an IPv6 zone identifier (%eth0) from an address literal,
+// leaving the bare address for validation.
+func stripZone(s string) string {
+	if i := strings.IndexByte(s, '%'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// egressProtocols are the transport prefixes the network clients put in front
+// of their destination (socat TCP:host:port, OPENSSL:host:443). A lenient
+// caller strips one before re-validating the remainder.
+var egressProtocols = []string{
+	"tcp:", "tcp4:", "tcp6:", "udp:", "udp4:", "udp6:",
+	"openssl:", "ssl:", "socks:", "socks4:", "socks5:",
+	"http:", "https:", "git:", "ssh:", "sftp:", "ftps:", "ftp:",
+}
+
+// stripEgressPrefix removes a client protocol prefix (TCP:host:port) or an
+// rclone remote-backend prefix (:sftp:host:/path) from a declared-destination
+// token, reporting the remainder to validate. It reports false when neither
+// prefix is present.
+func stripEgressPrefix(s string) (string, bool) {
+	// rclone backend form: :backend:host[:/path].
+	if strings.HasPrefix(s, ":") {
+		if i := strings.IndexByte(s[1:], ':'); i >= 0 {
+			return s[1+i+1:], true
+		}
+	}
+	for _, p := range egressProtocols {
+		if len(s) > len(p) && strings.EqualFold(s[:len(p)], p) {
+			return s[len(p):], true
+		}
+	}
+	return "", false
 }
 
 // fileExtLabels are final DNS labels that, in a command line, name a file, not
@@ -155,6 +272,11 @@ var fileExtLabels = map[string]bool{
 	"sql": true, "db": true, "pem": true, "key": true, "crt": true,
 	"bin": true, "exe": true, "so": true, "dylib": true, "out": true,
 	"sh": true,
+	// The version-control directory suffixes: a bare relative name like
+	// "repo.git" (or "backup.repo") is a local repository path, the class of
+	// phantom egress the gate exists to remove, not a host.
+	"git": true, "hg": true, "svn": true, "bzr": true, "repo": true,
+	"darcs": true, "fossil": true,
 }
 
 // hostNameShaped reports whether s is a DNS hostname: strict demands at least
@@ -165,6 +287,15 @@ var fileExtLabels = map[string]bool{
 // IPv4 fragment or a bare number). The strict mode additionally rejects a
 // final label that names a file extension (see fileExtLabels).
 func hostNameShaped(s string, lenient bool) bool {
+	if s == "" {
+		return false
+	}
+	// A single trailing dot is the RFC 1034 absolute-name marker (example.com.);
+	// drop it for validation while the caller keeps the original text as the
+	// target. A doubled dot is a malformed name and is left to fail below.
+	if strings.HasSuffix(s, ".") && !strings.HasSuffix(s, "..") {
+		s = s[:len(s)-1]
+	}
 	if s == "" {
 		return false
 	}
@@ -242,17 +373,20 @@ func isAlpha(c byte) bool {
 	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
-// validPort reports whether p is a decimal port number (1-5 digits).
+// validPort reports whether p is a decimal port number in the TCP/UDP range
+// (1-65535).
 func validPort(p string) bool {
 	if len(p) == 0 || len(p) > 5 {
 		return false
 	}
+	v := 0
 	for i := 0; i < len(p); i++ {
 		if p[i] < '0' || p[i] > '9' {
 			return false
 		}
+		v = v*10 + int(p[i]-'0')
 	}
-	return true
+	return v > 0 && v <= 65535
 }
 
 // isIPv4Literal reports whether s is an IPv4 address in one of the spellings
@@ -340,7 +474,9 @@ func FilterEgressTargets(s Scope, lenient bool) (Scope, bool) {
 	var keep []string
 	for _, t := range s.Targets() {
 		if lenient && HostShapedLenient(t) || !lenient && HostShaped(t) {
-			keep = append(keep, t)
+			// Keep the validated (trimmed) form the grammar judged, so the gate
+			// never reports a differently-shaped literal than the one it checked.
+			keep = append(keep, strings.TrimSpace(t))
 		}
 	}
 	if len(keep) == 0 {

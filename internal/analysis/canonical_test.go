@@ -85,7 +85,7 @@ func TestCanonicalNpxTscVsLocalBinaryIsNotSplit(t *testing.T) {
 // trailing read-only checks (grep -c vs wc -l, the echo text) are form, not
 // effect.
 func TestCanonicalSedStagingMvVsInPlaceIsNotSplit(t *testing.T) {
-	const staging = "/Users/vkochetkov/.c0wrk/projects/3908f983-dfcf-469f-9151-ab5e8f00ee9e/dc047f80-fb20-49ac-997a-7242e5e8de4b/temp/config_test.resolved"
+	const staging = "/Users/x/work/temp/config_test.resolved"
 	const (
 		staged = `sed -n '1,296p;298,327p;1973,$p' backend/config/config_test.go > ` + staging +
 			` && mv ` + staging + ` backend/config/config_test.go` +
@@ -146,6 +146,13 @@ func TestNormalizeBinary(t *testing.T) {
 		{name: "npx", args: []string{"tsc", "-b"}, wantResolved: "tsc", wantArgs: []string{"-b"}},
 		{name: "npx", args: []string{"--yes", "tsc", "-b"}, wantResolved: "tsc", wantArgs: []string{"-b"}},
 		{name: "npx", args: []string{"./node_modules/.bin/tsc"}, wantResolved: "tsc", wantArgs: []string{}},
+		// The runner's value-taking flags consume their operand, so the value is
+		// not mistaken for the executed binary (#12), and the option terminator
+		// is honoured.
+		{name: "npx", args: []string{"-p", "foo", "bar"}, wantResolved: "bar", wantArgs: []string{}},
+		{name: "npx", args: []string{"--yes", "-p", "foo", "tsc", "-b"}, wantResolved: "tsc", wantArgs: []string{"-b"}},
+		{name: "npx", args: []string{"--", "tsc"}, wantResolved: "tsc", wantArgs: []string{}},
+		{name: "bunx", args: []string{"tsc", "-b"}, wantResolved: "tsc", wantArgs: []string{"-b"}},
 		{name: "npx", wantResolved: "npx"},
 		{name: "", args: []string{"x"}, wantResolved: "", wantArgs: []string{"x"}},
 	}
@@ -192,6 +199,28 @@ func TestCanonicalStagingFoldRules(t *testing.T) {
 		}
 	})
 
+	t.Run("leading flag still folds", func(t *testing.T) {
+		// The staging fold must see through a flag on the mv (#11).
+		r := AnalyzeOrDie(t, LangBash, "echo body > /tmp/s.st && mv -f /tmp/s.st /tmp/final")
+		w := canonicalEffect(r, engine.KindFSWrite)
+		if w == nil {
+			t.Fatalf("no canonical FSWrite")
+		}
+		if got := w.Target.Targets(); len(got) != 1 || got[0] != "/tmp/final" {
+			t.Fatalf("canonical FSWrite targets = %v, want [/tmp/final] (mv -f must fold)", got)
+		}
+	})
+
+	t.Run("post-mv rewrite is not folded", func(t *testing.T) {
+		// A write that happens *after* the mv must not be re-attributed to the
+		// backup path (#34): the fold is order-aware.
+		r := AnalyzeOrDie(t, LangBash, "mv /etc/sudoers /tmp/sudoers.bak && printf 'x' > /etc/sudoers")
+		w := canonicalEffect(r, engine.KindFSWrite)
+		if w == nil || !slices.Contains(w.Target.Targets(), "/etc/sudoers") {
+			t.Fatalf("canonical erased the post-mv write to /etc/sudoers: %+v", w)
+		}
+	})
+
 	t.Run("non-path operand targets drop", func(t *testing.T) {
 		r := AnalyzeOrDie(t, LangBash, "sed -n '1,5p;9p' /etc/hosts")
 		for _, e := range r.Canonical.Effects {
@@ -233,14 +262,17 @@ func TestCommandCallRedirs(t *testing.T) {
 	want := []CallRedirect{
 		{Op: "<", Target: "in.txt", Known: true},
 		{Op: ">", Target: "out.txt", Known: true},
-		{Op: ">>", Target: "err.txt", Known: true},
+		{Op: "2>>", Target: "err.txt", Known: true},
 	}
-	// The fd prefix (2) is part of the operator only when the parser keeps it;
-	// accept both spellings of the append-err redirect.
+	// The file-descriptor prefix is part of the operator, so the per-command
+	// view keeps which stream the redirection targets (#13).
 	if len(sort.Redirs) != len(want) {
 		t.Fatalf("sort redirections = %v, want %v", sort.Redirs, want)
 	}
 	for i := range want {
+		if sort.Redirs[i].Op != want[i].Op {
+			t.Errorf("redirect[%d].Op = %q, want %q", i, sort.Redirs[i].Op, want[i].Op)
+		}
 		if sort.Redirs[i].Target != want[i].Target {
 			t.Errorf("redirect[%d].Target = %q, want %q", i, sort.Redirs[i].Target, want[i].Target)
 		}

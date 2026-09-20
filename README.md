@@ -332,7 +332,7 @@ $ flowsh --json 'rm -rf $HOME'
 {
   "schemaVersion": "effect-ir/v1",
   "tool": "flowsh",
-  "toolVersion": "flowsh/v1",
+  "toolVersion": "flowsh/v2",
   "lang": "bash",
   "input": "rm -rf $HOME",
   "root": "<argument>",
@@ -427,6 +427,37 @@ $ flowsh --json 'rm -rf $HOME'
     "invoked": "rm",
     "kind": "command",
     "name": "rm"
+  },
+  "commandCalls": [
+    {
+      "invoked": "rm",
+      "resolved": "rm",
+      "args": [
+        "-rf",
+        "/root"
+      ]
+    }
+  ],
+  "canonical": {
+    "effects": [
+      {
+        "kind": "FSWrite",
+        "target": {
+          "targets": [
+            "/root"
+          ],
+          "arbitrary": false
+        },
+        "mode": "Direct",
+        "certainty": "Certain",
+        "taint": {
+          "labels": [],
+          "arbitrary": false
+        },
+        "reversible": false
+      }
+    ],
+    "key": "FSWrite|Direct|[/root]"
   },
   "destructive": [
     {

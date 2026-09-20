@@ -42,7 +42,8 @@ type CommandCall struct {
 	// token.
 	Args []string `json:"args,omitempty"`
 	// Redirs are the statement's resolved redirections (operator plus expanded
-	// target text). They carry the staging writes the canonical form folds.
+	// target text). They are the ordering witness the canonical staging fold
+	// reads: a source written by a preceding call's redirect is a staging file.
 	Redirs []CallRedirect `json:"redirs,omitempty"`
 }
 
@@ -87,7 +88,15 @@ type Canonical struct {
 // binary path while the executed binary — and its effect — is the same, so the
 // canonical resolution consumes the runner.
 var packageRunners = map[string]bool{
-	"npx": true,
+	"npx":  true,
+	"bunx": true,
+}
+
+// runnerValueFlags are the package-runner flags that take a separate value
+// operand, so the word after one is that flag's value, not the executed binary
+// (npx -p foo bar runs bar, not foo).
+var runnerValueFlags = map[string]bool{
+	"-p": true, "--package": true, "-c": true, "--call": true,
 }
 
 // nodeModulesBin is the directory segment every JavaScript project exposes its
@@ -138,8 +147,22 @@ func normalizeBinary(name string, args []string) (string, []string) {
 		return "", args
 	}
 	if packageRunners[name] {
-		for i, a := range args {
-			if a == "" || strings.HasPrefix(a, "-") {
+		for i := 0; i < len(args); i++ {
+			a := args[i]
+			if a == "--" {
+				// The binary follows the option terminator.
+				if i+1 < len(args) {
+					r, _ := normalizeBinary(args[i+1], nil)
+					return r, args[i+2:]
+				}
+				continue
+			}
+			if strings.HasPrefix(a, "-") {
+				// Skip a value-taking runner flag together with its value, so
+				// -p foo does not mistake the package name for the binary.
+				if runnerValueFlags[a] {
+					i++
+				}
 				continue
 			}
 			r, _ := normalizeBinary(a, nil)
@@ -147,12 +170,39 @@ func normalizeBinary(name string, args []string) (string, []string) {
 		}
 	}
 	if i := strings.LastIndex(name, nodeModulesBin); i >= 0 {
-		name = name[i+len(nodeModulesBin):]
+		end := i + len(nodeModulesBin)
+		// Strip only a whole path segment (node_modules/.bin/…), never a
+		// directory that merely contains the substring (./node_modules/.binx/…).
+		if (i == 0 || name[i-1] == '/' || name[i-1] == '\\') &&
+			(end == len(name) || name[end] == '/' || name[end] == '\\') {
+			name = name[end:]
+		}
 	}
 	if j := strings.LastIndexAny(name, `/\`); j >= 0 {
 		name = name[j+1:]
 	}
 	return name, args
+}
+
+// identity is a comparable key for a call: two abstract executions of the same
+// call site (name, normalized binary, arguments, redirections) produce the same
+// identity, so a repeated call — a loop body — contributes one report entry.
+func (c CommandCall) identity() string {
+	var b strings.Builder
+	b.WriteString(c.Invoked)
+	b.WriteByte(0)
+	b.WriteString(c.Resolved)
+	for _, a := range c.Args {
+		b.WriteByte(0)
+		b.WriteString(a)
+	}
+	for _, r := range c.Redirs {
+		b.WriteByte(0)
+		b.WriteString(r.Op)
+		b.WriteByte('=')
+		b.WriteString(r.Target)
+	}
+	return b.String()
 }
 
 // buildCanonical derives the canonical effect set from the report's effects and
@@ -163,12 +213,13 @@ func normalizeBinary(name string, args []string) (string, []string) {
 // The effects are then merged and ordered by the core's canonical rules and
 // keyed by their frozen Effect.Key().
 func buildCanonical(effs []engine.Effect, calls []CommandCall) *Canonical {
-	staged := stagingDestinations(effs, calls)
+	staged := stagingDestinations(calls)
 	var out []engine.Effect
 	for _, e := range effs {
-		if e.Target.IsTop() {
-			// ⊤ cannot be refined by target normalization; keep it as-is so
-			// the canonical form stays exactly as bounded as the report.
+		if e.Target.IsTop() || e.Target.IsBottom() {
+			// ⊤ cannot be refined and ⊥ has no target to normalize; keep either
+			// verbatim so the canonical form stays a faithful image of
+			// effects[] and never drops an effect it carries.
 			out = append(out, e)
 			continue
 		}
@@ -190,44 +241,71 @@ func buildCanonical(effs []engine.Effect, calls []CommandCall) *Canonical {
 // the program's mv calls that the same program writes first (the
 // `cmd > tmp && mv tmp final` pattern). A source nothing writes is an ordinary
 // rename, not a staging file, and is left alone.
-func stagingDestinations(effs []engine.Effect, calls []CommandCall) map[string]string {
+func stagingDestinations(calls []CommandCall) map[string]string {
 	if len(calls) == 0 {
 		return nil
 	}
 	moves := make(map[string]string)
-	for _, c := range calls {
-		if c.Resolved != "mv" || len(c.Args) < 2 {
-			continue
-		}
-		src, dst := c.Args[0], c.Args[len(c.Args)-1]
-		if src == "" || dst == "" || src == dst {
-			continue
-		}
-		if _, dup := moves[src]; !dup {
-			moves[src] = dst
-		}
-	}
-	if len(moves) == 0 {
-		return nil
-	}
+	// written is the set of paths a redirect has written *so far* in traversal
+	// order: only a source written before its mv is a staging file, so the
+	// "move the file aside, then rewrite it" idiom does not fold the later write
+	// onto the backup path.
 	written := make(map[string]bool)
-	for _, e := range effs {
-		if e.Kind != engine.KindFSWrite || e.Target.IsTop() {
-			continue
+	for _, c := range calls {
+		if c.Resolved == "mv" {
+			src, dst := mvOperands(c.Args)
+			if src != "" && dst != "" && src != dst && written[src] {
+				if _, dup := moves[src]; !dup {
+					moves[src] = dst
+				}
+			}
 		}
-		for _, t := range e.Target.Targets() {
-			written[t] = true
-		}
-	}
-	for src := range moves {
-		if !written[src] {
-			delete(moves, src)
+		for _, r := range c.Redirs {
+			if writesFile(r.Op) && r.Target != "" {
+				written[r.Target] = true
+			}
 		}
 	}
 	if len(moves) == 0 {
 		return nil
 	}
 	return moves
+}
+
+// mvOperands returns the source and destination operands of an mv invocation,
+// skipping option words (mv -f tmp final, mv -- tmp final). A -t/--target-
+// directory invocation moves into a directory, which is not a staging fold, so
+// it reports no operands.
+func mvOperands(args []string) (string, string) {
+	var ops []string
+	for _, a := range args {
+		if a == "--" {
+			continue
+		}
+		if strings.HasPrefix(a, "-") && a != "-" {
+			if a == "-t" || a == "--target-directory" || strings.HasPrefix(a, "--target-directory=") {
+				return "", ""
+			}
+			continue
+		}
+		ops = append(ops, a)
+	}
+	if len(ops) < 2 {
+		return "", ""
+	}
+	return ops[0], ops[len(ops)-1]
+}
+
+// writesFile reports whether a redirection operator writes its target's file
+// (a stream dupe or a read does not). A leading file-descriptor prefix (2>, 10>>)
+// is stripped first, since the per-command view keeps it.
+func writesFile(op string) bool {
+	op = strings.TrimLeft(op, "0123456789")
+	switch op {
+	case ">", ">>", "&>", "&>>":
+		return true
+	}
+	return false
 }
 
 // targetNoise lists bytes that essentially never occur in a path but routinely
@@ -244,9 +322,18 @@ const targetNoise = ";|<>^$"
 func canonicalTarget(t string, kind engine.EffectKind, staged map[string]string) string {
 	if dst, ok := staged[t]; ok {
 		if kind == engine.KindFSWrite {
-			return dst
+			// Validate the fold destination like any other target, so a
+			// destination carrying noise bytes cannot slip in through the fold.
+			return canonicalTarget(dst, kind, nil)
 		}
 		return ""
+	}
+	if kind == engine.KindNetEgress || kind == engine.KindNetIngress {
+		// A network address is never a knowledge-base over-approximation of a
+		// file operand: keep it verbatim, so the noise / leading-'-' heuristics
+		// (meant for file-ish targets) can never erase a live egress from the
+		// canonical form.
+		return t
 	}
 	if t == "" || strings.HasPrefix(t, "-") || strings.ContainsAny(t, targetNoise) {
 		return ""

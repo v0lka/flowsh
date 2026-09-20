@@ -974,7 +974,7 @@ var egressDialects = map[Dialect]string{
 	DialectGit:       "strict",  // operands are subcommands/refs/pathspecs first
 	DialectVCS:       "strict",  // ditto for svn/hg/bzr/fossil/darcs
 	DialectPkgmgr:    "strict",  // operands are packages/subcommands
-	DialectSystemd:   "strict",  // -H/--host flag values
+	DialectSystemd:   "lenient", // -H/--host flag values declare a destination host
 	DialectSecurity:  "strict",  // gpg key servers
 }
 

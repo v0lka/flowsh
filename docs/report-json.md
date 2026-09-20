@@ -17,10 +17,10 @@ Every report carries three identity fields:
 | --- | ----- | ------- |
 | `schemaVersion` | `effect-ir/v1` | Tags the **effect payload** (`effects[]` and its atoms). Equal to `engine.SchemaVersion`. |
 | `tool` | `flowsh` | The tool name (`analysis.ToolName`). |
-| `toolVersion` | `flowsh/v1` | Tags the **CLI report shape**: the envelope plus the additive `why`, `resolution` and `destructive` fields over v1. Equal to `analysis.ToolVersion`. |
+| `toolVersion` | `flowsh/v2` | Tags the **CLI report shape**: the envelope plus the additive `why`, `resolution`, `destructive`, `commandCalls` and `canonical` fields over v1. Equal to `analysis.ToolVersion`. |
 
 A consumer that parses the effect set pins to `effect-ir/v1`; a consumer that
-reads the CLI-specific fields pins to `flowsh/v1`. Any change to the shape of an
+reads the CLI-specific fields pins to `flowsh/v2`. Any change to the shape of an
 emitted field bumps the corresponding tag; the analyser never renames or removes
 a field silently.
 
@@ -34,7 +34,7 @@ $ flowsh --json 'rm -rf $HOME'
 {
   "schemaVersion": "effect-ir/v1",
   "tool": "flowsh",
-  "toolVersion": "flowsh/v1",
+  "toolVersion": "flowsh/v2",
   "lang": "bash",
   "input": "rm -rf $HOME",
   "root": "<argument>",
@@ -74,6 +74,20 @@ $ flowsh --json 'rm -rf $HOME'
   "top": false,
   "commands": 1,
   "resolution": { "invoked": "rm", "kind": "command", "name": "rm" },
+  "commandCalls": [ { "invoked": "rm", "resolved": "rm", "args": [ "-rf", "/root" ] } ],
+  "canonical": {
+    "effects": [
+      {
+        "kind": "FSWrite",
+        "target": { "targets": ["/root"], "arbitrary": false },
+        "mode": "Direct",
+        "certainty": "Certain",
+        "taint": { "labels": [], "arbitrary": false },
+        "reversible": false
+      }
+    ],
+    "key": "FSWrite|Direct|[/root]"
+  },
   "destructive": [
     { "command": "rm", "spec": "-f", "class": "E",
       "reason": "forced removal that suppresses prompts and hides errors on missing files" },
@@ -96,7 +110,7 @@ Present on every report:
 | --- | ---- | ------- |
 | `schemaVersion` | string | Frozen effect-schema tag (`effect-ir/v1`). |
 | `tool` | string | `flowsh`. |
-| `toolVersion` | string | CLI report-contract tag (`flowsh/v1`). |
+| `toolVersion` | string | CLI report-contract tag (`flowsh/v2`). |
 | `lang` | string | Dialect actually analysed: `bash`, `posix`, or `posh`. |
 | `input` | string | The command source text that was analysed. |
 
@@ -116,6 +130,8 @@ Present on every report:
 | `reason` | string | `conservative` or `top` | Why the analysis degraded. |
 | `commands` | integer | always | Number of commands/statements analysed. |
 | `resolution` | object | always | Aggregated name resolution — see [resolution](#resolution). |
+| `commandCalls` | array of call | a call reached the binder | Per-command resolution view — see [commandCalls](#commandcalls). |
+| `canonical` | object | the report has effects | Effect-based canonical form — see [canonical](#canonical). |
 | `why` | array of trace | trace non-empty | Per-effect derivation — see [why](#why). |
 | `destructive` | array of finding | matches non-empty | Matched destructive-flags entries — see [destructive](#destructive). |
 | `notes` | array of string | notes non-empty | Frontend diagnostics. |
@@ -172,6 +188,34 @@ such as `true` or `:`), none of which are routed to the binder. The `assignment`
 `empty` kinds are emitted only when such a statement is passed to the binder
 directly (e.g. through `bind.Bind`); the bash frontend executes them itself.
 
+### commandCalls
+
+The per-command companion of `resolution`: one entry per distinct call the
+binder saw, in traversal order (a loop body contributes one entry). It is
+omitted when no call reached the binder (the same condition as a zero-value
+`resolution`).
+
+| Key | Type | Meaning |
+| --- | ---- | ------- |
+| `invoked` | string | The name exactly as written at the call site. |
+| `resolved` | string | The normalized binary: the basename of the resolved name with a `node_modules/.bin` segment stripped, and for a package runner (`npx`, `bunx`) the first non-flag operand. |
+| `args` | array of string | The invocation's argument values after normalization (the runner's own words consumed; empty values dropped). |
+| `redirs` | array of redirect | The statement's resolved redirections (`{ "op": string, "target": string, "known": bool }`), the ordering witness the canonical staging fold reads. |
+
+### canonical
+
+The effect-based canonical form: the report's effect set normalized for
+signature comparison, plus the deterministic key derived from it. It is present
+whenever the report has effects. Two invocations that differ in form but not in
+effect — a blocked command retried through an equivalent form — carry the same
+key. The normalizations are deliberately coarse (staged temp files fold onto the
+destination the trailing `mv` names; non-path operand targets drop out).
+
+| Key | Type | Meaning |
+| --- | ---- | ------- |
+| `effects` | array of effect | The normalized effect set, in the shape of [effects](#effects). |
+| `key` | string | The effects' frozen `Effect.Key()` values, sorted and joined by `;`. Empty when there are no canonical effects. |
+
 ### destructive
 
 Each element is one matched entry of the knowledge base's destructive-flags table:
@@ -224,7 +268,7 @@ The document is frozen. The effect payload is pinned by the golden fixtures
 the envelope is pinned by the CLI smoke test
 [`cmd/flowsh/smoke_test.go`](../cmd/flowsh/smoke_test.go). Changing the shape of an emitted
 field is a breaking change: bump the relevant tag (`effect-ir/v1` or
-`flowsh/v1`), regenerate the fixtures, and update the consumer. The full
+`flowsh/v2`), regenerate the fixtures, and update the consumer. The full
 checklist is in the
 [report contract](../specs/contracts/report-json.md#breaking-change-checklist).
 

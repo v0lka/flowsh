@@ -92,6 +92,20 @@ jobs:
             done < <(awk 'BEGIN{f=0} /^[[:space:]]*```/{f=!f; next} f==0{print}' "$f" \
                      | sed -E 's/`[^`]*`//g' | grep -oE '\]\([^)]+\)' | sed -E 's/^\]\((.*)\)$/\1/')
           done
+          # The frozen report-contract tag in the live docs must match the
+          # constant the binary stamps, so a ToolVersion bump cannot drift
+          # (the ADRs are historical and are excluded deliberately).
+          tag=$(grep -oE 'ToolVersion[[:space:]]*=[[:space:]]*"[^"]+"' internal/analysis/analyze.go | sed -E 's/.*"([^"]+)"/\1/')
+          if [ -z "$tag" ]; then
+            echo "cannot determine analysis.ToolVersion from internal/analysis/analyze.go"
+            exit 1
+          fi
+          for f in README.md CONTRIBUTING.md SECURITY.md docs/*.md specs/architecture/data-flow.md; do
+            if grep -qE 'flowsh/v[0-9]' "$f" && ! grep -qF "$tag" "$f"; then
+              echo "$f references a stale report-contract tag (want $tag)"
+              fail=1
+            fi
+          done
           exit $fail
 
       # Runs the GuardFall A-E corpus (0-miss invariant), the CLI tests

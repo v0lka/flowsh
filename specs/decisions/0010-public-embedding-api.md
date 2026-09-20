@@ -4,6 +4,12 @@
 
 Accepted
 
+> **Historical record.** This decision describes the embedding contract with the
+> report-contract tag as `flowsh/v1`. The live tag is now `flowsh/v2` (see
+> [`specs/contracts/report-json.md`](../contracts/report-json.md) and
+> `analysis.ToolVersion`); the `flowsh/v1` spellings below are the tag as of
+> this decision.
+
 ## Context
 
 `SECURITY.md` and the `docs/` set already describe a library API. `SECURITY.md`

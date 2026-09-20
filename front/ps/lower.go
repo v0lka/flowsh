@@ -119,6 +119,10 @@ type lowerer struct {
 	// order-aware: an alias only rewrites the calls that follow its declaration,
 	// as in PowerShell (a later Set-Alias must not rewrite an earlier call).
 	aliases map[string]string
+	// gatedEgress records that the egress gate dropped a literal target during
+	// the command currently being lowered, so the intrinsic ProcSpawn fallback
+	// knows the command would otherwise contribute no effect.
+	gatedEgress bool
 }
 
 // emitEff records one effect together with the derivation that justifies it,
@@ -182,6 +186,10 @@ func (l *lowerer) command(s *Stmt) {
 	if c == nil {
 		return
 	}
+	// before records the effect count so the intrinsic ProcSpawn fallback can
+	// tell whether this command (or its specs) contributed any effect at all.
+	before := len(l.effects)
+	l.gatedEgress = false
 	if c.ArrayComma {
 		// A comma-separated argument list (`Remove-Item x,y`) is not modelled:
 		// the operand set cannot be bounded, so degrade to ⊤ rather than bind a
@@ -229,7 +237,36 @@ func (l *lowerer) command(s *Stmt) {
 	}
 	l.dataFiles(c, canonical)
 	l.bumpFor(c, canonical)
+	// A command whose only effect was a gated-out egress target (a literal that
+	// names no network address) must not leave the report empty: emit the
+	// command's intrinsic "it ran" effect, as the bash binder does, so the
+	// no-silent-miss invariant holds on this path too. Pure cmdlets that
+	// contribute no external effect are intentionally left effect-free.
+	l.ensureGatedEgressFallback(c, canonical, before)
 	l.redirs(c)
+}
+
+// ensureGatedEgressFallback emits the command's intrinsic "it ran" effect when
+// the egress gate dropped the command's only effect and nothing else replaced
+// it. It is the PowerShell counterpart of the bash binder's intrinsicProcSpawn,
+// closing the fail-open hole the gate would otherwise create for a command like
+// Invoke-WebRequest -Uri ./local.html (a literal that names no network address).
+func (l *lowerer) ensureGatedEgressFallback(c *Command, canonical string, before int) {
+	if len(l.effects) != before || !l.gatedEgress || l.conservative {
+		return
+	}
+	e := effectOf(engine.KindProcSpawn, scopeOf(canonical), engine.ModeDirect, false)
+	l.emitEff(e, atom(engine.AtomCommand, canonical, c.Pos))
+	l.note("%s: egress target gated out → ProcSpawn", cmdLabel(c, canonical))
+}
+
+// egressTargetUnresolved reports whether a lowering target is not a
+// confidently-literal destination word: it references a variable ($), carries a
+// backtick escape, or is a parenthesised sub-expression. Such a target's value
+// is not known at analysis time, so its egress stays as unresolved (⊤) rather
+// than being judged — and rejected — as a literal.
+func egressTargetUnresolved(s string) bool {
+	return strings.ContainsAny(s, "$`()")
 }
 
 // topReason reports whether a command must be lowered to ⊤ and why. It covers
@@ -373,11 +410,16 @@ func (l *lowerer) emitOne(c *Command, cmd string, sp Spec, target string, cred b
 		case target == "":
 			// No target text (TargetNone/TargetSelf specs): the effect keeps
 			// the ⊥ target it always had.
-		case strings.Contains(target, "$"):
+		case egressTargetUnresolved(target):
+			// A target that references a variable, carries a backtick escape or
+			// is a parenthesised sub-expression is not known at analysis time:
+			// the egress stays, widened to ⊤ (the unresolved egress keeps
+			// participating in the network controls).
 			scope = engine.ScopeTop()
 		case engine.HostShapedLenient(target):
 		default:
 			l.note("%s: %s %s names no network address → no egress", cmd, sp.Op, quoteTarget(target))
+			l.gatedEgress = true
 			return
 		}
 	}

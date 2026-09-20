@@ -284,7 +284,7 @@ func (b *Binder) bindCommand(cmd *kb.Command, argv []Arg, stdinTaint engine.Tain
 				if strings.HasPrefix(op.Value, p.Spec) {
 					val := Arg{Value: op.Value[len(p.Spec):], Literal: true, Pos: withFile(op.Pos, file)}
 					group := []Arg{val}
-					effs, ds := lowerParam(cmd, p, val, argsScope(group), argsTaint(group), stdinTaint, []engine.Atom{cmdAtom, operandAtom(op.Value, withFile(op.Pos, file))})
+					effs, ds := lowerParam(cmd, p, val, argsScope(group, p.Effect.Kind == engine.KindNetEgress), argsTaint(group), stdinTaint, []engine.Atom{cmdAtom, operandAtom(op.Value, withFile(op.Pos, file))})
 					out = append(out, effs...)
 					ders = append(ders, ds...)
 					specs = append(specs, p.Spec)
@@ -300,7 +300,7 @@ func (b *Binder) bindCommand(cmd *kb.Command, argv []Arg, stdinTaint engine.Tain
 
 	// Flags and options matched by name; their effect target defaults to the
 	// operand set for valueFrom=args.
-	operandScope, operandTaint := argsScope(rest), argsTaint(rest)
+	operandScope, operandTaint := argsScope(rest, false), argsTaint(rest)
 	for _, m := range matches {
 		mv := m.value
 		mv.Pos = withFile(mv.Pos, file)
@@ -308,7 +308,11 @@ func (b *Binder) bindCommand(cmd *kb.Command, argv []Arg, stdinTaint engine.Tain
 		if m.hasVal && mv.Value != "" {
 			atoms = append(atoms, operandAtom(mv.Value, mv.Pos))
 		}
-		effs, ds := lowerParam(cmd, m.param, mv, operandScope, operandTaint, stdinTaint, atoms)
+		scope := operandScope
+		if m.param.Effect.Kind == engine.KindNetEgress {
+			scope = argsScope(rest, true)
+		}
+		effs, ds := lowerParam(cmd, m.param, mv, scope, operandTaint, stdinTaint, atoms)
 		out = append(out, effs...)
 		ders = append(ders, ds...)
 		specs = append(specs, m.param.Spec)
@@ -340,7 +344,7 @@ func (b *Binder) bindCommand(cmd *kb.Command, argv []Arg, stdinTaint engine.Tain
 			for _, g := range group {
 				atoms = append(atoms, operandAtom(g.Value, withFile(g.Pos, file)))
 			}
-			effs, ds := lowerParam(cmd, p, Arg{}, argsScope(group), argsTaint(group), stdinTaint, atoms)
+			effs, ds := lowerParam(cmd, p, Arg{}, argsScope(group, p.Effect.Kind == engine.KindNetEgress), argsTaint(group), stdinTaint, atoms)
 			out = append(out, effs...)
 			ders = append(ders, ds...)
 			specs = append(specs, p.Spec)
@@ -365,7 +369,7 @@ func (b *Binder) bindCommand(cmd *kb.Command, argv []Arg, stdinTaint engine.Tain
 			for _, g := range group {
 				atoms = append(atoms, operandAtom(g.Value, withFile(g.Pos, file)))
 			}
-			effs, ds := lowerParam(cmd, p, Arg{}, argsScope(group), argsTaint(group), stdinTaint, atoms)
+			effs, ds := lowerParam(cmd, p, Arg{}, argsScope(group, p.Effect.Kind == engine.KindNetEgress), argsTaint(group), stdinTaint, atoms)
 			out = append(out, effs...)
 			ders = append(ders, ds...)
 			specs = append(specs, p.Spec)
@@ -795,7 +799,8 @@ func lenientHostDialect(cmd *kb.Command) bool {
 	switch cmd.Dialect {
 	case kb.DialectCurl, kb.DialectWget, kb.DialectNetcat,
 		kb.DialectOpenSSH, kb.DialectNetTools, kb.DialectRsync,
-		kb.DialectUtilLinux: // logger -n/--server: the flag value is the syslog server
+		kb.DialectUtilLinux, // logger -n/--server: the flag value is the syslog server
+		kb.DialectSystemd:   // systemctl -H/--host: the flag value declares a destination host
 		return true
 	}
 	return false
@@ -834,7 +839,13 @@ func targetFor(cmd *kb.Command, p kb.Param, value Arg, argScope engine.Scope) en
 // expansion lands inside that directory) contributes its directory as a target
 // — precise enough for containment checks and strictly sound, since no
 // expansion can name a path outside it.
-func argsScope(g []Arg) engine.Scope {
+//
+// egress marks the group as feeding a NetEgress destination: a confined operand
+// is a filesystem abstraction (a directory), not a network address, so it makes
+// the destination unresolved (⊤) rather than contributing the directory as a
+// literal target the host grammar would reject and drop — the safe side
+// (unresolved egress) is preserved, matching the pre-gate behaviour.
+func argsScope(g []Arg, egress bool) engine.Scope {
 	if len(g) == 0 {
 		return engine.ScopeBottom()
 	}
@@ -842,6 +853,9 @@ func argsScope(g []Arg) engine.Scope {
 	for _, a := range g {
 		if !a.Literal {
 			if a.Dir != "" {
+				if egress {
+					return engine.ScopeTop()
+				}
 				vals = append(vals, a.Dir)
 				continue
 			}

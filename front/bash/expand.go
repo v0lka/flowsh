@@ -92,8 +92,7 @@ const defaultUmask = "0022"
 var numericVars = map[string]bool{
 	"?":          true, // last exit status (readonly)
 	"PIPESTATUS": true, // per-pipeline-stage exit statuses (readonly)
-	"#":          true, // positional parameter count
-	"!":          true, // pid of the last background job
+	"#":          true, // positional parameter count (readonly)
 	"RANDOM":     true, // 0–32767 pseudo-random (assignable, then ordinary)
 	"LINENO":     true, // current line number
 	"SECONDS":    true, // seconds since shell start
@@ -117,7 +116,7 @@ func NewState() *State {
 		s.Vars[k] = &Var{Value: v, Set: true, Known: true, Taint: engine.TaintBottom()}
 	}
 	for name := range numericVars {
-		readonly := name == "?" || name == "PIPESTATUS" || name == "UID" || name == "EUID" || name == "PPID"
+		readonly := name == "?" || name == "PIPESTATUS" || name == "#" || name == "UID" || name == "EUID" || name == "PPID"
 		s.Vars[name] = &Var{Set: true, Known: false, Numeric: true, Readonly: readonly, Taint: engine.TaintBottom()}
 	}
 	return s
@@ -702,7 +701,9 @@ func (it *interp) arithKnown(p *syntax.ArithmExp) bool {
 // numericParam reports whether the parameter expansion p is numeric-class: it
 // reads a numeric-class variable, takes a length (${#x}), or evaluates to
 // digits. Operators that could splice non-numeric text into the value (an
-// alternate word or a replacement carrying a path separator) disqualify it.
+// alternate word or a replacement carrying a path separator or a path
+// structure) or that could expand to nothing (a slice, an indirect reference)
+// disqualify it.
 func (it *interp) numericParam(p *syntax.ParamExp) bool {
 	if p == nil || p.Param == nil {
 		return false
@@ -716,23 +717,97 @@ func (it *interp) numericParam(p *syntax.ParamExp) bool {
 	if p.Length {
 		return true
 	}
+	// A slice (${x:off:len}, possibly zero-length) expands to nothing, which
+	// would let the literal text that follows start a fresh — possibly
+	// absolute — path component. An array subscript is kept (the whole-array
+	// [*]/[@] forms and a numeric index both name bounded digit elements); a
+	// subscript that could be out of range is handled by the empty-expansion
+	// check in numericConfinedDir.
+	if p.Slice != nil {
+		return false
+	}
 	v := it.state.Get(p.Param.Value)
 	if v == nil || !v.Set || !v.Numeric {
 		return false
 	}
-	// The value itself is numeric; an operator may still substitute its own
-	// word. An alternate/replacement that carries a path separator could move
-	// the expansion out of the confined directory, so it disqualifies. A
-	// dynamic alternate (empty literal text) whose variable is itself set does
-	// not fire at all, and one that would fire is rejected conservatively only
-	// when its literal text names a path.
-	if p.Exp != nil && p.Exp.Word != nil && strings.Contains(wordLiteralText(p.Exp.Word), "/") {
+	// The value itself is numeric, but an alternate/replacement operator
+	// substitutes its own word into the value. Accept it only when that word is
+	// itself numeric-class (every part is a numeric expansion or a path-free
+	// literal): a dynamic or path-bearing word could move the expansion out of
+	// the confined directory.
+	if p.Exp != nil && p.Exp.Word != nil && !it.numericParts(p.Exp.Word.Parts) {
 		return false
 	}
-	if p.Repl != nil && p.Repl.With != nil && strings.Contains(wordLiteralText(p.Repl.With), "/") {
+	if p.Repl != nil && p.Repl.With != nil && !it.numericParts(p.Repl.With.Parts) {
 		return false
 	}
 	return true
+}
+
+// wholeArrayIndex reports whether idx is the whole-array subscript [*] or [@],
+// which for a numeric-class array expands to its digit elements (never empty
+// for a non-empty array).
+func wholeArrayIndex(idx syntax.ArithmExpr) bool {
+	w, ok := idx.(*syntax.Word)
+	if !ok || len(w.Parts) != 1 {
+		return false
+	}
+	lit, ok := w.Parts[0].(*syntax.Lit)
+	return ok && (lit.Value == "*" || lit.Value == "@")
+}
+
+// numericParamEmpty reports whether a numeric-class expansion may expand to
+// nothing, which would let the literal text that follows it start a fresh —
+// possibly absolute — path component. An array subscript can be out of range;
+// an alternate/replacement is dropped above unless its word is numeric-safe; a
+// length or a bare status/identity read is always at least one digit.
+func numericParamEmpty(p *syntax.ParamExp) bool {
+	if p == nil {
+		return true
+	}
+	return p.Index != nil && !wholeArrayIndex(p.Index)
+}
+
+// numericParts reports whether every part of a word is numeric-class: a
+// numeric expansion or a literal that carries no path structure (no separator
+// and no "."/".." segment, no backslash escape). Such a word can only
+// contribute digits when spliced, so it cannot move an expansion out of its
+// directory.
+func (it *interp) numericParts(parts []syntax.WordPart) bool {
+	for _, part := range parts {
+		switch p := part.(type) {
+		case *syntax.Lit:
+			if unsafeLiteral(p.Value) {
+				return false
+			}
+		case *syntax.SglQuoted:
+			if unsafeLiteral(p.Value) {
+				return false
+			}
+		case *syntax.DblQuoted:
+			if !it.numericParts(p.Parts) {
+				return false
+			}
+		case *syntax.ParamExp:
+			if !it.numericParam(p) {
+				return false
+			}
+		case *syntax.ArithmExp:
+			if !it.arithKnown(p) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// unsafeLiteral reports whether a literal word part could introduce path
+// structure — a separator, a "."/".." segment or a backslash escape — and so
+// must not be folded into a numeric-class expansion.
+func unsafeLiteral(v string) bool {
+	return strings.ContainsAny(v, `/\`) || hasDotDotSegment(v)
 }
 
 // knownParamText returns the exact value a bare parameter read resolves to when
@@ -769,30 +844,49 @@ func (it *interp) numericConfinedDir(w *syntax.Word) (string, bool) {
 		prefix     strings.Builder // literal text before the first numeric part
 		full       strings.Builder // all literal text, for the ".." check
 		sawNumeric bool
+		prevEmpty  bool // the previous part was a possibly-empty numeric expansion
+		escaped    bool // a literal after a numeric part starts a fresh component
 	)
 	// walk folds one run of word parts; it returns false as soon as a
 	// non-numeric dynamic part disqualifies the word.
-	var walk func(parts []syntax.WordPart, quoted bool) bool
-	walk = func(parts []syntax.WordPart, quoted bool) bool {
+	var walk func(parts []syntax.WordPart) bool
+	walk = func(parts []syntax.WordPart) bool {
 		for _, p := range parts {
 			switch p := p.(type) {
 			case *syntax.Lit:
+				// A backslash escape hides the decoded text from the checks
+				// below (\.\. is a real ".." in shell), so it disqualifies.
+				if strings.Contains(p.Value, `\`) {
+					return false
+				}
+				if prevEmpty && startsNewComponent(p.Value) {
+					escaped = true
+				}
 				full.WriteString(p.Value)
 				if !sawNumeric {
 					prefix.WriteString(p.Value)
 				}
+				prevEmpty = false
 			case *syntax.SglQuoted:
+				if strings.Contains(p.Value, `\`) {
+					return false
+				}
+				if prevEmpty && startsNewComponent(p.Value) {
+					escaped = true
+				}
 				full.WriteString(p.Value)
 				if !sawNumeric {
 					prefix.WriteString(p.Value)
 				}
+				prevEmpty = false
 			case *syntax.DblQuoted:
-				if !walk(p.Parts, true) {
+				if !walk(p.Parts) {
 					return false
 				}
 			case *syntax.ParamExp:
 				if it.numericParam(p) {
 					sawNumeric = true
+					prevEmpty = numericParamEmpty(p)
 					continue
 				}
 				// A plain read of a statically-known variable (a host binding,
@@ -801,10 +895,14 @@ func (it *interp) numericConfinedDir(w *syntax.Word) (string, bool) {
 				// around it. Only bare reads fold — an operator would change
 				// the value.
 				if s, ok := it.knownParamText(p); ok {
+					if prevEmpty && startsNewComponent(s) {
+						escaped = true
+					}
 					full.WriteString(s)
 					if !sawNumeric {
 						prefix.WriteString(s)
 					}
+					prevEmpty = false
 					continue
 				}
 				return false
@@ -813,19 +911,30 @@ func (it *interp) numericConfinedDir(w *syntax.Word) (string, bool) {
 					return false
 				}
 				sawNumeric = true
+				prevEmpty = false
 			default:
 				return false
 			}
 		}
 		return true
 	}
-	if !walk(w.Parts, false) || !sawNumeric {
+	if !walk(w.Parts) || !sawNumeric {
 		return "", false
 	}
-	if hasDotDotSegment(full.String()) {
+	// A ".." anywhere in the literal text, or a literal that starts a fresh
+	// component right after a possibly-empty numeric part (which would splice
+	// an absolute path), both escape the directory: refuse confinement.
+	if escaped || hasDotDotSegment(full.String()) {
 		return "", false
 	}
 	return dirPrefix(prefix.String()), true
+}
+
+// startsNewComponent reports whether a literal begins a fresh path component:
+// an absolute/root prefix ("/" or "\") starts one outright, and so does a ".."
+// (already covered by the ".." scan) or "." segment.
+func startsNewComponent(s string) bool {
+	return strings.HasPrefix(s, "/") || strings.HasPrefix(s, `\`)
 }
 
 // dirPrefix truncates a literal path prefix at its last separator, yielding the

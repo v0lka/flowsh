@@ -144,7 +144,7 @@ stamped into every report:
 | Constant | Value | Tags |
 | -------- | ----- | ---- |
 | `api.SchemaVersion` | `effect-ir/v1` | The shape of the effect IR and the report's effect payload. |
-| `api.ToolVersion` | `flowsh/v1` | The report document as a whole (envelope + CLI fields). |
+| `api.ToolVersion` | `flowsh/v2` | The report document as a whole (envelope + CLI fields). |
 
 **Pin to a contract revision by checking `Report.SchemaVersion` and
 `Report.ToolVersion` rather than by relying on a module version.** A change to
@@ -178,4 +178,4 @@ signal that your integration must be re-checked.
 - [ADR-0010: Public embedding API](../specs/decisions/0010-public-embedding-api.md) — why `api/` is a type-alias re-export and how it is versioned.
 - [Layer Architecture](../specs/architecture/layers.md) — where `api/` sits relative to the facade and the CLI.
 - [Analysis Report](../specs/domains/analysis-report.md) — the facade `api` re-exports.
-- [Report Contract](../specs/contracts/report-json.md) — the `flowsh/v1` envelope pinned across the boundary.
+- [Report Contract](../specs/contracts/report-json.md) — the `flowsh/v2` envelope pinned across the boundary.

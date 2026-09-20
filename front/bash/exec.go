@@ -1806,12 +1806,14 @@ func (it *interp) redir(r *syntax.Redirect) {
 	it.step()
 	switch r.Op {
 	case syntax.RdrOut, syntax.AppOut, syntax.ClbOut, syntax.RdrAll, syntax.AppAll:
-		it.redirectTarget(r, false)
+		it.redirectTarget(r, false, true)
 	case syntax.RdrIn:
-		it.redirectTarget(r, true)
+		it.redirectTarget(r, true, true)
 	case syntax.RdrInOut:
-		it.redirectTarget(r, true)
-		it.redirectTarget(r, false)
+		// <> reads and writes the same file: one redirection, so only its
+		// first walk records it (a genuine second `> a` still records).
+		it.redirectTarget(r, true, true)
+		it.redirectTarget(r, false, false)
 	case syntax.DplOut, syntax.DplIn:
 		it.emit(engine.KindStdio, engine.ScopeBottom(), engine.ModeDirect, engine.CertaintyCertain, engine.TaintBottom(), it.redirectAtom(fromMvdanPos(r.Pos()), r.Op.String()))
 		// A stream dupe's operand is the fd it duplicates (2>&1): record it as
@@ -1819,47 +1821,54 @@ func (it *interp) redir(r *syntax.Redirect) {
 		// redirection, recorded by redirectTarget below.
 		if r.Word != nil && isFdWord(r.Word) {
 			if fd, ok := literalOf(r.Word); ok {
-				it.recordRedir(r.Op.String(), fd, true)
+				it.recordRedir(redirOp(r), fd, true)
 			}
 		}
 		// `>&word` / `<&word` with a non-numeric operand is bash's synonym for
 		// `&>word` / `&<word`: a file redirection, not a stream dupe, so its
 		// filesystem effect must be reported.
 		if r.Word != nil && !isFdWord(r.Word) {
-			it.redirectTarget(r, r.Op == syntax.DplIn)
+			it.redirectTarget(r, r.Op == syntax.DplIn, true)
 		}
 	case syntax.Hdoc, syntax.DashHdoc:
 		it.heredoc(r.Hdoc)
-		it.recordRedir(r.Op.String(), "", true)
+		it.recordRedir(redirOp(r), "", true)
 	case syntax.WordHdoc:
 		it.expandLiteral(r.Word)
 		it.emit(engine.KindStdio, engine.ScopeBottom(), engine.ModeDirect, engine.CertaintyCertain, engine.TaintBottom(), it.redirectAtom(fromMvdanPos(r.Pos()), r.Op.String()))
-		it.recordRedir(r.Op.String(), "", true)
+		it.recordRedir(redirOp(r), "", true)
 	default:
 		it.emit(engine.KindStdio, engine.ScopeBottom(), engine.ModeDirect, engine.CertaintyCertain, engine.TaintBottom(), it.redirectAtom(fromMvdanPos(r.Pos()), r.Op.String()))
-		it.recordRedir(r.Op.String(), "", true)
+		it.recordRedir(redirOp(r), "", true)
 	}
 }
 
 // recordRedir appends one resolved redirection to the current statement's
-// accumulation, collapsing an immediate duplicate (the <> operator walks its
-// target twice — once reading, once writing — but is one redirection).
+// accumulation. The <> operator records once (its second walk is passed
+// record=false), so two distinct-but-identical redirections of a statement
+// (cmd > a > a) both survive.
 func (it *interp) recordRedir(op, target string, known bool) {
-	if n := len(it.stmtRedirs); n > 0 &&
-		it.stmtRedirs[n-1].Op == op && it.stmtRedirs[n-1].Target == target {
-		return
-	}
 	it.stmtRedirs = append(it.stmtRedirs, ExecRedirect{Op: op, Target: target, Known: known})
+}
+
+// redirOp renders a redirection operator together with its file-descriptor
+// prefix when one is present (2>>, 2>&1), so the per-command view distinguishes
+// which stream the redirection targets.
+func redirOp(r *syntax.Redirect) string {
+	if r.N != nil {
+		return r.N.Value + r.Op.String()
+	}
+	return r.Op.String()
 }
 
 // redirectTarget emits the effect of a file redirection, recognizing the bash
 // /dev/tcp and /dev/udp pseudo-files as network effects. It also records the
 // resolved redirection (operator plus expanded target text) on the statement's
-// accumulation, for the report's per-command view.
-func (it *interp) redirectTarget(r *syntax.Redirect, reading bool) {
+// accumulation, for the report's per-command view; record is false on the
+// second walk of a <> so a single redirection is recorded once.
+func (it *interp) redirectTarget(r *syntax.Redirect, reading, record bool) {
 	w := r.Word
 	val, known, taint := it.expandLiteral(w)
-	it.recordRedir(r.Op.String(), val, known)
 	if host, port, isTCP, ok := devNet(val); ok {
 		kind := engine.KindNetEgress
 		if reading {
@@ -1870,15 +1879,25 @@ func (it *interp) redirectTarget(r *syntax.Redirect, reading bool) {
 		// single-label name passes the host grammar. A known-but-unaddressable
 		// token widens to ⊤ (the unresolved egress) rather than being dropped
 		// — the safe side is not weakened — and an unexpanded word was already
-		// ⊤.
+		// ⊤. A missing port is stripped, so the target is the clean host.
+		targetText := host
+		if port != "" {
+			targetText = host + ":" + port
+		}
+		if record {
+			it.recordRedir(redirOp(r), targetText, known)
+		}
 		target := engine.ScopeTop()
 		if known && engine.HostShapedLenient(host) {
-			target = engine.ScopeOf(host + ":" + port)
+			target = engine.ScopeOf(targetText)
 		}
-		it.emit(kind, target, engine.ModeDirect, engine.CertaintyCertain, taint, it.redirectAtom(fromMvdanPos(w.Pos()), host+":"+port))
+		it.emit(kind, target, engine.ModeDirect, engine.CertaintyCertain, taint, it.redirectAtom(fromMvdanPos(w.Pos()), targetText))
 		_ = isTCP
-		it.emit(engine.KindIPC, engine.ScopeBottom(), engine.ModeAmbient, engine.CertaintyLikely, taint, it.redirectAtom(fromMvdanPos(w.Pos()), host+":"+port))
+		it.emit(engine.KindIPC, engine.ScopeBottom(), engine.ModeAmbient, engine.CertaintyLikely, taint, it.redirectAtom(fromMvdanPos(w.Pos()), targetText))
 		return
+	}
+	if record {
+		it.recordRedir(redirOp(r), val, known)
 	}
 	kind := engine.KindFSWrite
 	if reading {

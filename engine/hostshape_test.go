@@ -81,6 +81,32 @@ func TestHostShaped(t *testing.T) {
 		{"example..com", false},
 		{"192.168.0", false},       // incomplete quad is not an address
 		{"999.999.999.999", false}, // out-of-range octets
+		{"127.1", false},           // in-addr shorthand: an accepted recall residual (#26)
+
+		// Non-network URL schemes name no address (#2), and a leading drive
+		// path is a filesystem path, not a host (#7).
+		{"file:///etc/passwd", false},
+		{"file:///tmp/out", false},
+		{"data://x", false},
+		{"mailto:a@b.example", false},
+		{"C:/temp/x", false},
+
+		// Dotted local directories in the VCS class are paths, not hosts (#17).
+		{"repo.git", false},
+		{"backup.repo", false},
+		{"clone.git", false},
+
+		// A path component carrying '@' is not userinfo (#32).
+		{"foo/bar@baz.com", false},
+		{"/tmp/x@evil.example", false},
+
+		// UNC / SMB authorities keep their egress (#31); a trailing dot is the
+		// absolute-name marker (#39); the scp tail is accepted over an IPv6
+		// host too (#33).
+		{"//bastion.example/share", true},
+		{"example.com.", true},
+		{"[2001:db8::1]:/tmp/x", true},
+		{"2001:db8::1:", true},
 	}
 	for _, tc := range strict {
 		if got := HostShaped(tc.in); got != tc.want {
@@ -105,10 +131,21 @@ func TestHostShapedLenient(t *testing.T) {
 		{"evil:4444", true},
 		{"show", true},  // same shape as "evil": only destination-declaring contexts may use the lenient mode
 		{"4444", false}, // an all-numeric label is a port, never a host
-		{"main:backend/config", false},
 		{"-x", false},
 		{"a_b", false}, // underscore is not a hostname character
 		{"", false},
+		// A declared-destination slot accepts the scp/rclone remote:path form
+		// even when the host is a bare single label (#20), and the clients'
+		// own protocol-prefixed address spellings (#40).
+		{"main:backend/config", true},
+		{"myremote:bucket", true},
+		{"user@myremote:backup/2024", true},
+		{"bastion:path", true},
+		{"TCP:host.example.com:1234", true},
+		{":sftp:host.example.com:/b", true},
+		{"fe80::1%eth0", true},
+		// A Windows drive path is never a host, even in the lenient tier (#7).
+		{"C:/temp/x", false},
 	}
 	for _, tc := range lenient {
 		if got := HostShapedLenient(tc.in); got != tc.want {

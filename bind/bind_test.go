@@ -632,16 +632,8 @@ func TestBindFileRefPayloadEgressKept(t *testing.T) {
 	}
 }
 
-// TestNumericConfinedOperandScopes pins the binder-side half of the
-// numeric-class confinement at the lowering rule: a dynamic operand whose
-// expansion is provably inside one directory (every dynamic part numeric-class,
-// Dir set by the frontend) contributes that directory to the group scope
-// instead of forcing ⊤, while an unconfined dynamic operand keeps the
-// historical ⊤.
-func TestNumericConfinedOperandScopes(t *testing.T) {
-}
-
-// The end-to-end confinement path (frontend interpreter computes Dir, binder
-// lowers it) is covered by front/bash/expand_resolve_test.go with the real
-// binder wired through the Resolver seam, and by internal/analysis/vars_test.go
-// at the facade.
+// The binder-side lowering rule for numeric-class confinement is covered by
+// bind/argscope_test.go (TestArgsScopeNumericConfined), and the end-to-end
+// path (frontend interpreter computes Dir, binder lowers it) is covered by
+// front/bash/expand_resolve_test.go with the real binder wired through the
+// Resolver seam, and by internal/analysis/vars_test.go at the facade.

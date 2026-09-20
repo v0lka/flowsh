@@ -2118,7 +2118,7 @@ commands:
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
       - spec: "-v"
         kind: flag
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
       - spec: SRC
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
