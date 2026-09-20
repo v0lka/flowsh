@@ -191,8 +191,8 @@ func splitInterpolated(s string, bare bool) []segment {
 	}
 	for i < len(s) {
 		c := s[i]
-		switch {
-		case c == '`':
+		switch c {
+		case '`':
 			// A backtick escapes the next character.
 			emitLit(i)
 			if i+1 < len(s) {
@@ -203,7 +203,7 @@ func splitInterpolated(s string, bare bool) []segment {
 				i++
 			}
 			lit = i
-		case c == '$':
+		case '$':
 			seg, width := scanDollar(s[i:], bare)
 			if width == 0 {
 				// A literal dollar: not the start of a reference.
