@@ -24,7 +24,7 @@ consults before deciding whether a command is safe to run.
 > branch has no commits yet), so a supported-version table cannot be derived
 > from the code base. Until releases exist, treat the latest `main` as the only
 > supported version and pin consumers to the report `schemaVersion` /
-> `toolVersion` (`flowsh/v2`) rather than to a repository revision.
+> `toolVersion` (`flowsh/v3`) rather than to a repository revision.
 
 | Version | Supported          |
 | ------- | ------------------ |

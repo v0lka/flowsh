@@ -1,0 +1,971 @@
+version: effect-kb/v2
+# ---------------------------------------------------------------------------
+# Language runtimes and their ecosystem tooling: Node (node/npx/bun), Python
+# (python/uv/poetry), Ruby (ruby/bundle), Java (java/mvn/gradle), .NET
+# (dotnet), PHP (php/composer) and Elixir (elixir/mix).
+#
+# Sources: node(1)/npx(1)/bun(1), python(1)/uv(1)/poetry(1), ruby(1)/bundle(1),
+# java(1)/mvn(1)/gradle(1), dotnet(1), php(1)/composer(1) and elixir(1)/mix(1).
+# The distribution package managers (apt, rpm, …) and the already-documented
+# language package managers (pip, npm, yarn, pnpm, gem, cargo, go, rustc) live
+# in pkgmgr.yaml; this document carries the runtimes and their remaining
+# ecosystem tooling.  Every entry is documented against the `pkgmgr` dialect
+# (the language-ecosystem tradition already used by cargo/rustc/go/npm/gem).
+#
+# Modelling.  A runtime that executes a program (node script.js, python -c …,
+# java -jar …, npx somebin) contributes CodeExec; a package/dependency
+# operation that writes a local store or manifest is FSWrite; one that reaches
+# a registry is NetEgress; a toolchain that spawns a child compiler/runner is
+# ProcSpawn; read-only inspection is FSRead; and version/help output is Stdio.
+#
+# Script runners (node, python, ruby, java, php, elixir) and the package
+# runners (npx, bun) take a single generic operand — the script/class/binary
+# that is executed — rather than a subcommand list, because their first operand
+# may name an arbitrary file.  The subcommand-first CLIs (uv, poetry, bundle,
+# dotnet, composer, mix) declare their subcommands as positional operands; the
+# generic build drivers (mvn, gradle) take an arbitrary goal/task, so they use
+# a single generic operand to avoid mis-binding an unknown goal.
+# ---------------------------------------------------------------------------
+commands:
+  - name: node
+    dialect: pkgmgr
+    params:
+      - spec: SCRIPT
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: "-e"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "--eval"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "--print"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-r"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "--require"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--check"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--env-file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--inspect"
+        kind: flag
+        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+      - spec: "--inspect-brk"
+        kind: flag
+        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+      - spec: "--input-type"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  # NOTE: `npx` is deliberately NOT modelled here.  Its invocation form
+  # (`npx <bin>`) makes it a package runner, and
+  # internal/analysis/canonical_test.go TestCanonicalNpxTscVsLocalBinaryIsNotSplit
+  # pins that `npx tsc -b` and the equivalent `./node_modules/.bin/tsc -b` carry
+  # the same canonical key today precisely because BOTH resolve to ⊤ (the path
+  # form has no KB command).  Giving `npx` a KB signature makes the runner form
+  # bounded while the path form stays ⊤, which splits that pinned retry pair.
+  # `npx` therefore stays unmodelled until the binder can resolve a
+  # node_modules/.bin path to its bare binary.
+
+  - name: bun
+    dialect: pkgmgr
+    params:
+      - spec: COMMAND
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: "-g"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Conditional, valueFrom: args}
+      - spec: "--global"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Conditional, valueFrom: args}
+      - spec: "--cwd"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--registry"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "--frozen-lockfile"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--production"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--no-save"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+
+  - name: python
+    dialect: pkgmgr
+    aliases:
+      - python3
+    params:
+      - spec: SCRIPT
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-m"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-O"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-E"
+        kind: flag
+        effect: {kind: EnvRead, mode: Direct, valueFrom: args}
+      - spec: "-I"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-B"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: uv
+    dialect: pkgmgr
+    params:
+      - spec: pip
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: venv
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: sync
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: lock
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: add
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: remove
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: run
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: tool
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: python
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: build
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: publish
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: cache
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: init
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: export
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: tree
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: version
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: help
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--directory"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--python"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "--index-url"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "--offline"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--frozen"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--no-cache"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: poetry
+    dialect: pkgmgr
+    params:
+      - spec: install
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: add
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: remove
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: update
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: lock
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: build
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: publish
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: run
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: shell
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: env
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: config
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: new
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: init
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: check
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: export
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: show
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: version
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: list
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: source
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: cache
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-C"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--directory"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--no-root"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: ruby
+    dialect: pkgmgr
+    params:
+      - spec: SCRIPT
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: "-e"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-r"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-I"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-C"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: bundle
+    dialect: pkgmgr
+    params:
+      - spec: install
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: update
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: add
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: remove
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: exec
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: gem
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: config
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: lock
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: check
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: show
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: list
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: init
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: open
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: clean
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: platform
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: outdated
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: cache
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: package
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: binstubs
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: doctor
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: viz
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: version
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--gemfile"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--path"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--jobs"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "--deployment"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--local"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: java
+    dialect: pkgmgr
+    params:
+      - spec: CLASS
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: "-jar"
+        kind: flag
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: "-cp"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-classpath"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--class-path"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--module-path"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-m"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-D"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-X"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-agentlib"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-javaagent"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "--add-opens"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--enable-preview"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: mvn
+    dialect: pkgmgr
+    aliases:
+      - maven
+    params:
+      - spec: GOAL
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--settings"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-D"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-P"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-T"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "-o"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--offline"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-U"
+        kind: flag
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: "--update-snapshots"
+        kind: flag
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: "-N"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-q"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-X"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: gradle
+    dialect: pkgmgr
+    aliases:
+      - gradlew
+    params:
+      - spec: TASK
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: "-b"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--build-file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--project-dir"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-c"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--settings-file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-g"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-x"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--exclude-task"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-D"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--offline"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--refresh-dependencies"
+        kind: flag
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: "--parallel"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--no-daemon"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: dotnet
+    dialect: pkgmgr
+    params:
+      - spec: build
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: run
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: test
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: publish
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: pack
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: restore
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: add
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: remove
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: list
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: new
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: clean
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: format
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: tool
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: nuget
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: msbuild
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: vstest
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: sln
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: workload
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: dev-certs
+        kind: positional
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: ef
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: store
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: help
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--output"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-c"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--configuration"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--framework"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--no-restore"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--info"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: php
+    dialect: pkgmgr
+    params:
+      - spec: SCRIPT
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-f"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-c"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-d"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-m"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--ini"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: composer
+    dialect: pkgmgr
+    params:
+      - spec: install
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: update
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: require
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: remove
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: dump-autoload
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: run-script
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: exec
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: create-project
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: global
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: config
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: show
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: outdated
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: validate
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: init
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: self-update
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: licenses
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: diagnose
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: clear-cache
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: depends
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: suggests
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: fund
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: browse
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: search
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: archive
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--working-dir"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--no-dev"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--optimize-autoloader"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-V"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+
+  - name: elixir
+    dialect: pkgmgr
+    params:
+      - spec: FILE
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: "-e"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-r"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-S"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-pa"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--erl"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "--no-halt"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: mix
+    dialect: pkgmgr
+    params:
+      - spec: compile
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: deps.get
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: deps.compile
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: deps.clean
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: deps.unlock
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: deps.tree
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: deps
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: test
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: run
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: release
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: format
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: new
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: docs
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: archive
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: escript
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: local.rebar
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: local.hex
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: cmd
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: do
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: ecto.create
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: ecto.migrate
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: ecto.rollback
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: ecto.drop
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: hex
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: profile
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: app.start
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-C"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--directory"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--force"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--no-deps-check"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}

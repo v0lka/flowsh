@@ -1,0 +1,1151 @@
+version: effect-kb/v2
+# ---------------------------------------------------------------------------
+# Container, orchestration and infrastructure tooling: Docker (docker,
+# docker-compose), Kubernetes (kubectl), Helm, Terraform and Ansible.
+#
+# Sources: docker(1) and docker-compose(1), kubectl(1), helm(1), terraform(1)
+# and ansible(1)/ansible-playbook(1)/ansible-vault(1)/ansible-galaxy(1).
+#
+# Every entry is documented against the `systemd` dialect (the
+# services-and-system-control tradition: these clients start, stop and
+# reconfigure long-running workloads, and the lenient egress grammar of that
+# dialect accepts the deliberately short host names a cluster context uses).
+#
+# Modelling.  A subcommand that drives a workload or runs its code is
+# CodeExec/ProcSpawn; one that stops or signals it is ProcSignal; one that
+# talks to a registry or cluster API is NetEgress; local manifest/config state
+# is FSWrite/FSMeta; read-only inspection is FSRead; a locally served proxy or
+# forwarded port is NetIngress; and an identity or key is CredAccess.
+#
+# The Ansible entry points are modelled per binary: `ansible` and
+# `ansible-playbook` take a host pattern / playbook as their operand (so they
+# use a single generic positional), while `ansible-vault`, `ansible-galaxy`,
+# `ansible-inventory`, `ansible-doc` and `ansible-config` are subcommand-first.
+# ---------------------------------------------------------------------------
+commands:
+  - name: docker
+    dialect: systemd
+    params:
+      - spec: run
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: create
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: exec
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: start
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: build
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: buildx
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: compose
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: pull
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: push
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: search
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: login
+        kind: positional
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: logout
+        kind: positional
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: images
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: ps
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: inspect
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: logs
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: info
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: events
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: stats
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: top
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: port
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: diff
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: load
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: version
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: help
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: rm
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: rmi
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: system
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: volume
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: network
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: container
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: image
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: context
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: tag
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: rename
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: update
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: stop
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: kill
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: pause
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: unpause
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: restart
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: wait
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: attach
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: cp
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: save
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: commit
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--volume"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--mount"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+      - spec: "--publish"
+        kind: option
+        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+      - spec: "-H"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "--host"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "--pull"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "--network"
+        kind: option
+        effect: {kind: IPC, mode: Direct, valueFrom: flagValue}
+      - spec: "-e"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--env"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--env-file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--build-arg"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "--tag"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "-u"
+        kind: option
+        effect: {kind: PrivEsc, mode: Conditional, valueFrom: flagValue}
+      - spec: "--user"
+        kind: option
+        effect: {kind: PrivEsc, mode: Conditional, valueFrom: flagValue}
+      - spec: "--platform"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--privileged"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
+      - spec: "--rm"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--detach"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+
+  - name: docker-compose
+    dialect: systemd
+    aliases:
+      - podman-compose
+    params:
+      - spec: up
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: start
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: create
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: build
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: run
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: exec
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: pull
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: push
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: logs
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: ps
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: config
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: port
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: top
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: events
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: images
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: ls
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: version
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: down
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: stop
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: kill
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: pause
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: unpause
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: restart
+        kind: positional
+        effect: {kind: ProcSignal, mode: Direct, valueFrom: args}
+      - spec: rm
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: scale
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: cp
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: wait
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--project-name"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--env-file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--profile"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--detach"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--build"
+        kind: flag
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--volumes"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+
+  - name: kubectl
+    dialect: systemd
+    params:
+      - spec: get
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: describe
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: logs
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: apply
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: create
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: delete
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: edit
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: patch
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: replace
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: scale
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: rollout
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: set
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: annotate
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: label
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: taint
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: cordon
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: uncordon
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: drain
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: expose
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: run
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: top
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: wait
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: diff
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: api-resources
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: api-versions
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: cluster-info
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: explain
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: auth
+        kind: positional
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: version
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: exec
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: attach
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: cp
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: config
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: port-forward
+        kind: positional
+        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+      - spec: proxy
+        kind: positional
+        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+      - spec: completion
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: help
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--namespace"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--filename"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--output"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-l"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--selector"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--kubeconfig"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--context"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--dry-run"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--certificate-authority"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "--server"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "--cluster"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "--token"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "--user"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "--client-key"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "--insecure-skip-tls-verify"
+        kind: flag
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+
+  - name: helm
+    dialect: systemd
+    params:
+      - spec: install
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: upgrade
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: uninstall
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: delete
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: rollback
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: list
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: ls
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: get
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: status
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: history
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: repo
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: search
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: pull
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: push
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: dependency
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: test
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: template
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: lint
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: show
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: env
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: package
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: create
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: plugin
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: version
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: completion
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: help
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--namespace"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--values"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--set"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--set-file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--kubeconfig"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--repo"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--output"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--version"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--dry-run"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--install"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--wait"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-g"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--generate-name"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: terraform
+    dialect: systemd
+    params:
+      - spec: init
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: apply
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: destroy
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: import
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: providers
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: get
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: refresh
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: plan
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: validate
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: show
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: output
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: graph
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: fmt
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: state
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: workspace
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: taint
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: untaint
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: force-unlock
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: console
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: test
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: login
+        kind: positional
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: logout
+        kind: positional
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: version
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: help
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-chdir"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-var"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-var-file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-out"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-state"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-target"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-parallelism"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "-auto-approve"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-refresh"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-lock"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-json"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+
+  - name: ansible
+    dialect: systemd
+    params:
+      - spec: PATTERN
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: "-m"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "--module-name"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-a"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "--args"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-i"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--inventory"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-l"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--limit"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-u"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "--user"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "-e"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--extra-vars"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--vault-password-file"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "--private-key"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "-b"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Conditional, valueFrom: args}
+      - spec: "--become"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Conditional, valueFrom: args}
+      - spec: "-K"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "--ask-become-pass"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "-k"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "--ask-pass"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "-C"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--check"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-h"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: ansible-playbook
+    dialect: systemd
+    params:
+      - spec: PLAYBOOK
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--inventory"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--tags"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--skip-tags"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-l"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--limit"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-e"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--extra-vars"
+        kind: option
+        effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--vault-password-file"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "--private-key"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "--syntax-check"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--list-tasks"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--list-hosts"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-C"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--check"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--diff"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-b"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Conditional, valueFrom: args}
+      - spec: "--become"
+        kind: flag
+        effect: {kind: PrivEsc, mode: Conditional, valueFrom: args}
+      - spec: "-K"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "-k"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-h"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: ansible-vault
+    dialect: systemd
+    params:
+      - spec: encrypt
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: decrypt
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: edit
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: create
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: encrypt_string
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: rekey
+        kind: positional
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: view
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--vault-password-file"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "--output"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--ask-vault-pass"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-h"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: ansible-galaxy
+    dialect: systemd
+    params:
+      - spec: role
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: collection
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: install
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: search
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: import
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: delete
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: remove
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: init
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: build
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: list
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: verify
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--roles-path"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "--server"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "-f"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--force"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: "--ignore-certs"
+        kind: flag
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-h"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: ansible-inventory
+    dialect: systemd
+    params:
+      - spec: "-i"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--inventory"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--host"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--list"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--graph"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--yaml"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-h"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: ansible-doc
+    dialect: systemd
+    params:
+      - spec: MODULE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--type"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--list"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--snippet"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-j"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--json"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-h"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: ansible-config
+    dialect: systemd
+    params:
+      - spec: list
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: dump
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: view
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: init
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--config"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-h"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}

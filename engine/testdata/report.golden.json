@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "effect-ir/v1",
+  "schemaVersion": "effect-ir/v2",
   "root": "demo",
   "effects": [
     {

@@ -79,9 +79,9 @@ The JSON field contract (a flowsh report is an engine report plus CLI metadata):
 
 | Field | JSON type | Source / meaning |
 | --- | --- | --- |
-| `schemaVersion` | string | Always `effect-ir/v1` (`engine.SchemaVersion`). |
+| `schemaVersion` | string | Always `effect-ir/v2` (`engine.SchemaVersion`). |
 | `tool` | string | Always `flowsh` (`ToolName`). |
-| `toolVersion` | string | Always `flowsh/v2` (`ToolVersion`; v2 adds the additive `commandCalls` and `canonical` fields). |
+| `toolVersion` | string | Always `flowsh/v3` (`ToolVersion`; v2 added the additive `commandCalls` and `canonical` fields, v3 the `score.cradleFlows`/`score.ingestFlows` network-flow fields). |
 | `lang` | string | `"bash"`, `"posix"` or `"posh"`. |
 | `input` | string | The analysed source text verbatim. |
 | `root` | string | The source name the input was read from (a file path, or `RootArgument`/`RootStdin`); present (`omitempty`) only when the caller named one via `Options.Root`. |
@@ -99,9 +99,9 @@ The JSON field contract (a flowsh report is an engine report plus CLI metadata):
 | `destructive` | array of `DestructiveFinding` | Matched knowledge-base destructive-flags entries (`command`, `spec`, `class` `A`–`E`, `reason`), de-duplicated and sorted (`omitempty`). |
 | `notes` | array of string | Frontend diagnostics (`omitempty`). |
 
-Nested `engine.Effect` fields: `kind`, `target`, `mode`, `certainty`, `taint`, `reversible`.
+Nested `engine.Effect` fields: `kind`, `target`, `mode`, `certainty`, `taint`, `reversible`, `netFlow` (`omitempty` — present only for a network-flow sink: `cradle` on a `CodeExec`, `ingest` on an `FSWrite`).
 
-Nested `engine.Score` fields: `destructiveness`, `irreversibility`, `breadth`, `influence`, `exfil`, `confidence` (int, `[0,100]`), `reversible`, `grade`, `exfilPairs` (array of `{source, sink}`, `omitempty`).
+Nested `engine.Score` fields: `destructiveness`, `irreversibility`, `breadth`, `influence`, `exfil`, `confidence` (int, `[0,100]`), `reversible`, `grade`, `exfilPairs` (array of `{source, sink}`, `omitempty`), `cradleFlows` (array of `{source, sink}` for network→code-execution flows, `omitempty`), `ingestFlows` (array of `{source, sink}` for network→filesystem flows, `omitempty`).
 
 `Report` methods:
 
@@ -218,7 +218,7 @@ Analyze(lang, src)                       analyze.go (package func)
 - `Analyze` is total and deterministic: the frontends degrade to ⊤ rather than fail, so the returned `*Report` is never nil.
 - `Report.Effects` is never `null`: `normalizeEffects` replaces a nil slice with `[]engine.Effect{}`, so JSON always carries `[]`.
 - `Report.Covered()` is true iff the analysis produced at least one effect, degraded to ⊤ (`Top`), or is `Conservative` — the "no silent miss" property the GuardFall corpus checks.
-- `Report.SchemaVersion`, `Report.Tool` and `Report.ToolVersion` always equal `engine.SchemaVersion` (`effect-ir/v1`), `"flowsh"`, `"flowsh/v2"` respectively.
+- `Report.SchemaVersion`, `Report.Tool` and `Report.ToolVersion` always equal `engine.SchemaVersion` (`effect-ir/v2`), `"flowsh"`, `"flowsh/v3"` respectively.
 - `Report.Destructiveness` is the join (max) of `engine.ComputeDestructiveness(effects)` and the join of the binder's per-call `Destructiveness` (which already folds each matched destructive-table class severity); the same KB-class severity is joined into `Score.Destructiveness` and `Score.Grade`, so a matched destructive class can only raise — never lower — the reported severity.
 - `ParseLang` returns `LangBash`, `LangPOSIX` or `LangPowerShell`, otherwise a non-nil error; it never returns an unknown `Lang` with a nil error.
 - `defaultAnalyzer` loads the knowledge base at most once per process (`sync.OnceValues`), and every `Analyze` call shares that analyser.
@@ -232,8 +232,8 @@ Compile-time constants in `internal/analysis/analyze.go`:
 | Name | Value | Role |
 | --- | --- | --- |
 | `ToolName` | `"flowsh"` | Stamped into `report.tool`. |
-| `SchemaVersion` | `engine.SchemaVersion` = `"effect-ir/v1"` | Stamped into `report.schemaVersion`. |
-| `ToolVersion` | `"flowsh/v2"` | Stamped into `report.toolVersion`. |
+| `SchemaVersion` | `engine.SchemaVersion` = `"effect-ir/v2"` | Stamped into `report.schemaVersion`. |
+| `ToolVersion` | `"flowsh/v3"` | Stamped into `report.toolVersion`. |
 | `RootArgument` | `"<argument>"` | `report.root` when the command came from the positional argument. |
 | `RootStdin` | `"<stdin>"` | `report.root` when the command came from stdin (`-` or no argument). |
 
@@ -260,7 +260,7 @@ The facade is consumed by external Go programs through the sibling top-level pac
 
 Because every exported type is a type **alias**, the boundary is transparent — an embedding caller passes `api.Options` where an `analysis.Options` is expected and reads the same `Report` the CLI emits. A consequence of the alias (and not duplicating types) is that a change to an internal type is, by construction, a change to the public API.
 
-The embedding contract is versioned by the two report constants, not by the module version: a consumer pins to `Report.SchemaVersion` (`effect-ir/v1`, the effect IR shape) and `Report.ToolVersion` (`flowsh/v2`, the document as a whole), as described in [Report Contract](../contracts/report-json.md).
+The embedding contract is versioned by the two report constants, not by the module version: a consumer pins to `Report.SchemaVersion` (`effect-ir/v2`, the effect IR shape) and `Report.ToolVersion` (`flowsh/v3`, the document as a whole), as described in [Report Contract](../contracts/report-json.md).
 
 The corpus harness is deliberately **not** re-exported: `Case`, `LoadCorpus`, `CorpusDir`, `CorpusDirFrom`, `Filter`, the `Group*` constants and `GuardFallClasses` live in the test-only `internal/corpus` package — testing aids, not part of the embedding surface (in-module tests, including the external `engine_test` benchmark, reach them there).
 

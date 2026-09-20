@@ -164,6 +164,11 @@ type interp struct {
 	stdin       string
 	stdinKnown  bool
 	stdinTaint  engine.Taint
+	// stdinNet records that the value flowing into the current command came,
+	// this pipeline, from a network egress (a NetEgress stage upstream). It is
+	// the flow evidence for a download cradle: a code-execution sink fed by
+	// network content. It is threaded alongside stdin/stdinTaint.
+	stdinNet bool
 
 	// status/statusKnown record the exit status of the last command, when the
 	// analysis can pin it down; they decide && / || / if / while branches.
@@ -418,10 +423,49 @@ func (it *interp) markTop(reason string) {
 // claiming the whole program is unanalysable. It returns the effect so the
 // caller can attach a derivation citing the construct that produced it.
 func (it *interp) markTopEffect(reason string) engine.Effect {
+	return it.markTopEffectFlow(reason, engine.FlowNone)
+}
+
+// markTopEffectFlow is markTopEffect with an explicit network-flow role: a ⊤
+// code execution that is the sink of a network data flow (FlowCradle) is
+// recorded as such, so the report can assert the download-cradle flow rather
+// than leave it to be inferred from co-occurrence.
+func (it *interp) markTopEffectFlow(reason string, flow engine.FlowRole) engine.Effect {
 	it.addNote(reason)
 	e := topEffect(engine.ModeDirect)
+	e.NetFlow = flow
 	it.effs = append(it.effs, e)
 	return e
+}
+
+// taintIsNetwork reports whether a value's provenance marks it as
+// attacker-influenced network content: untrusted (a command substitution, a
+// network response), user input, or the network class itself, or the top
+// (unknown) taint.
+func taintIsNetwork(t engine.Taint) bool {
+	return t.IsTop() ||
+		t.Contains(engine.TaintUntrusted) ||
+		t.Contains(engine.TaintUserInput) ||
+		t.Contains(engine.TaintNetwork)
+}
+
+// sinkFlowRole returns the network-flow role of a code-execution sink fed by
+// the current value flow: FlowCradle when the sink consumes network content
+// (the pipeline's upstream stage is a network egress, or the value flowing in
+// — via standard input or a command substitution argument — carries network
+// provenance), and FlowNone otherwise.
+func (it *interp) sinkFlowRole(cmd *Command) engine.FlowRole {
+	if it.stdinNet || taintIsNetwork(it.stdinTaint) {
+		return engine.FlowCradle
+	}
+	if cmd != nil {
+		for _, a := range cmd.Args {
+			if a != nil && taintIsNetwork(a.Taint) {
+				return engine.FlowCradle
+			}
+		}
+	}
+	return engine.FlowNone
 }
 
 // ===========================================================================
@@ -760,10 +804,10 @@ func (it *interp) execBinary(b *syntax.BinaryCmd) {
 func (it *interp) execPipeline(b *syntax.BinaryCmd) {
 	stages := it.flattenPipeline(b)
 
-	savedIn, savedKnown, savedTaint := it.stdin, it.stdinKnown, it.stdinTaint
-	in, inKnown, inTaint := it.stdin, it.stdinKnown, it.stdinTaint
+	savedIn, savedKnown, savedTaint, savedNet := it.stdin, it.stdinKnown, it.stdinTaint, it.stdinNet
+	in, inKnown, inTaint, inNet := it.stdin, it.stdinKnown, it.stdinTaint, it.stdinNet
 	for _, st := range stages {
-		it.stdin, it.stdinKnown, it.stdinTaint = in, inKnown, inTaint
+		it.stdin, it.stdinKnown, it.stdinTaint, it.stdinNet = in, inKnown, inTaint, inNet
 		savedState := it.state
 		savedCtl := it.ctl
 		it.state = it.state.Clone()
@@ -771,14 +815,30 @@ func (it *interp) execPipeline(b *syntax.BinaryCmd) {
 		// signal it raises so it cannot abort the enclosing statement list.
 		it.ctl = ctlNone
 		it.stdout, it.stdoutKnown, it.stdoutTaint = "", false, engine.TaintBottom()
+		effStart := len(it.effs)
 		it.execStmt(st)
 		out, ok, outTaint := it.stdout, it.stdoutKnown, it.stdoutTaint
 		it.state = savedState
 		it.ctl = savedCtl
 		in, inKnown, inTaint = out, ok, outTaint
+		// The value flowing to the next stage came from a network egress when
+		// this stage contributed a NetEgress effect: the downstream sink is then
+		// fed by network content (the download-cradle flow).
+		inNet = stageHasNetEgress(it.effs[effStart:])
 	}
-	it.stdin, it.stdinKnown, it.stdinTaint = savedIn, savedKnown, savedTaint
+	it.stdin, it.stdinKnown, it.stdinTaint, it.stdinNet = savedIn, savedKnown, savedTaint, savedNet
 	it.status, it.statusKnown = 0, false
+}
+
+// stageHasNetEgress reports whether a pipeline stage contributed a NetEgress
+// effect, so the value it folds to the next stage is network content.
+func stageHasNetEgress(effs []engine.Effect) bool {
+	for _, e := range effs {
+		if e.Kind == engine.KindNetEgress {
+			return true
+		}
+	}
+	return false
 }
 
 func (it *interp) flattenPipeline(b *syntax.BinaryCmd) []*syntax.Stmt {
@@ -1499,7 +1559,7 @@ func (it *interp) execCall(c *syntax.CallExpr) {
 // the resolver.
 func (it *interp) dispatch(name string, nameOK bool, argv []string, cmd *Command) []engine.Effect {
 	if !nameOK {
-		e := it.markTopEffect("dynamically-named command")
+		e := it.markTopEffectFlow("dynamically-named command", it.sinkFlowRole(cmd))
 		it.derive(e, engine.Atom{Kind: engine.AtomCommand, Text: cmd.Name, Loc: sourceLoc(cmd.Pos, it.prog.File)})
 		it.statusKnown = false
 		return nil
@@ -1538,7 +1598,7 @@ func (it *interp) dispatch(name string, nameOK bool, argv []string, cmd *Command
 
 	// code-execution sinks: data flowing in is data executed
 	if isSink(name) {
-		e := it.markTopEffect("code-execution sink " + strconv.Quote(name))
+		e := it.markTopEffectFlow("code-execution sink "+strconv.Quote(name), it.sinkFlowRole(cmd))
 		it.derive(e, engine.Atom{Kind: engine.AtomCommand, Text: name, Loc: sourceLoc(cmd.Pos, it.prog.File)})
 		it.setStatus(name)
 		return nil
@@ -1551,7 +1611,7 @@ func (it *interp) dispatch(name string, nameOK bool, argv []string, cmd *Command
 	// ACTION only when one is registered; the bare listing/query forms
 	// (`trap`, `trap -p`, `trap - SIG`) carry no action and execute nothing.
 	if isCodeExecBuiltin(name) && (name != "trap" || trapHasAction(argv)) {
-		e := it.markTopEffect("code-executing builtin " + strconv.Quote(name))
+		e := it.markTopEffectFlow("code-executing builtin "+strconv.Quote(name), it.sinkFlowRole(cmd))
 		it.derive(e, engine.Atom{Kind: engine.AtomCommand, Text: name, Loc: sourceLoc(cmd.Pos, it.prog.File)})
 		it.setStatus(name)
 		return nil

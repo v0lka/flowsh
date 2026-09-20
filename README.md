@@ -330,9 +330,9 @@ $ flowsh --json 'rm -rf $HOME'
 
 ```json
 {
-  "schemaVersion": "effect-ir/v1",
+  "schemaVersion": "effect-ir/v2",
   "tool": "flowsh",
-  "toolVersion": "flowsh/v2",
+  "toolVersion": "flowsh/v3",
   "lang": "bash",
   "input": "rm -rf $HOME",
   "root": "<argument>",
@@ -485,7 +485,7 @@ Every report carries a small envelope (`schemaVersion`, `tool`, `toolVersion`,
 | --- | --- |
 | `effects` | The set of implied effects, merged by kind and mode. Always an array (never `null`). |
 | `destructiveness` | `None` \| `Low` \| `Medium` \| `High` \| `Critical`. |
-| `score` | Composite risk: `destructiveness`, `irreversibility`, `breadth`, `influence`, `exfil`, `confidence` (0–100), `reversible`, `grade`, and `exfilPairs`. |
+| `score` | Composite risk: `destructiveness`, `irreversibility`, `breadth`, `influence`, `exfil`, `confidence` (0–100), `reversible`, `grade`, `exfilPairs`, and the network-flow fields `cradleFlows` (network → code execution) and `ingestFlows` (network → file write). |
 | `conservative` | The analysis could not bound the input but did not fully degrade to ⊤. |
 | `top` | The analysis degraded to the top element ⊤ (unknown/unbounded). |
 | `reason` | Present only when `conservative`/`top`; explains the degradation. |
@@ -494,7 +494,9 @@ Every report carries a small envelope (`schemaVersion`, `tool`, `toolVersion`,
 
 Each **effect** has a `kind`, a `target` (a set of targets, with `arbitrary` flagging
 the ⊤ scope), a `mode`, a `certainty`, a `taint` (provenance labels, with
-`arbitrary` for ⊤), and a `reversible` flag.
+`arbitrary` for ⊤), a `reversible` flag, and — when it is the sink of a network
+data flow — a `netFlow` role (`cradle` on a `CodeExec` reached by network
+content, `ingest` on an `FSWrite` of downloaded content).
 
 ### Effect kinds
 

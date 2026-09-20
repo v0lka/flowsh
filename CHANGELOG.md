@@ -6,10 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 These entries track the **module release tags** (`vX.Y.Z`). They are independent of
-the two *frozen* wire-contract tags that the analyser emits — `effect-ir/v1`
-(the effect-IR payload) and `flowsh/v2` (the CLI report envelope). A change to a
+the two *frozen* wire-contract tags that the analyser emits — `effect-ir/v2`
+(the effect-IR payload) and `flowsh/v3` (the CLI report envelope). A change to a
 frozen contract is called out in the entry that makes it; the contract tags move
 only on a breaking shape change, not on every module release.
+
+## [v0.3.0] - 2026-09-20
+
+### Added
+
+- **Network data-flow fields (`flowsh/v3`, `effect-ir/v2`).** The report now
+  asserts two network data flows so a consumer can key on the flow rather than
+  infer it from the co-occurrence of a `NetEgress` and a sink:
+  `score.cradleFlows` (network content reaching code execution — `curl … | sh`,
+  `source <(curl …)`, `sh -c "$(curl …)"`, the exec of a downloaded path) and
+  `score.ingestFlows` (a download client writing fetched content to a file —
+  `curl -o`/`-O`, wget default/`-O`). The sink is marked by the additive
+  effect-level `netFlow` role (`cradle` on a `CodeExec`, `ingest` on an
+  `FSWrite`), which bumps the effect IR to `effect-ir/v2`; a program with no
+  network flow serialises byte-for-byte as before. `DetectCradleFlows` /
+  `DetectIngestFlows` live in `engine/taint.go`, the binder marks the curl/wget
+  output parameters (and synthesises wget's implicit download), and the bash
+  frontend marks a code-execution sink fed by network content. VCS sync (`git
+  clone`/`fetch`/`pull`) is never an ingest. The CLI envelope tag moves to
+  `flowsh/v3`.
+
+- **PowerShell abstract variable state (Σ).** The PowerShell frontend now
+  interprets a script through its own bounded abstract variable state Σ
+  instead of lowering raw parse-tree text, mirroring the bash frontend at the
+  frontend's own layer (`front/ps/state.go`, `front/ps/wordeval.go`, and a
+  structured-control-flow `front/ps/parse.go`). Fabricated literal targets are
+  gone — `$dir/file.txt` no longer lands as a confidently-`Certain` concrete
+  path: an effect target is the evaluated value when the word is known and ⊤
+  otherwise, a URL with a literal host prefix keeps a host-scoped egress
+  instead of widening to ⊤, and a word's provenance (including `secret`)
+  flows onto the egress effect so exfiltration pairs on real per-command
+  dataflow rather than a program-level co-occurrence heuristic. Unset reads
+  degrade to ⊤ (never the empty string), `if`/`foreach`/`for`/`while`/`do`/
+  `try` fork and join Σ per branch, session-state cmdlets (`Set-Location`,
+  `Set-Variable`, `Clear-Variable`, …) update Σ, `@{…}` splat literals expand
+  to their parameter bindings, and lowering is bounded by a deterministic step
+  counter that unwinds to ⊤. See
+  [ADR-0014](specs/decisions/0014-ps-abstract-state.md).
 
 ## [v0.2.1] - 2026-09-20
 

@@ -26,7 +26,20 @@ type Effect struct {
 	Certainty  Certainty  `json:"certainty"`
 	Taint      Taint      `json:"taint"`
 	Reversible bool       `json:"reversible"`
+	NetFlow    FlowRole   `json:"netFlow,omitempty"`
 }
+```
+
+`NetFlow` is the additive `effect-ir/v2` field: it marks the effect as the **sink of a network data flow** — it consumes content that arrived over the network. `FlowNone` (`""`, omitted from the JSON) means the effect is not such a sink; `FlowCradle` marks a `CodeExec` reached by network content (the download cradle — a pipe to a shell/interpreter, a `source`/`.` of a fetched path, a sink invoked on a command substitution, the exec of a downloaded path); `FlowIngest` marks an `FSWrite` of downloaded content (curl `-o`/`-O`, wget default/`-O`). The role is what lets a report assert the flow rather than leave a consumer to infer it from the co-occurrence of a `NetEgress` and a sink; an effect with no network flow serialises exactly as in `effect-ir/v1`.
+
+```go
+type FlowRole string
+
+const (
+	FlowNone   FlowRole = ""
+	FlowCradle FlowRole = "cradle" // a CodeExec reached by network content
+	FlowIngest FlowRole = "ingest" // an FSWrite of downloaded content
+)
 ```
 
 - `Key` returns a stable identity for the effect — `Kind|Mode|canonical(Target)` — used for deterministic sorting and for referencing effects from why-traces:
@@ -37,7 +50,7 @@ func (e Effect) Key() string {
 }
 ```
 
-- `Join` is the least upper bound of two effects that share a kind and a mode: targets and taint are unioned (`Scope.Join`/`Taint.Join`), certainty is joined (max), and the result is reversible only if both operands are. The `ok` result is false when the kinds or modes differ.
+- `Join` is the least upper bound of two effects that share a kind and a mode: targets and taint are unioned (`Scope.Join`/`Taint.Join`), certainty is joined (max), the result is reversible only if both operands are, and the network-flow role is unioned (a tagged operand keeps its role). The `ok` result is false when the kinds or modes differ.
 
 ```go
 func (e Effect) Join(o Effect) (Effect, bool) {
@@ -51,11 +64,12 @@ func (e Effect) Join(o Effect) (Effect, bool) {
 		Certainty:  e.Certainty.Join(o.Certainty),
 		Taint:      e.Taint.Join(o.Taint),
 		Reversible: e.Reversible && o.Reversible,
+		NetFlow:    joinFlow(e.NetFlow, o.NetFlow),
 	}, true
 }
 ```
 
-- `Validate` reports whether the effect is well-formed: `Kind.Valid()`, `Mode.Valid()` and `Certainty.Valid()` must all hold.
+- `Validate` reports whether the effect is well-formed: `Kind.Valid()`, `Mode.Valid()` and `Certainty.Valid()` must all hold, and a non-empty `NetFlow` must be a defined role whose fixed kind matches the effect's kind (`FlowCradle` → `CodeExec`, `FlowIngest` → `FSWrite`).
 
 ### EffectKind (closed set, 15 kinds)
 
@@ -95,7 +109,7 @@ func (e Effect) Join(o Effect) (Effect, bool) {
 `Report` is the frozen analysis output: plain data, serialisable to JSON, carrying no reference to any frontend type. `SchemaVersion` tags the frozen JSON schema and consumers/golden fixtures pin to it.
 
 ```go
-const SchemaVersion = "effect-ir/v1"
+const SchemaVersion = "effect-ir/v2"
 
 type Report struct {
 	SchemaVersion   string          `json:"schemaVersion"`
@@ -162,7 +176,7 @@ Premises are free-form tokens the frontend defines (call ids, argument slices, o
 
 ## Error Handling
 
-- `Effect.Validate` returns a non-nil error naming the offending field and value for an unknown kind (`invalid effect kind %q`), an unknown mode (`invalid effect mode %q`), or an out-of-range certainty (`invalid certainty %d`).
+- `Effect.Validate` returns a non-nil error naming the offending field and value for an unknown kind (`invalid effect kind %q`), an unknown mode (`invalid effect mode %q`), an out-of-range certainty (`invalid certainty %d`), an unknown network-flow role (`invalid netFlow %q`), or a role whose fixed kind does not match the effect's (`netFlow %q requires effect kind %q, got %q`).
 - `Report.Validate` returns `engine: report schemaVersion is empty` when `SchemaVersion` is unset, wraps an effect error as `engine: effects[%d]: …`, and returns `engine: why[%d]: empty effect key` for a why-trace with no effect key.
 - `Report.Encode` propagates any `Validate` error and returns the encoding error from `json.MarshalIndent`; it never returns partial output alongside an error.
 - `Certainty`/`Destructiveness` reject invalid values on marshal (`cannot marshal invalid …`) and reject unknown names or out-of-range ordinals on unmarshal (`engine: unknown …`, `… ordinal out of range`). `Scope`/`Taint` unmarshal accept the canonical object form plus a bare string or array, and error with `engine: cannot decode set from …` on anything else.
@@ -170,12 +184,12 @@ Premises are free-form tokens the frontend defines (call ids, argument slices, o
 
 ## Invariants
 
-- `Effect` has exactly the six frozen fields `Kind, Target, Mode, Certainty, Taint, Reversible`.
+- `Effect` has exactly the seven frozen fields `Kind, Target, Mode, Certainty, Taint, Reversible, NetFlow`.
 - `EffectKind.Valid` accepts exactly the 15 kinds in `EffectKinds`; `EffectMode.Valid` accepts exactly the 4 modes in `EffectModes`.
 - `Effect.Join(a, b)` returns `ok == true` if and only if `a.Kind == b.Kind && a.Mode == b.Mode`.
 - `Join` is commutative over matching kind/mode and unions targets and taint; reversibility is the logical AND of the operands'.
 - `Effect.Key` is a function of `Kind`, `Mode` and the canonical target form only.
-- `SchemaVersion` is the constant `"effect-ir/v1"` and every freshly built report carries it.
+- `SchemaVersion` is the constant `"effect-ir/v2"` and every freshly built report carries it.
 - `Report.Normalize` is idempotent and merges on `(Kind, Mode)`; two reports over the same effects normalise to byte-identical JSON.
 - `Report.Encode` validates before encoding, so an invalid report never produces output.
 - Why-trace `Effect` keys are non-empty and stable (`Effect.Key()` values).

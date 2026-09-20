@@ -11,10 +11,10 @@
 //
 // The report contract is versioned by two constants, both re-exported here:
 //
-//   - SchemaVersion (SchemaVersion, "effect-ir/v1") tags the effect IR and the
+//   - SchemaVersion (SchemaVersion, "effect-ir/v2") tags the effect IR and the
 //     report's effect schema; it is bumped only when the shape of an effect
 //     changes.
-//   - ToolVersion (ToolVersion, "flowsh/v2") tags the report contract as a
+//   - ToolVersion (ToolVersion, "flowsh/v3") tags the report contract as a
 //     whole; it is bumped when the emitted document gains, loses or changes a
 //     field.
 //
@@ -71,9 +71,9 @@ type Options = analysis.Options
 const (
 	// ToolName is the tool identifier stamped into every report ("flowsh").
 	ToolName = analysis.ToolName
-	// SchemaVersion tags the report's effect schema ("effect-ir/v1").
+	// SchemaVersion tags the report's effect schema ("effect-ir/v2").
 	SchemaVersion = analysis.SchemaVersion
-	// ToolVersion is the semantic version of the report contract ("flowsh/v2").
+	// ToolVersion is the semantic version of the report contract ("flowsh/v3").
 	ToolVersion = analysis.ToolVersion
 
 	// RootArgument and RootStdin are the source-name markers stamped into

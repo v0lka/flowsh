@@ -29,10 +29,14 @@ type Score struct {
 	Reversible      bool            `json:"reversible"`
 	Grade           Destructiveness `json:"grade"`
 	ExfilPairs      []Exfil         `json:"exfilPairs,omitempty"`
+	CradleFlows     []CradleFlow    `json:"cradleFlows,omitempty"`
+	IngestFlows     []IngestFlow    `json:"ingestFlows,omitempty"`
 }
 ```
 
 `Score.Encode` returns the canonical indented JSON of the score.
+
+`CradleFlows` and `IngestFlows` (added in `flowsh/v3`, carried by `effect-ir/v2`) are the two network data flows: `CradleFlows` pairs every `NetEgress` with every `CodeExec` marked `FlowCradle` (network content reaches code execution), `IngestFlows` pairs every `NetEgress` with every `FSWrite` marked `FlowIngest` (a download client writes fetched content to a file). Both are detected by `DetectCradleFlows`/`DetectIngestFlows` (in `engine/taint.go`) and are emitted only when non-empty. A flow is asserted only where the effect carries the matching `FlowRole` — never from the mere co-occurrence of an egress and a sink.
 
 ### ComputeDestructiveness and KindDestructiveness
 
@@ -140,7 +144,9 @@ An exact target with `CertaintyCertain` scores `100`; a `⊤`/`⊥` target reduc
 
 ```
 ScoreEffects(effects, tokens...):
-  sc.Reversible = true; sc.Confidence = 0; sc.ExfilPairs = DetectExfil(effects)
+  sc.Reversible = true; sc.Confidence = 0
+  sc.ExfilPairs = DetectExfil(effects)
+  sc.CradleFlows = DetectCradleFlows(effects); sc.IngestFlows = DetectIngestFlows(effects)
   if len(effects) == 0: return sc                       # empty ⇒ None, reversible, Confidence 0
 
   sc.Destructiveness = ComputeDestructiveness(effects)  # max KindDestructiveness
@@ -170,6 +176,10 @@ Worked acceptance examples (from `score_test.go`):
 | `cat file` (`FSRead`, reversible) | `Destructiveness = Low`, `Grade = Low`, `Irreversibility = None`, `Exfil = None`, `Reversible = true` |
 | `rm -rf $HOME` (`FSWrite` over `$HOME`, irreversible) | `Grade = Critical`, `Irreversibility = Critical`, `Breadth ≥ High`, `Reversible = false` |
 | `rm` on a single file | `Grade = High` (breadth separates it from `rm -rf $HOME`) |
+| `curl … \| sh` (`NetEgress` + `CodeExec` fed by the network) | non-empty `CradleFlows`, empty `IngestFlows` |
+| `curl -o f URL`, `wget URL` (`NetEgress` + download `FSWrite`) | non-empty `IngestFlows` |
+| `curl … \| head` (`NetEgress` + `ProcSpawn`, no sink) | `CradleFlows` and `IngestFlows` both empty |
+| `git clone`/`fetch`/`pull` (VCS sync) | `IngestFlows` empty |
 
 ## Error Handling
 
@@ -184,6 +194,7 @@ Worked acceptance examples (from `score_test.go`):
 - `Score.Grade` is the join (max) of the five risk dimensions.
 - `ScoreEffects(nil)` returns `Grade = DestructNone`, `Reversible = true`, `Confidence = 0`.
 - `Score.ExfilPairs` always equals `DetectExfil(effects)` over the analysed set.
+- `Score.CradleFlows` always equals `DetectCradleFlows(effects)` and `Score.IngestFlows` always equals `DetectIngestFlows(effects)`; both are empty for an effect set with no flow role, and a non-empty `CradleFlows`/`IngestFlows` never appears without a `NetEgress` effect.
 - `Score.Confidence` is the minimum `ConfidenceOf` across effects (the weakest link), clamped to `[0, 100]`.
 - `Score.Reversible` is true if and only if every effect is reversible.
 - `ComputeDestructiveness` is the max of `KindDestructiveness` over the effects; an empty set yields `DestructNone`.

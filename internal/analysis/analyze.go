@@ -35,8 +35,13 @@ const (
 	// v2 contract added the additive report fields commandCalls and canonical
 	// (the per-command resolution view and the effect-based canonical form for
 	// signature comparison); v1 carried why, resolution, destructive and root
-	// from its first public cut (see specs/contracts/report-json.md).
-	ToolVersion = "flowsh/v2"
+	// from its first public cut (see specs/contracts/report-json.md). The v3
+	// contract adds the additive score fields cradleFlows and ingestFlows — the
+	// network-to-code-execution and network-to-filesystem data flows — so a
+	// consumer keys on the flow rather than on the co-occurrence of a NetEgress
+	// and a sink (the effect IR moved to effect-ir/v2 in step, gaining the
+	// optional effect-level netFlow role that carries the flow evidence).
+	ToolVersion = "flowsh/v3"
 
 	// RootArgument and RootStdin are the source-name markers stamped into
 	// Report.Root when the analysed command does not come from a file: it was

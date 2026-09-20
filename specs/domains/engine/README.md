@@ -101,7 +101,7 @@ Two reports built from the same set of effects normalise to byte-identical JSON.
 
 - The `EffectKind` set is closed and enumerated by `EffectKinds` in canonical order; `EffectKind.Valid` accepts exactly those 15 kinds.
 - The `EffectMode` set is exactly `{Direct, Transitive, Ambient, Conditional}`; `EffectMode.Valid` accepts exactly those 4.
-- `SchemaVersion` is the constant string `"effect-ir/v1"`; consumers and golden fixtures pin to this value.
+- `SchemaVersion` is the constant string `"effect-ir/v2"`; consumers and golden fixtures pin to this value.
 - The `engine` package depends on the standard library only (plus other core packages of the same module); `TestCoreDoesNotImportFrontends` fails if the package gains any other import.
 - `Effect.Join` succeeds if and only if both operands share a `Kind` and a `Mode`; it unions targets and taint, joins certainty, and is reversible only if both operands are.
 - `Report.Normalize` merges every set of effects that share a kind and a mode, recomputes `Destructiveness`, and sorts every slice into canonical order.
@@ -117,7 +117,7 @@ The core has no runtime configuration and no I/O. Its behaviour is fixed by comp
 
 | Constant / table | Location | Value / role |
 | --- | --- | --- |
-| `SchemaVersion` | `engine/report.go` | `"effect-ir/v1"` — the frozen schema tag. |
+| `SchemaVersion` | `engine/report.go` | `"effect-ir/v2"` — the frozen schema tag. |
 | `EffectKinds` | `engine/effect.go` | the 15 canonical effect kinds, in canonical order. |
 | `EffectModes` | `engine/effect.go` | `Direct, Transitive, Ambient, Conditional`. |
 | Taint labels (`TaintUntrusted`, `TaintUserInput`, `TaintEnv`, `TaintNetwork`, `TaintSecret`, `TaintFileSystem`, `TaintProcess`) | `engine/lattice.go` | the labels the core recognises; the label universe is otherwise open. |

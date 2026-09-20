@@ -1,0 +1,182 @@
+version: effect-kb/v2
+# ---------------------------------------------------------------------------
+# Command discovery and file inspection plumbing: `which`, `file` and
+# `markitdown`.
+#
+# Sources: which(1) (Debian debianutils / the bash `which` builtin), file(1)
+# (the libmagic `file` command) and the markitdown project README.
+#
+# Dialects.  `which` is a command-lookup utility, the same tradition as the
+# `type`/`command` builtins, so it is documented against `builtin` (the binder
+# then reports it as a builtin resolution).  `file` is a binary/file inspector,
+# the same tradition as `strings`/`nm`/`objdump` in build.yaml, so it is
+# documented against `build`.  `markitdown` is a document-to-markdown filter,
+# the same tradition as the GNU text filters, so it is documented against `gnu`.
+#
+# Modelling.  `which` searches PATH for the named commands, so its operands are
+# FSRead; `file` reads the leading bytes of its operands, so they are FSRead as
+# well.  `markitdown` reads a local document and renders markdown to standard
+# output; only the local path is modelled here — its optional remote
+# Document-Intelligence endpoint is deliberately left unmodelled so the `gnu`
+# dialect stays off the network-egress inventory (see
+# kb/loader_test.go TestNetEgressDialectInventory).
+# ---------------------------------------------------------------------------
+commands:
+  - name: which
+    dialect: builtin
+    params:
+      - spec: NAME
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--all"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--skip-dot"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--skip-tilde"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--show-dot"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--show-tilde"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--tty-only"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+
+  - name: file
+    dialect: build
+    params:
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--files-from"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-m"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--magic-file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-e"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--exclude"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-b"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--brief"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--mime"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--mime-type"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--mime-encoding"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-L"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--dereference"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-h"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--no-dereference"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-z"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--uncompress"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-k"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--keep-going"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--special-files"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--extension"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-0"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--print0"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+
+  - name: markitdown
+    dialect: gnu
+    params:
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--output"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-x"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--extension"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-m"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--mime-type"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-c"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--charset"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--use-plugins"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--keep-data-uris"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}

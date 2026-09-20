@@ -344,6 +344,16 @@ type Score struct {
 	Grade Destructiveness `json:"grade"`
 	// ExfilPairs lists the detected credential-egress pairings, if any.
 	ExfilPairs []Exfil `json:"exfilPairs,omitempty"`
+	// CradleFlows lists the network-to-code-execution flows, if any: content
+	// fetched over the network reaches a code-execution sink (the download
+	// cradle — curl … | sh, source <(curl …), sh -c "$(curl …)", the exec of a
+	// downloaded path). A consumer keys on this rather than on the
+	// co-occurrence of a NetEgress and a CodeExec.
+	CradleFlows []CradleFlow `json:"cradleFlows,omitempty"`
+	// IngestFlows lists the network-to-filesystem flows, if any: a download
+	// client writes the content it fetched to a file (curl -o/-O, wget
+	// default/-O). VCS sync (git clone/fetch/pull) is not an ingest.
+	IngestFlows []IngestFlow `json:"ingestFlows,omitempty"`
 }
 
 // exfilSeverity grades the exfiltration risk of a set of pairings. A secret
@@ -366,7 +376,13 @@ func exfilSeverity(pairs []Exfil) Destructiveness {
 // dimension recognise destructive commands (rm, mkfs, dd, truncate) that a
 // single effect does not name. Passing none is valid.
 func ScoreEffects(effects []Effect, tokens ...string) Score {
-	sc := Score{Reversible: true, Confidence: 0, ExfilPairs: DetectExfil(effects)}
+	sc := Score{
+		Reversible:  true,
+		Confidence:  0,
+		ExfilPairs:  DetectExfil(effects),
+		CradleFlows: DetectCradleFlows(effects),
+		IngestFlows: DetectIngestFlows(effects),
+	}
 	if len(effects) == 0 {
 		return sc
 	}

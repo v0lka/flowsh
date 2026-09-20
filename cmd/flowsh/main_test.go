@@ -158,20 +158,21 @@ func TestRunVersion(t *testing.T) {
 	}
 }
 
-// TestToolVersionIsV2 pins the report-contract tag: the CLI envelope is tagged
-// flowsh/v2 (the v2 contract adds the additive commandCalls/canonical fields on
-// top of v1's why/resolution/destructive), which both --version and every JSON
-// report must carry.
-func TestToolVersionIsV2(t *testing.T) {
-	if api.ToolVersion != "flowsh/v2" {
-		t.Fatalf("api.ToolVersion = %q, want %q", api.ToolVersion, "flowsh/v2")
+// TestToolVersionIsV3 pins the report-contract tag: the CLI envelope is tagged
+// flowsh/v3 (the v3 contract adds the additive score fields cradleFlows and
+// ingestFlows on top of v2's commandCalls/canonical, and the effect IR moved to
+// effect-ir/v2 with the optional effect-level netFlow role), which both
+// --version and every JSON report must carry.
+func TestToolVersionIsV3(t *testing.T) {
+	if api.ToolVersion != "flowsh/v3" {
+		t.Fatalf("api.ToolVersion = %q, want %q", api.ToolVersion, "flowsh/v3")
 	}
 	code, out, errStr := exec(t, []string{"--json", "ls -la"}, "")
 	if code != 0 {
 		t.Fatalf("exit %d, stderr=%s", code, errStr)
 	}
-	if !strings.Contains(out, `"toolVersion": "flowsh/v2"`) {
-		t.Errorf("JSON report does not carry the v2 toolVersion:\n%s", out)
+	if !strings.Contains(out, `"toolVersion": "flowsh/v3"`) {
+		t.Errorf("JSON report does not carry the v3 toolVersion:\n%s", out)
 	}
 }
 

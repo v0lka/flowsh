@@ -5,7 +5,7 @@
 Accepted
 
 > **Historical record.** This decision introduced the report-contract tag
-> `flowsh/v1`. The live contract tag is now `flowsh/v2` (see
+> `flowsh/v1`. The live contract tag is now `flowsh/v3` (see
 > [`specs/contracts/report-json.md`](../contracts/report-json.md) and
 > `analysis.ToolVersion`); the `flowsh/v1` spellings below are the tag as of
 > this decision.

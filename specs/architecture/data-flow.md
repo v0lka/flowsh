@@ -213,8 +213,8 @@ imports `engine` for the frozen IR types it prints); it does not import
 `internal/analysis` directly.
 
 Two flags short-circuit before any analysis: `--help` prints the usage text and
-`--version` prints the tool-contract tag (`flowsh/v2`) and `engine.SchemaVersion`
-(`effect-ir/v1`), one per line, to stdout; both exit `0` without reading stdin.
+`--version` prints the tool-contract tag (`flowsh/v3`) and `engine.SchemaVersion`
+(`effect-ir/v2`), one per line, to stdout; both exit `0` without reading stdin.
 
 Exit status: `0` analysis produced a report (or `--help`/`--version`), `1`
 internal failure, `2` usage error, `3` input error (the source could not be

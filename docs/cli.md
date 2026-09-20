@@ -169,7 +169,7 @@ report the same information is the `why` array.
 
 ```sh
 $ flowsh --json 'rm -rf $HOME'
-{ "schemaVersion": "effect-ir/v1", "tool": "flowsh", "toolVersion": "flowsh/v2", … }
+{ "schemaVersion": "effect-ir/v2", "tool": "flowsh", "toolVersion": "flowsh/v3", … }
 ```
 
 See the [JSON report reference](report-json.md) for the full document.
@@ -193,8 +193,8 @@ reported against it.
 
 ```sh
 $ printf 'ls -la\nRemove-Item -Recurse -Force $HOME\n' | flowsh --batch --lang auto
-{"schemaVersion":"effect-ir/v1","tool":"flowsh","toolVersion":"flowsh/v2","lang":"bash", …}
-{"schemaVersion":"effect-ir/v1","tool":"flowsh","toolVersion":"flowsh/v2","lang":"posh", …}
+{"schemaVersion":"effect-ir/v2","tool":"flowsh","toolVersion":"flowsh/v3","lang":"bash", …}
+{"schemaVersion":"effect-ir/v2","tool":"flowsh","toolVersion":"flowsh/v3","lang":"posh", …}
 ```
 
 With `--batch` each non-blank input line is analysed and emitted as one compact
@@ -221,8 +221,8 @@ $ flowsh --lang posh 'Remove-Item -Recurse -Force C:\'
 
 ```sh
 $ flowsh --version
-flowsh/v2
-effect-ir/v1
+flowsh/v3
+effect-ir/v2
 ```
 
 The first line is the CLI report-contract version, the second the frozen engine

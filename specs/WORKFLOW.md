@@ -124,14 +124,14 @@ After updating, verify:
 
 1. Read `domains/engine/README.md`, `domains/engine/effect-ir.md` and `domains/engine/lattices.md`.
 2. Read ADR-0001 (`decisions/0001-frozen-effect-ir.md`) — the IR is frozen and versioned; a change here is a deliberate schema break.
-3. Change `engine/effect.go` / `engine/lattice.go` and bump `engine.SchemaVersion` (currently `effect-ir/v1`).
+3. Change `engine/effect.go` / `engine/lattice.go` and bump `engine.SchemaVersion` (currently `effect-ir/v2`).
 4. Update every producer (`bind`, `front/bash`, `front/ps`) and the golden fixtures `engine/testdata/effect.golden.json` / `report.golden.json`.
 5. **After implementation**: update the `engine` specs, add an ADR for the schema break, and run `go test ./... -count=1`.
 
 ### "Change the report JSON contract" (domains: `engine` and `analysis-report`)
 
 1. Read `domains/engine/effect-ir.md`, `domains/engine/scoring.md` and `domains/analysis-report.md`.
-2. Read `contracts/report-json.md` — the outward report is the `flowsh` JSON contract (`ToolVersion = flowsh/v2`).
+2. Read `contracts/report-json.md` — the outward report is the `flowsh` JSON contract (`ToolVersion = flowsh/v3`).
 3. Change `engine/report.go` and the `Report` type in `internal/analysis/analyze.go` together, and bump the version tags.
 4. **After implementation**: update the affected specs and the CLI smoke assertions in `cmd/flowsh/smoke_test.go` (run by `go test ./...`, gated in `.github/workflows/ci.yml`).
 

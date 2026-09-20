@@ -415,3 +415,98 @@ func DetectExfil(effects []Effect) []Exfil {
 	})
 	return out
 }
+
+// ===========================================================================
+// Network data flows: cradle and ingest
+// ===========================================================================
+
+// CradleFlow is one network-to-code-execution flow: content fetched over the
+// network reaches a code-execution sink. Source is the NetEgress the content
+// arrived on; Sink is the CodeExec reached by that content (a pipe to a
+// shell/interpreter, a source/`.` of a fetched path, a sink invoked on a
+// command substitution, the exec of a path a download wrote).
+type CradleFlow struct {
+	Source Effect `json:"source"`
+	Sink   Effect `json:"sink"`
+}
+
+// IngestFlow is one network-to-filesystem flow: a download client writes
+// content it fetched to a file. Source is the NetEgress the content arrived on;
+// Sink is the FSWrite of the downloaded body (curl -o/-O, wget default/-O).
+type IngestFlow struct {
+	Source Effect `json:"source"`
+	Sink   Effect `json:"sink"`
+}
+
+// IsCradleSink reports whether e is a code execution reached by network content
+// (the download-cradle shape).
+func IsCradleSink(e Effect) bool { return e.Kind == KindCodeExec && e.NetFlow == FlowCradle }
+
+// IsIngestSink reports whether e is a filesystem write of downloaded content.
+func IsIngestSink(e Effect) bool { return e.Kind == KindFSWrite && e.NetFlow == FlowIngest }
+
+// DetectCradleFlows pairs every network source with every code-execution sink
+// flagged as reached by network content (Effect.NetFlow == FlowCradle), in
+// canonical (deterministic) order. A NetEgress alone, or a CodeExec alone, is
+// not a flow: the flow is asserted only where the analysis established that the
+// network content reached the sink.
+func DetectCradleFlows(effects []Effect) []CradleFlow {
+	sources := netEgressSources(effects)
+	var sinks []Effect
+	for _, e := range effects {
+		if IsCradleSink(e) {
+			sinks = append(sinks, e)
+		}
+	}
+	var out []CradleFlow
+	for _, s := range sources {
+		for _, k := range sinks {
+			out = append(out, CradleFlow{Source: s, Sink: k})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Source.Key() != out[j].Source.Key() {
+			return out[i].Source.Key() < out[j].Source.Key()
+		}
+		return out[i].Sink.Key() < out[j].Sink.Key()
+	})
+	return out
+}
+
+// DetectIngestFlows pairs every network source with every filesystem sink
+// flagged as a download output (Effect.NetFlow == FlowIngest), in canonical
+// (deterministic) order.
+func DetectIngestFlows(effects []Effect) []IngestFlow {
+	sources := netEgressSources(effects)
+	var sinks []Effect
+	for _, e := range effects {
+		if IsIngestSink(e) {
+			sinks = append(sinks, e)
+		}
+	}
+	var out []IngestFlow
+	for _, s := range sources {
+		for _, k := range sinks {
+			out = append(out, IngestFlow{Source: s, Sink: k})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Source.Key() != out[j].Source.Key() {
+			return out[i].Source.Key() < out[j].Source.Key()
+		}
+		return out[i].Sink.Key() < out[j].Sink.Key()
+	})
+	return out
+}
+
+// netEgressSources collects every NetEgress effect that can source a network
+// data flow, in the effects' given order.
+func netEgressSources(effects []Effect) []Effect {
+	var out []Effect
+	for _, e := range effects {
+		if e.Kind == KindNetEgress {
+			out = append(out, e)
+		}
+	}
+	return out
+}

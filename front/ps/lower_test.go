@@ -167,12 +167,18 @@ func TestCredentialReadGivesCredAccessAndFSRead(t *testing.T) {
 	}
 
 	r := Lower(p)
-	onlyKinds(t, r, engine.KindFSRead, engine.KindCredAccess)
+	// The $env:USERPROFILE reference is now itself reported (EnvRead), the
+	// unresolved path degrades to ⊤ instead of a fabricated literal, and the
+	// credential-material read is still flagged.
+	onlyKinds(t, r, engine.KindFSRead, engine.KindCredAccess, engine.KindEnvRead)
 	if !hasKind(r, engine.KindFSRead) {
 		t.Fatalf("expected FSRead; effects=%+v", r.Effects)
 	}
 	if !hasKind(r, engine.KindCredAccess) {
 		t.Fatalf("expected CredAccess for the .ssh path; effects=%+v", r.Effects)
+	}
+	if !hasKind(r, engine.KindEnvRead) {
+		t.Fatalf("expected EnvRead for $env:USERPROFILE; effects=%+v", r.Effects)
 	}
 }
 

@@ -170,8 +170,8 @@ The tag is stamped into the binary (`main.buildVersion`, injected with
 
 ```sh
 $ flowsh --version
-flowsh/v2
-effect-ir/v1
+flowsh/v3
+effect-ir/v2
 flowsh 0.1.0
 ```
 
@@ -267,8 +267,8 @@ non-GuardFall cases must not. Read
 ## Frozen contracts
 
 The JSON report is a frozen wire contract. The effect payload is tagged by
-`engine.SchemaVersion = "effect-ir/v1"`; the CLI envelope by
-`analysis.ToolVersion = "flowsh/v2"`. **Changing the shape of an emitted field
+`engine.SchemaVersion = "effect-ir/v2"`; the CLI envelope by
+`analysis.ToolVersion = "flowsh/v3"`. **Changing the shape of an emitted field
 is a breaking change** and requires bumping the corresponding version tag and
 regenerating the golden fixtures (`engine/testdata/*.golden.json`) and every
 consumer. See

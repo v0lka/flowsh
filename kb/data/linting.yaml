@@ -1,0 +1,635 @@
+version: effect-kb/v2
+# ---------------------------------------------------------------------------
+# Front-end build, test and lint drivers: the TypeScript compiler (tsc), the
+# JavaScript linters/formatters (eslint, prettier), the JS test runners
+# (vitest, jest), the Go tooling (gofmt, staticcheck), the
+# Python tooling (ruff, black, mypy), the Rust linter (clippy) and the shell
+# linter (shellcheck).
+#
+# Sources: tsc(1) (the TypeScript compiler), eslint(1), prettier(1), vitest
+# and jest docs, golangci-lint(1), gofmt(1), staticcheck(1), ruff(1), black(1),
+# mypy(1), clippy/cargo-clippy and shellcheck(1).  The build drivers and
+# compilers (make, cmake, ninja, gcc, …) live in build.yaml; this document
+# carries the lint/test/format drivers.  Every entry is documented against the
+# `build` dialect (the same build-tooling tradition).
+#
+# Modelling.  A driver that reads sources is FSRead; one that rewrites them in
+# place (--fix, --write, gofmt -w, black, ruff format) is FSWrite; a test
+# runner or watcher that spawns workers is ProcSpawn; a locally served UI
+# (vitest --ui) is NetIngress; rendered output is Stdio.  No command here
+# declares NetEgress, so the `build` dialect stays off the network-egress
+# inventory.
+# ---------------------------------------------------------------------------
+commands:
+  - name: tsc
+    dialect: build
+    params:
+      - spec: SOURCE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--outDir"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--outFile"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--project"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--target"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--types"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--noEmit"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--watch"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--declaration"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--sourceMap"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--init"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-b"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--build"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--pretty"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: eslint
+    dialect: build
+    params:
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--fix"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--fix-dry-run"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--output-file"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-c"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--config"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--ext"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--format"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--max-warnings"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--cache"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--stdin"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--init"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--quiet"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: prettier
+    dialect: build
+    params:
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--write"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--check"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--list-different"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--config"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--ignore-path"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--parser"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--stdin-filepath"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--log-level"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--no-config"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: vitest
+    dialect: build
+    params:
+      - spec: FILTER
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--run"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--watch"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--coverage"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--reporter"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--config"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--root"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--environment"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--outputFile"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--update"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--ui"
+        kind: flag
+        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: jest
+    dialect: build
+    params:
+      - spec: PATTERN
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--coverage"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--updateSnapshot"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--config"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--testPathPattern"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--outputFile"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--watch"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--runInBand"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-o"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--onlyChanged"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--json"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--ci"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  # golangci-lint is deliberately NOT modelled (the same call as npx in
+  # toolchain.yaml). The workspace-scoped verification marker already
+  # TOLERATES an unresolved verification driver: its ⊤-on-a-CodeExec-only
+  # rule admits the "unknown-driver signature", so a routine `golangci-lint
+  # run` inside a verifying command is positively established by the MARKER,
+  # not by a bounded effect set — 12 of the 14 silent-audit events that name
+  # golangci-lint are TRUE_ALLOW for exactly that reason. Modelling the
+  # binary would instead bound EVERY invocation, silently clearing the
+  # marker's env/manifest screens on the one audited TRUE_DENY shape that
+  # rewrites the module graph (GOFLAGS=-mod=mod plus a `> go.work` write —
+  # silent-audit event 966665): a bounded toolchain invocation fires no
+  # criterion, so nothing keeps it escalating. Leaving golangci-lint
+  # unresolved keeps that shape escalating (non-canonical C6, marker off)
+  # while the marker keeps the benign invocations allowed.
+
+  - name: gofmt
+    dialect: build
+    params:
+      - spec: PATH
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-d"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-e"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+
+  - name: staticcheck
+    dialect: build
+    params:
+      - spec: PACKAGE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-checks"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-explain"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-tests"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-list-checks"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+
+  - name: ruff
+    dialect: build
+    params:
+      - spec: check
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: format
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: rule
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: linter
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: config
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: clean
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: version
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: help
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--fix"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--diff"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--check"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--output-format"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--config"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--select"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--ignore"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: black
+    dialect: build
+    params:
+      - spec: SRC
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--check"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--diff"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--code"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "--config"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--line-length"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--target-version"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--include"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--exclude"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--ipynb"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--fast"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-q"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--quiet"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: mypy
+    dialect: build
+    params:
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--strict"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--config-file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--package"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-m"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--module"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--cache-dir"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--ignore-missing-imports"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--namespace-packages"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: clippy-driver
+    dialect: build
+    params:
+      - spec: SRC
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--emit"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-L"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-W"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-A"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-D"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: cargo-clippy
+    dialect: build
+    params:
+      - spec: "--fix"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--no-deps"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--all-targets"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--all-features"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--package"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--manifest-path"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--target-dir"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--message-format"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-v"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--verbose"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: shellcheck
+    dialect: build
+    params:
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--format"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-S"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--severity"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-e"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--exclude"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--shell"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-P"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--source-path"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-C"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "--color"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "-x"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--external-sources"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--norc"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-V"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}

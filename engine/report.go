@@ -9,7 +9,14 @@ import (
 
 // SchemaVersion tags the frozen JSON schema of Report and Effect. Consumers and
 // golden fixtures pin to this value.
-const SchemaVersion = "effect-ir/v1"
+//
+// v1 was the starting effect schema. v2 adds the additive, optional
+// `netFlow` field: an effect that is the sink of a network data flow (a code
+// execution reached by network content, or a filesystem write of downloaded
+// content) carries the flow role, so a report can assert the flow rather than
+// leave a consumer to infer it from the co-occurrence of a NetEgress and a
+// sink. An effect with no network flow serialises exactly as in v1.
+const SchemaVersion = "effect-ir/v2"
 
 // SourceLoc is a frontend-agnostic source location. It deliberately carries no
 // frontend-specific node handle, only a file/line/column triple that any

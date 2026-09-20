@@ -2,15 +2,17 @@
 
 ## Purpose
 
-`ps` is the PowerShell frontend of the effect IR. It has exactly two responsibilities: `Parse` turns PowerShell source text into a faithful, position-preserving normalized AST using the pure-Go tree-sitter runtime (`gotreesitter`) and its embedded PowerShell grammar under a wall-clock budget that the race detector disables; `Lower` folds that AST into the frontend-agnostic effect IR, consulting the PowerShell alias and cmdlet tables — never the bash knowledge base. A failing parse (unknown construct, timeout, internal panic) degrades to the top element ⊤ (`CodeExec`) rather than guessing or crashing.
+`ps` is the PowerShell frontend of the effect IR. It has three responsibilities: `Parse` turns PowerShell source text into a faithful, position-preserving normalized AST using the pure-Go tree-sitter runtime (`gotreesitter`) and its embedded PowerShell grammar under a wall-clock budget that the race detector disables; the walker additionally normalizes structured control flow (`if`/`foreach`/`for`/`while`/`do`/`try`) and assignment right-hand sides into structured statements; `Lower` folds that AST into the frontend-agnostic effect IR **through an abstract variable state Σ** (`front/ps/state.go` + `front/ps/wordeval.go`), consulting the PowerShell alias and cmdlet tables — never the bash knowledge base. A failing parse, an unknown construct, an exhausted budget, or an unresolved variable reference degrades to the top element ⊤ (`CodeExec`) rather than guessing or crashing — a target is either the evaluated value or ⊤, never a fabricated literal (see [ADR-0014](../decisions/0014-ps-abstract-state.md)).
 
 ## Key Files
 
-- `front/ps/parse.go` — the parser and the normalized AST: `Pos`, `Word`, `Param`, `Binding`, `Redirect`, `Command`, `Assign`, `Kind`, `Stmt`, `Program`, `DefaultTimeoutMicros`, `Parse`/`ParseTimeout`, and the CST `walker`.
+- `front/ps/parse.go` — the parser and the normalized AST: `Pos`, `Word`, `Param`, `Binding`, `Redirect`, `Command`, `Assign`, `Branch`/`IfStmt`, `LoopStmt`, `TryStmt`, `Kind`, `Stmt`, `Program`, `DefaultTimeoutMicros`, `Parse`/`ParseTimeout`, and the CST `walker`.
 - `front/ps/budget_race.go` / `front/ps/budget_norace.go` — the build-tagged per-parse budget `parseBudgetMicros` (and `raceDetectorEnabled`) `Parse` applies: `DefaultTimeoutMicros` in an ordinary build, `0` (disabled) under the race detector (see [ADR-0012](../decisions/0012-race-advisory-parse-budget.md)).
-- `front/ps/lower.go` — lowering to the IR: `Lower`/`LowerWith`, `lowerer`, `topReason`, `emitSpec`/`emitOne`, `redirs`, `assignment`, `bumpFor`, `finish`, and credential-material detection.
+- `front/ps/state.go` — the abstract variable state Σ: `Var{Value, Set, Known, Taint, Hash}`, `State`, `NewState` (automatic-variable seeds), `Clone`, `Set`/`SetUnknown`/`SetHash`/`Unset`, and `JoinStates` (the branch least upper bound).
+- `front/ps/wordeval.go` — word evaluation against Σ: `evalWordText` (parts → {text, known, taint, envReads}), the interpolation scanner, env/using/scope qualifiers, member-access mode, splat classification.
+- `front/ps/lower.go` — lowering to the IR: `Lower`/`LowerWith`, `lowerer` (Σ + step budget), `topReason`, `emitSpec`/`emitOne`, `assignment`, `ifStmt`/`loopStmt`/`tryStmt`, `mutateState`, `expandSplat`, `bumpFor`, `finish`, and credential-material detection.
 - `front/ps/aliases.go` — the built-in `Aliases` table, `LookupAlias`, the `Cmdlets` command→effect table, `TargetKind`/`Spec`, the parameter-recognition predicates (`isSwitch`/`pathParam`/`nameParam`/`urlParam`), and the drive/provider helpers.
-- `front/ps/lower_test.go` — lowering tests.
+- `front/ps/lower_test.go` — lowering tests; `state_test.go`, `wordeval_test.go`, `assign_test.go`, `cf_test.go`, `integration_test.go`, `state_cmdlets_test.go`, `splat_test.go` — the Σ, word-evaluation, assignment, control-flow, integration, session-state and splatting tests.
 
 ## Core Types
 
@@ -126,6 +128,44 @@ Because a parameter that is not a *switch* binds the token that follows it, the 
 - `nameParam` — the `TargetName` source: named peers (`-Name`/`-Id`/`-ComputerName`/`-ServiceName`/…), the WMI/CIM class and method (`-Class`/`-ClassName`/`-MethodName`), and the Storage/NetTCPIP identifiers (`-DriveLetter`/`-Number`/`-DiskNumber`/`-PartitionNumber`/`-LocalPort`/`-IPAddress`/`-InterfaceAlias`), plus `-ResourceURI`/`-Role`/`-LogName`/`-Group`/`-Member`.
 - `urlParam` — the `TargetURL` source (`-Uri`/`-Url`/`-ConnectionUri`/`-Proxy`/`-SmtpServer`). When no URL-ish parameter is present the host-style parameters above are consulted (a probe such as `Test-NetConnection -ComputerName …` names its peer there), and only then the operands (`Invoke-WebRequest https://…`). An explicit parameter wins over a stray operand, so the egress is reported at the parameter's endpoint rather than at a decoy operand.
 
+## Abstract variable state (Σ)
+
+`Lower` carries an abstract environment of PowerShell variables and consults
+it whenever a word, condition or assignment touches one
+([ADR-0014](../decisions/0014-ps-abstract-state.md)):
+
+- **Words** are evaluated partwise: a word is statically known only when every
+  part is; its taint is the join of its parts. A `$var` part resolves to the
+  variable's value when it is set and known; an unset or set-but-unknown
+  variable, a foreign `$env:` reference, a `$(…)` sub-expression, member/index
+  access (bare mode only) and splatting make the word unknown (⊤). Single-quoted
+  strings are fully literal. A target is the evaluated text when known, ⊤ when
+  not — the raw source spelling never becomes a pseudo-literal scope.
+- **Assignments** bind in Σ: a pure literal/expression right-hand side is
+  evaluated; a command right-hand side binds set-but-unknown with the RHS
+  effects' provenance (credential reads → `secret`, filesystem reads →
+  `fileSystem`, …) joined with `untrusted`. `+=` concatenates known values.
+  `$a,$b = 'p1','p2'` binds element-wise when the element count matches.
+- **Control flow**: an `if` runs every arm whose condition is not known-false
+  in a forked Σ and joins the reachable final states (a known-true arm reached
+  without a preceding unresolved arm decides the conditional). A `foreach`
+  over a literal list iterates exactly; other loops run the body once.
+  `while ($false)` skips its body. `try`/`catch`/`finally` all lower (a
+  conservative superset).
+- **Session-state cmdlets** mutate Σ: `Set-Location`/`cd` moves `$pwd`,
+  `Set-Variable`/`New-Variable`/`Set-Item Variable:` bind, `Clear-Variable`/
+  `Remove-Item Variable:` unset. `$pid` and the other automatic variables are
+  seeded set-but-unknown.
+- **Egress**: an unresolved target keeps its egress — scoped to the literal
+  host when one prefixes the dynamic tail (`http://evil.example/$lines` →
+  `evil.example`) — and the word's provenance flows onto the effect, so an
+  exfiltration pair reflects real per-command dataflow. `markEgressTaint`
+  stays as a program-level backstop.
+- **Budget**: `defaultBudget = 50000` deterministic steps (statements, loop
+  iterations, word evaluations); exhaustion or an internal panic unwinds to a
+  ⊤ conclusion that preserves the effects discovered so far. The budget is a
+  counter, not a wall clock — it needs no race-detector special case.
+
 ## Flow
 
 ```
@@ -185,12 +225,14 @@ A target string is classified by the PowerShell provider its prefix selects (an 
 
 ## Invariants
 
+- `Lower` never panics and never fabricates: an exhausted lowering budget or an internal panic unwinds to a ⊤ conclusion (with the collected effects preserved), and an effect target is either the evaluated value of a statically-known word or ⊤ — the raw spelling of a variable reference is never reported as a concrete target.
 - `Parse` never panics and never returns a Go error: an unrecoverable failure is represented as ⊤ (`Program.Top` with a `Reason`); callers distinguish "parsed" from "unparseable" by inspecting `Program.Top`.
-- `Parse` is deterministic under the race detector: the wall-clock budget is disabled there (`parseBudgetMicros = 0`), so a benign source never flips to ⊤ because of scheduling or GC; the parser's deterministic iteration/node/depth limits still bound the parse.
+- `Parse` is deterministic under the race detector: the wall-clock budget is disabled there (`parseBudgetMicros = 0`), so a benign source never flips to ⊤ because of scheduling or GC; the parser's deterministic iteration/node/depth limits still bound the parse. The lowering budget is a step counter and is race-safe by construction.
+- The abstract state Σ never reads the host environment or the filesystem: a variable value is either determined by the script text or unknown; a foreign `$env:` reference reports `EnvRead` and degrades the word.
 - A ⊤ program carries a reason and no statements (`Program.Validate`).
 - A `function_statement` body is **not** descended, so a function body is never mistaken for executed code.
 - A static .NET invocation `[Type]::Method(…)` (including `[ScriptBlock]::Create`) lowers to ⊤ (`KindTop`).
-- `Invoke-Expression`, `Add-Type`, `New-Object`, dot-sourcing (`.`), the call operator `&` with a computed name, splatting (`@name`/`@{name}`), and a computed command name all lower to ⊤.
+- `Invoke-Expression`, `Add-Type`, `New-Object`, dot-sourcing (`.`), the call operator `&` with a computed name, splatting (`@name` whose variable is not a fully-known hashtable — an `@{…}` literal bound to the variable expands entrywise), and a computed command name all lower to ⊤.
 - The PowerShell frontend resolves against **its own** alias and cmdlet tables, not the bash knowledge base: the same token means different things in the two languages (`rm`, `curl`, `iex` are aliases for `Remove-Item`, `Invoke-WebRequest`, `Invoke-Expression`). Alias lookups are case-insensitive.
 - Alias resolution consults aliases the analysed script declared (via `Set-Alias`/`New-Alias`) first, then the built-in table.
 - The Registry provider is inert on non-Windows hosts (`Options.Windows` false) unless it is set explicitly; the facade and the CLI's `--windows` flag expose that override so the Registry branches can be enabled independently of the host OS.
@@ -215,7 +257,8 @@ A target string is classified by the PowerShell provider its prefix selects (an 
 ## Related Specs
 
 - [Binding](binding.md) — the frontend-agnostic binder; `ps` deliberately does not use it, but its `Result` mirrors `bind.Result`.
-- [Report Contract](../contracts/report-json.md) — the JSON envelope the facade stamps around this frontend's `Result` (`tool` = `flowsh`, `toolVersion` = `flowsh/v2`); because `ps` does not use the binder, `report.resolution` and `report.destructive` stay the zero value and `report.commandCalls` stays absent on the PowerShell path, while `report.canonical` is derived from the effects alone (no staging folds — there are no `mv` calls to read).
-- [Bash Frontend](bash-frontend/README.md) — the sibling frontend, whose `Variant`/`Program` differ; PowerShell has its own alias and cmdlet tables.
+- [Report Contract](../contracts/report-json.md) — the JSON envelope the facade stamps around this frontend's `Result` (`tool` = `flowsh`, `toolVersion` = `flowsh/v3`); because `ps` does not use the binder, `report.resolution` and `report.destructive` stay the zero value and `report.commandCalls` stays absent on the PowerShell path, while `report.canonical` is derived from the effects alone (no staging folds — there are no `mv` calls to read).
+- [Bash Frontend](bash-frontend/README.md) — the sibling frontend, whose `Variant`/`Program` differ; PowerShell has its own alias and cmdlet tables and its own abstract variable state.
 - [Knowledge Base](knowledge-base.md) — used by bash binding, **not** by the PowerShell frontend.
+- [ADR-0014](../decisions/0014-ps-abstract-state.md) — the decision record for the Σ interpreter, the deterministic lowering budget, unset-reads-to-⊤ semantics and the removal of fabricated literal targets.
 - engine core (`engine/effect.go`, `engine/lattice.go`) — the `Effect` IR and lattices this frontend lowers into.

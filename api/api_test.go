@@ -60,8 +60,8 @@ func TestExportedSurfaceAnalyze(t *testing.T) {
 			if rep.ToolVersion != api.ToolVersion {
 				t.Errorf("ToolVersion = %q, want api.ToolVersion %q", rep.ToolVersion, api.ToolVersion)
 			}
-			if rep.ToolVersion != "flowsh/v2" {
-				t.Errorf("ToolVersion = %q, want %q", rep.ToolVersion, "flowsh/v2")
+			if rep.ToolVersion != "flowsh/v3" {
+				t.Errorf("ToolVersion = %q, want %q", rep.ToolVersion, "flowsh/v3")
 			}
 			if rep.SchemaVersion != api.SchemaVersion {
 				t.Errorf("SchemaVersion = %q, want api.SchemaVersion %q", rep.SchemaVersion, api.SchemaVersion)
@@ -303,8 +303,8 @@ func TestAnalyzeConcurrentMatchesSequential(t *testing.T) {
 		if len(rep.Effects) == 0 {
 			t.Fatalf("sequential Analyze(%s, %q): no effects (want >= 1)", p.lang, p.src)
 		}
-		if rep.ToolVersion != "flowsh/v2" {
-			t.Fatalf("sequential Analyze(%s, %q): ToolVersion = %q, want flowsh/v2", p.lang, p.src, rep.ToolVersion)
+		if rep.ToolVersion != "flowsh/v3" {
+			t.Fatalf("sequential Analyze(%s, %q): ToolVersion = %q, want flowsh/v3", p.lang, p.src, rep.ToolVersion)
 		}
 		data, err := rep.Encode()
 		if err != nil {

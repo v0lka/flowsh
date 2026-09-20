@@ -943,6 +943,11 @@ func envNameOf(target string) string {
 
 // classifyVar splits a variable reference written on the left of an assignment
 // into its drive and its name. "$env:FOO" → (Env, "FOO"); "$x" → (Variable, "x").
+// Scope qualifiers ($global:x, $script:x, $local:x, $private:x) are flattened
+// into the bare name: the analysis models one session scope, which is a sound
+// over-approximation for a single script file. A "$using:x" target is remoting
+// state and is reported under its qualified name, where the unknown drive
+// keeps it session-local (writing it has no durable effect off-process).
 func classifyVar(s string) (drive, name string) {
 	if n, ok := envRef(s); ok {
 		return DriveEnv, n
@@ -954,11 +959,14 @@ func classifyVar(s string) (drive, name string) {
 			return "", ""
 		}
 		if i := strings.IndexByte(body, ':'); i >= 0 {
+			qual, rest := body[:i], body[i+1:]
 			switch {
-			case strings.EqualFold(body[:i], "env"):
-				return DriveEnv, body[i+1:]
-			case strings.EqualFold(body[:i], "variable"):
-				return DriveVariable, body[i+1:]
+			case strings.EqualFold(qual, "env"):
+				return DriveEnv, rest
+			case strings.EqualFold(qual, "variable"):
+				return DriveVariable, rest
+			case scopeQualifiers[strings.ToLower(qual)]:
+				return DriveVariable, rest
 			}
 			return "", body
 		}

@@ -171,6 +171,31 @@ type Assign struct {
 	Name       string `json:"name,omitempty"`
 	Op         string `json:"op,omitempty"`
 	Value      *Word  `json:"value,omitempty"`
+	// Targets lists every variable the assignment writes ($a,$b = 1,2 has
+	// two); the first entry mirrors TargetWord.
+	Targets []*Word `json:"targets,omitempty"`
+	// RHS holds the statements of a command-bearing right-hand side
+	// ($x = Get-Content f, $x = "a$(cmd)b"): they are lowered in place, before
+	// the assignment binds its value, so their effects and provenance are
+	// known at the moment $x is written. A nil RHS is a pure expression whose
+	// knownness Value's text alone determines.
+	RHS []*Stmt `json:"rhs,omitempty"`
+	// Hash holds the parsed entries of a @{…} literal right-hand side
+	// ($p = @{Path='x'; Force=$true}), so a later splat of the variable can
+	// expand into parameter bindings.
+	Hash *Hashtable `json:"hash,omitempty"`
+}
+
+// HEntry is one Name=Value entry of a hashtable literal.
+type HEntry struct {
+	Name  string `json:"name"`
+	Value *Word  `json:"value,omitempty"`
+}
+
+// Hashtable is a parsed @{…} literal.
+type Hashtable struct {
+	Pos     Pos      `json:"pos"`
+	Entries []HEntry `json:"entries,omitempty"`
 }
 
 // Kind classifies a normalized statement.
@@ -183,15 +208,61 @@ const (
 	KindAssignment Kind = "assignment"
 	// KindTop is a construct that must be analysed as ⊤ (opaque code execution).
 	KindTop Kind = "top"
+	// KindIf is an if/elseif…else conditional.
+	KindIf Kind = "if"
+	// KindLoop is a foreach/for/while/do loop.
+	KindLoop Kind = "loop"
+	// KindTry is a try/catch…/finally statement.
+	KindTry Kind = "try"
 )
+
+// Branch is one conditional arm of an if statement.
+type Branch struct {
+	Pos  Pos     `json:"pos"`
+	Cond *Word   `json:"cond,omitempty"`
+	Body []*Stmt `json:"body"`
+}
+
+// IfStmt is an if/elseif…/else conditional. Arms holds the if and elseif arms
+// in source order; Else is the else body.
+type IfStmt struct {
+	Pos  Pos      `json:"pos"`
+	Arms []Branch `json:"arms,omitempty"`
+	Else []*Stmt  `json:"else,omitempty"`
+}
+
+// LoopStmt is a foreach/for/while/do loop. Var/Iter describe a foreach header
+// (the loop variable and the iterable source text); Cond is a while/do
+// condition. The analysis runs the body once unless the iterable is a literal
+// list or the condition is known-false.
+type LoopStmt struct {
+	Pos  Pos     `json:"pos"`
+	Text string  `json:"text"` // "foreach" | "for" | "while" | "do"
+	Var  *Word   `json:"var,omitempty"`
+	Iter *Word   `json:"iter,omitempty"`
+	Cond *Word   `json:"cond,omitempty"`
+	Body []*Stmt `json:"body"`
+}
+
+// TryStmt is a try/catch…/finally statement: the analysis lowers the body and
+// the handlers as one conservative superset.
+type TryStmt struct {
+	Pos     Pos     `json:"pos"`
+	Body    []*Stmt `json:"body"`
+	Catch   []*Stmt `json:"catch,omitempty"`
+	Finally []*Stmt `json:"finally,omitempty"`
+}
 
 // Stmt is a normalized statement.
 type Stmt struct {
-	Kind   Kind     `json:"kind"`
-	Pos    Pos      `json:"pos"`
-	Cmd    *Command `json:"cmd,omitempty"`
-	Assign *Assign  `json:"assign,omitempty"`
-	Reason string   `json:"reason,omitempty"` // KindTop only
+	Kind   Kind      `json:"kind"`
+	Pos    Pos       `json:"pos"`
+	Cmd    *Command  `json:"cmd,omitempty"`
+	Assign *Assign   `json:"assign,omitempty"`
+	If     *IfStmt   `json:"if,omitempty"`
+	Loop   *LoopStmt `json:"loop,omitempty"`
+	Try    *TryStmt  `json:"try,omitempty"`
+	Reason string    `json:"reason,omitempty"` // KindTop only
 }
 
 // Program is the normalized AST of a PowerShell source: its statements, plus
@@ -391,6 +462,36 @@ type walker struct {
 	lang *gotreesitter.Language
 	src  []byte
 	prog *Program
+	// stmts redirects statement emission while a sub-tree is walked into a
+	// side list (an assignment's right-hand side) instead of the program's
+	// top-level statement list. nil means top-level.
+	stmts *[]*Stmt
+}
+
+// emit appends a statement to the current collection target.
+func (w *walker) emit(s *Stmt) {
+	if w.stmts != nil {
+		*w.stmts = append(*w.stmts, s)
+		return
+	}
+	w.prog.Stmts = append(w.prog.Stmts, s)
+}
+
+// walkInto walks n with statement emission redirected into a fresh list and
+// returns the collected statements.
+func (w *walker) walkInto(n *gotreesitter.Node) []*Stmt {
+	if n == nil {
+		return nil
+	}
+	outer := w.stmts
+	list := []*Stmt{}
+	w.stmts = &list
+	w.walk(n)
+	w.stmts = outer
+	if len(list) == 0 {
+		return nil
+	}
+	return list
 }
 
 func (w *walker) walk(n *gotreesitter.Node) {
@@ -414,20 +515,48 @@ func (w *walker) walk(n *gotreesitter.Node) {
 		// condition and run any of its clauses, so it degrades to ⊤ rather than
 		// producing nothing. The clauses are not descended into, so their
 		// (conditionally executed) bodies are not reported as if unconditional.
-		w.prog.Stmts = append(w.prog.Stmts, &Stmt{Kind: KindTop, Pos: w.pos(n), Reason: w.switchReason(n)})
+		w.emit(&Stmt{Kind: KindTop, Pos: w.pos(n), Reason: w.switchReason(n)})
 		return
 	case "command":
 		c := w.command(n)
-		w.prog.Stmts = append(w.prog.Stmts, &Stmt{Kind: KindCommand, Pos: c.Pos, Cmd: c})
+		w.emit(&Stmt{Kind: KindCommand, Pos: c.Pos, Cmd: c})
 		w.maybeDeclareAlias(c)
+		// Fall through to the transparent descent: an argument may itself
+		// carry an assignable expression — Remove-Item ($x = Get-Content f) —
+		// whose inner statements must still be recognised.
 	case "assignment_expression":
+		// The assignment owns its right-hand side: the RHS is walked into
+		// Assign.RHS (not the enclosing statement list), so the lowerer runs it
+		// before the assignment binds its value. This case RETURNS — a
+		// transparent descent would lower the RHS commands twice.
 		if a := w.assignment(n); a != nil {
-			w.prog.Stmts = append(w.prog.Stmts, &Stmt{Kind: KindAssignment, Pos: a.Pos, Assign: a})
+			w.emit(&Stmt{Kind: KindAssignment, Pos: a.Pos, Assign: a})
 		}
+		return
 	case "invokation_expression":
 		// A static .NET invocation [Type]::Method(...) is opaque: it can do
 		// anything, so it lowers to ⊤. This covers [ScriptBlock]::Create.
-		w.prog.Stmts = append(w.prog.Stmts, &Stmt{Kind: KindTop, Pos: w.pos(n), Reason: w.staticInvocation(n)})
+		w.emit(&Stmt{Kind: KindTop, Pos: w.pos(n), Reason: w.staticInvocation(n)})
+		// Fall through: arguments may carry inner statements; the ⊤ effect
+		// above already covers them soundly.
+	case "if_statement":
+		// The conditional owns its bodies: they are walked into structured
+		// arms so the lowerer can fork Σ per branch. No transparent descent —
+		// the bodies must not be lowered twice.
+		if s := w.ifStatement(n); s != nil {
+			w.emit(s)
+		}
+		return
+	case "foreach_statement", "for_statement", "while_statement", "do_statement":
+		if s := w.loopStatement(n); s != nil {
+			w.emit(s)
+		}
+		return
+	case "try_statement":
+		if s := w.tryStatement(n); s != nil {
+			w.emit(s)
+		}
+		return
 	}
 	for i := 0; i < n.ChildCount(); i++ {
 		w.walk(n.Child(i))
@@ -701,28 +830,283 @@ func (w *walker) firstWord(n *gotreesitter.Node) *Word {
 	return nil
 }
 
-// assignment builds an Assign from an assignment_expression node.
+// assignment builds an Assign from an assignment_expression node. Every
+// variable on the left becomes a target ($a,$b = 1,2), and the right-hand side
+// is walked into Assign.RHS so the lowerer runs its commands before the
+// assignment binds its value; a pure-expression RHS leaves RHS nil.
 func (w *walker) assignment(n *gotreesitter.Node) *Assign {
 	a := &Assign{Pos: w.pos(n)}
+	var valueNode *gotreesitter.Node
+	opSeen := false
 	for i := 0; i < n.ChildCount(); i++ {
 		ch := n.Child(i)
 		switch ch.Type(w.lang) {
 		case "left_assignment_expression":
-			if v := findType(ch, "variable", w.lang); v != nil {
-				a.TargetWord = w.word(v)
+			for _, v := range findAll(ch, "variable", w.lang) {
+				a.Targets = append(a.Targets, w.word(v))
 			}
 		case "assignement_operator":
 			a.Op = ch.Text(w.src)
-		case "pipeline":
-			text := ch.Text(w.src)
-			a.Value = &Word{Pos: w.pos(ch), Text: text, Literal: !strings.ContainsAny(text, "$`")}
+			opSeen = true
+		default:
+			// The value is whatever follows the operator (a pipeline, a
+			// literal, a parenthesised expression, an array…).
+			if opSeen && valueNode == nil {
+				valueNode = ch
+			}
 		}
+	}
+	if len(a.Targets) > 0 {
+		a.TargetWord = a.Targets[0]
 	}
 	if a.TargetWord == nil {
 		return nil
 	}
+	if valueNode != nil {
+		text := valueNode.Text(w.src)
+		a.Value = &Word{Pos: w.pos(valueNode), Text: text, Literal: !strings.ContainsAny(text, "$`")}
+		a.RHS = w.walkInto(valueNode)
+		if ht := parseHashtable(text, w.pos(valueNode)); ht != nil {
+			a.Hash = ht
+		}
+	}
 	a.Drive, a.Name = classifyVar(a.TargetWord.Text)
 	return a
+}
+
+// findAll returns every descendant of n whose type is typ, in source order.
+func findAll(n *gotreesitter.Node, typ string, lang *gotreesitter.Language) []*gotreesitter.Node {
+	if n == nil {
+		return nil
+	}
+	var out []*gotreesitter.Node
+	if n.Type(lang) == typ {
+		out = append(out, n)
+	}
+	for i := 0; i < n.ChildCount(); i++ {
+		out = append(out, findAll(n.Child(i), typ, lang)...)
+	}
+	return out
+}
+
+// condWord builds the raw condition word of a control-flow header.
+func (w *walker) condWord(n *gotreesitter.Node) *Word {
+	text := n.Text(w.src)
+	return &Word{Pos: w.pos(n), Text: text, Literal: !strings.ContainsAny(text, "$`")}
+}
+
+// ifStatement builds an if/elseif…/else statement. The if arm's condition is
+// the statement's own pipeline; each elseif_clause contributes another arm;
+// the else_clause's block becomes Else.
+func (w *walker) ifStatement(n *gotreesitter.Node) *Stmt {
+	is := &IfStmt{Pos: w.pos(n)}
+	armIdx := -1 // index of the arm awaiting its body
+	closeArm := func(block *gotreesitter.Node) {
+		if armIdx >= 0 {
+			is.Arms[armIdx].Body = w.walkInto(block)
+			armIdx = -1
+		}
+	}
+	for i := 0; i < n.ChildCount(); i++ {
+		ch := n.Child(i)
+		switch ch.Type(w.lang) {
+		case "pipeline":
+			is.Arms = append(is.Arms, Branch{Pos: w.pos(ch), Cond: w.condWord(ch)})
+			armIdx = len(is.Arms) - 1
+		case "statement_block":
+			closeArm(ch)
+		case "elseif_clauses":
+			for _, ec := range directChildren(ch, "elseif_clause", w.lang) {
+				for _, c := range directChildren(ec, "pipeline", w.lang) {
+					is.Arms = append(is.Arms, Branch{Pos: w.pos(c), Cond: w.condWord(c)})
+					armIdx = len(is.Arms) - 1
+				}
+				for _, b := range directChildren(ec, "statement_block", w.lang) {
+					closeArm(b)
+				}
+			}
+		case "else_clause":
+			for _, b := range directChildren(ch, "statement_block", w.lang) {
+				is.Else = append(is.Else, w.walkInto(b)...)
+			}
+		}
+	}
+	if len(is.Arms) == 0 {
+		return nil
+	}
+	return &Stmt{Kind: KindIf, Pos: is.Pos, If: is}
+}
+
+// loopStatement builds a foreach/for/while/do statement.
+func (w *walker) loopStatement(n *gotreesitter.Node) *Stmt {
+	lp := &LoopStmt{Pos: w.pos(n)}
+	switch n.Type(w.lang) {
+	case "foreach_statement":
+		lp.Text = "foreach"
+		for _, ch := range directChildren(n, "variable", w.lang) {
+			lp.Var = w.word(ch)
+			break
+		}
+		for _, ch := range directChildren(n, "pipeline", w.lang) {
+			text := ch.Text(w.src)
+			lp.Iter = &Word{Pos: w.pos(ch), Text: text, Literal: !strings.ContainsAny(text, "$`")}
+			break
+		}
+	case "while_statement":
+		lp.Text = "while"
+		for _, ch := range directChildren(n, "while_condition", w.lang) {
+			lp.Cond = w.condWord(ch)
+			break
+		}
+	case "do_statement":
+		lp.Text = "do"
+		for _, ch := range directChildren(n, "while_condition", w.lang) {
+			lp.Cond = w.condWord(ch)
+			break
+		}
+	case "for_statement":
+		lp.Text = "for"
+	}
+	for _, b := range directChildren(n, "statement_block", w.lang) {
+		lp.Body = w.walkInto(b)
+		break
+	}
+	if len(lp.Body) == 0 && lp.Var == nil && lp.Cond == nil {
+		return nil
+	}
+	return &Stmt{Kind: KindLoop, Pos: lp.Pos, Loop: lp}
+}
+
+// tryStatement builds a try/catch…/finally statement: the body, every catch
+// handler and the finally block are lowered as one conservative superset.
+func (w *walker) tryStatement(n *gotreesitter.Node) *Stmt {
+	ts := &TryStmt{Pos: w.pos(n)}
+	for _, b := range directChildren(n, "statement_block", w.lang) {
+		ts.Body = append(ts.Body, w.walkInto(b)...)
+		break
+	}
+	for _, cc := range directChildren(n, "catch_clauses", w.lang) {
+		for _, c := range directChildren(cc, "catch_clause", w.lang) {
+			for _, b := range directChildren(c, "statement_block", w.lang) {
+				ts.Catch = append(ts.Catch, w.walkInto(b)...)
+			}
+		}
+	}
+	for _, fc := range directChildren(n, "finally_clause", w.lang) {
+		for _, b := range directChildren(fc, "statement_block", w.lang) {
+			ts.Finally = append(ts.Finally, w.walkInto(b)...)
+		}
+	}
+	if len(ts.Body) == 0 && len(ts.Catch) == 0 && len(ts.Finally) == 0 {
+		return nil
+	}
+	return &Stmt{Kind: KindTry, Pos: ts.Pos, Try: ts}
+}
+
+// parseHashtable parses a @{…} literal's Name=Value entries (separated by `;`
+// or newlines); the first `=` or `:` outside quotes separates an entry's name
+// from its value. Anything else (nested hashtables, expressions) yields nil —
+// the literal then stays a raw word.
+func parseHashtable(text string, pos Pos) *Hashtable {
+	t := strings.TrimSpace(text)
+	if !strings.HasPrefix(t, "@{") || !strings.HasSuffix(t, "}") {
+		return nil
+	}
+	inner := t[2 : len(t)-1]
+	ht := &Hashtable{Pos: pos}
+	for _, part := range splitTopLevelEntries(inner) {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		i := indexEntrySep(part)
+		if i <= 0 {
+			return nil // an unrecognised entry poisons the whole literal
+		}
+		name := strings.TrimSpace(part[:i])
+		value := strings.TrimSpace(part[i+1:])
+		if name == "" || value == "" || !isVarNameLike(name) {
+			return nil
+		}
+		ht.Entries = append(ht.Entries, HEntry{
+			Name:  name,
+			Value: &Word{Text: value, Literal: !strings.ContainsAny(value, "$`")},
+		})
+	}
+	if len(ht.Entries) == 0 {
+		return nil
+	}
+	return ht
+}
+
+// splitTopLevelEntries splits s on `;` and newlines outside quotes.
+func splitTopLevelEntries(s string) []string {
+	var parts []string
+	last := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\'', '"':
+			q := s[i]
+			i++
+			for i < len(s) && s[i] != q {
+				if s[i] == '`' {
+					i++
+				}
+				i++
+			}
+		case ';', '\n':
+			parts = append(parts, s[last:i])
+			last = i + 1
+		}
+	}
+	return append(parts, s[last:])
+}
+
+// indexEntrySep returns the index of the entry separator (the first `=` or
+// `:` outside quotes), or -1.
+func indexEntrySep(s string) int {
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\'', '"':
+			q := s[i]
+			i++
+			for i < len(s) && s[i] != q {
+				if s[i] == '`' {
+					i++
+				}
+				i++
+			}
+		case '=', ':':
+			return i
+		}
+	}
+	return -1
+}
+
+// isVarNameLike reports whether s is a plausible parameter name (letters,
+// digits, underscores).
+func isVarNameLike(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !isNameChar(c) {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+// directChildren returns the node's immediate children of the given type.
+func directChildren(n *gotreesitter.Node, typ string, lang *gotreesitter.Language) []*gotreesitter.Node {
+	if n == nil {
+		return nil
+	}
+	var out []*gotreesitter.Node
+	for i := 0; i < n.ChildCount(); i++ {
+		if ch := n.Child(i); ch != nil && ch.Type(lang) == typ {
+			out = append(out, ch)
+		}
+	}
+	return out
 }
 
 // findType returns the first descendant of n whose type is typ.

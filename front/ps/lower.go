@@ -59,12 +59,31 @@ func Lower(p *Program) *Result {
 }
 
 // LowerWith is Lower with explicit options.
-func LowerWith(p *Program, opts Options) *Result {
+func LowerWith(p *Program, opts Options) (res *Result) {
 	l := &lowerer{
-		prog:    p,
-		windows: opts.Windows,
-		aliases: map[string]string{},
+		prog:       p,
+		windows:    opts.Windows,
+		aliases:    map[string]string{},
+		state:      NewState(),
+		budget:     defaultBudget,
+		envEmitted: map[string]bool{},
 	}
+	// Lowering never panics (SECURITY.md): an exhausted analysis budget or an
+	// internal error is converted into a ⊤ conclusion that preserves every
+	// effect discovered so far, mirroring the bash frontend's Exec recovery.
+	defer func() {
+		rec := recover()
+		if rec == nil {
+			return
+		}
+		if _, ok := rec.(budgetError); !ok {
+			l.top("internal error during lowering")
+		} else {
+			l.top("analysis budget exhausted")
+		}
+		res = &Result{Style: StylePS}
+		l.finish(res)
+	}()
 	r := &Result{Style: StylePS}
 	if p == nil {
 		l.top("nil program")
@@ -84,22 +103,396 @@ func LowerWith(p *Program, opts Options) *Result {
 		if s == nil {
 			continue
 		}
-		switch s.Kind {
-		case KindCommand:
-			// Record a declared alias only after it has been lowered, so it
-			// affects the statements that follow it and nothing before.
-			if name, value, ok := aliasDecl(s.Cmd); ok {
-				l.aliases[strings.ToLower(name)] = value
-			}
-			l.command(s)
-		case KindAssignment:
-			l.assignment(s.Assign)
-		case KindTop:
-			l.top(s.Reason)
-		}
+		l.step()
+		l.stmt(s)
 	}
 	l.finish(r)
 	return r
+}
+
+// stmt lowers one normalized statement; it is the single dispatch point used
+// for the program's top-level statements and for an assignment's right-hand
+// side alike.
+func (l *lowerer) stmt(s *Stmt) {
+	switch s.Kind {
+	case KindCommand:
+		// Record a declared alias only after it has been lowered, so it
+		// affects the statements that follow it and nothing before.
+		if name, value, ok := aliasDecl(s.Cmd); ok {
+			l.aliases[strings.ToLower(name)] = value
+		}
+		l.command(s)
+	case KindAssignment:
+		// The right-hand side runs first: its effects justify the value's
+		// provenance at the moment the assignment binds it.
+		rhsMark := len(l.effects)
+		if a := s.Assign; a != nil {
+			for _, rs := range a.RHS {
+				if rs == nil {
+					continue
+				}
+				l.step()
+				l.stmt(rs)
+			}
+		}
+		l.assignment(s.Assign, l.effects[rhsMark:])
+	case KindTop:
+		l.top(s.Reason)
+	case KindIf:
+		l.ifStmt(s.If)
+	case KindLoop:
+		l.loopStmt(s.Loop)
+	case KindTry:
+		l.tryStmt(s.Try)
+	}
+}
+
+// stmtsExec lowers a structured body (a branch, loop or handler body),
+// charging the budget per statement.
+func (l *lowerer) stmtsExec(ss []*Stmt) {
+	for _, s := range ss {
+		if s == nil {
+			continue
+		}
+		l.step()
+		l.stmt(s)
+	}
+}
+
+// condTruthy evaluates a condition word: a statically-known condition yields
+// its truth (PowerShell truthiness: $false, 0 and the empty string are false);
+// an unresolved condition reports unknown.
+func condTruthy(ev evaluatedWord) (truth, known bool) {
+	if !ev.Known {
+		return false, false
+	}
+	switch strings.ToLower(strings.TrimSpace(ev.Text)) {
+	case "false", "0", "":
+		return false, true
+	default:
+		return true, true
+	}
+}
+
+// ifStmt lowers an if/elseif…/else statement: every arm whose condition is not
+// known-false runs in a forked Σ; the results join to a least upper bound. A
+// known-true arm reached without a preceding unresolved arm decides the whole
+// conditional.
+func (l *lowerer) ifStmt(is *IfStmt) {
+	if is == nil {
+		return
+	}
+	l.step()
+	base := l.state
+	var reached []*State // final states of executable arms
+	decided := false
+	for i := range is.Arms {
+		br := &is.Arms[i]
+		truth, known := condTruthy(l.evalWord(br.Cond))
+		switch {
+		case known && truth:
+			// This arm certainly runs — but only if no earlier unresolved arm
+			// could have short-circuited it.
+			if len(reached) == 0 {
+				l.state = base.Clone()
+				l.stmtsExec(br.Body)
+				reached = append(reached, l.state)
+				l.state = base
+				decided = true
+			} else {
+				// An earlier unresolved arm might be false, so this arm may
+				// still run: fork it too.
+				l.state = base.Clone()
+				l.stmtsExec(br.Body)
+				reached = append(reached, l.state)
+				l.state = base
+			}
+		case known:
+			// known-false: the arm cannot run.
+		default:
+			l.state = base.Clone()
+			l.stmtsExec(br.Body)
+			reached = append(reached, l.state)
+			l.state = base
+		}
+		if decided {
+			break
+		}
+	}
+	if !decided {
+		// The else body runs when no arm certainly matched: certainly (all
+		// false) or possibly (some condition unresolved).
+		if len(is.Else) > 0 {
+			l.state = base.Clone()
+			l.stmtsExec(is.Else)
+			reached = append(reached, l.state)
+			l.state = base
+		}
+		if len(reached) == 0 {
+			// Every condition is known-false and there is no else: the whole
+			// conditional is dead code, Σ untouched.
+			return
+		}
+		if len(is.Else) == 0 {
+			// Without an else the fall-through (no arm matched) is itself a
+			// reachable path carrying the pre-branch state.
+			reached = append(reached, base)
+		}
+	}
+	// A decided conditional leaves exactly the deciding arm's final state.
+	l.state = joinAll(reached)
+}
+
+// joinAll folds a set of branch-final states into their least upper bound.
+func joinAll(states []*State) *State {
+	var out *State
+	for _, s := range states {
+		out = JoinStates(out, s)
+	}
+	return out
+}
+
+// loopStmt lowers a foreach/for/while/do loop. A foreach over a statically
+// known literal list iterates exactly; every other loop runs its body once
+// (the sound single-iteration convention the bash frontend uses for
+// undecidable loops) under the step budget.
+func (l *lowerer) loopStmt(lp *LoopStmt) {
+	if lp == nil {
+		return
+	}
+	l.step()
+	switch lp.Text {
+	case "foreach":
+		var ev evaluatedWord
+		if lp.Iter != nil {
+			ev = l.evalWord(lp.Iter)
+			l.emitEnvReads(lp.Text, lp.Pos, ev.EnvReads)
+			if ev.Known {
+				// A comma list of literal elements iterates exactly, each
+				// element evaluated on its own (quotes stripped per element).
+				parts := splitTopLevelCommas(lp.Iter.Text)
+				if elems, ok := l.literalElements(parts); ok {
+					for _, e := range elems {
+						l.step()
+						if lp.Var != nil && lp.Var.VarName != "" {
+							l.state.Set(lp.Var.VarName, e, ev.Taint)
+						}
+						l.stmtsExec(lp.Body)
+					}
+					return
+				}
+				// A single known value: one iteration bound to it.
+				l.step()
+				if lp.Var != nil && lp.Var.VarName != "" {
+					l.state.Set(lp.Var.VarName, ev.Text, ev.Taint)
+				}
+				l.stmtsExec(lp.Body)
+				return
+			}
+		}
+		// An unresolved iterable: one iteration with the loop variable
+		// set-but-unknown, carrying the iterable's provenance.
+		if lp.Var != nil && lp.Var.VarName != "" {
+			l.state.SetUnknown(lp.Var.VarName, ev.Taint)
+		}
+		l.stmtsExec(lp.Body)
+		l.note("foreach: unresolved iterable %s → one iteration", quoteTarget(iterText(lp)))
+	case "while", "do":
+		truth, known := false, false
+		if lp.Cond != nil {
+			truth, known = condTruthy(l.evalWord(lp.Cond))
+		}
+		if known && !truth && lp.Text == "while" {
+			l.note("while: known-false condition → body skipped")
+			return
+		}
+		l.stmtsExec(lp.Body)
+		l.note("%s: undecidable iteration count → run once", lp.Text)
+	default: // "for"
+		l.stmtsExec(lp.Body)
+		l.note("for: undecidable iteration count → run once")
+	}
+}
+
+func iterText(lp *LoopStmt) string {
+	if lp.Iter != nil {
+		return lp.Iter.Text
+	}
+	return ""
+}
+
+// literalElements evaluates each comma-separated element of a literal list
+// and reports whether every one is statically known.
+func (l *lowerer) literalElements(parts []string) ([]string, bool) {
+	if len(parts) == 0 {
+		return nil, false
+	}
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		e := l.evalWordTextStr(p)
+		if !e.Known {
+			return nil, false
+		}
+		out = append(out, e.Text)
+	}
+	return out, true
+}
+
+// tryStmt lowers a try/catch…/finally statement: the body and the handlers
+// both run, a deliberate conservative superset of the runtime's either/or.
+func (l *lowerer) tryStmt(ts *TryStmt) {
+	if ts == nil {
+		return
+	}
+	l.step()
+	l.stmtsExec(ts.Body)
+	l.stmtsExec(ts.Catch)
+	l.stmtsExec(ts.Finally)
+	l.note("try: body and handler both lowered (conservative superset)")
+}
+
+// ===========================================================================
+// Session-state cmdlets
+// ===========================================================================
+
+// mutateState applies the session-state transfer of the state-mutating
+// cmdlets: Set-Location moves $pwd, Set-Variable/New-Variable and Set-Item
+// Variable: write variables, Clear-Variable and Remove-Item Variable: unset
+// them. Every effect the cmdlet itself reports is unchanged — this only
+// updates Σ so later reads resolve.
+func (l *lowerer) mutateState(c *Command, canonical string) {
+	switch strings.ToLower(canonical) {
+	case "set-location":
+		// cd /tmp — the target is the first path parameter or operand.
+		for _, b := range c.Bindings {
+			if b.Param != nil && pathParam(b.Param.Bare()) && b.Value != nil {
+				t := l.resolveTarget(b.Value)
+				l.applyLocation(t)
+				return
+			}
+		}
+		for _, a := range c.Args {
+			if a != nil {
+				l.applyLocation(l.resolveTarget(a))
+				return
+			}
+		}
+		l.state.SetUnknown("pwd", engine.TaintBottom())
+	case "pop-location":
+		// The popped location is whatever Push-Location saved — unknowable.
+		l.state.SetUnknown("pwd", engine.TaintBottom())
+	case "set-variable", "new-variable":
+		name, value := l.namedValueBinding(c, "name", "value")
+		if name == "" {
+			return
+		}
+		l.bindVar(name, value, "=")
+		l.note("$%s := (Set-Variable)", name)
+	case "clear-variable":
+		for _, b := range c.Bindings {
+			if b.Param != nil && strings.EqualFold(b.Param.Bare(), "name") && b.Value != nil {
+				if n, ok := plainVarName(unbrace(b.Value.Text)); ok {
+					l.state.Unset(n)
+					l.note("$%s unset (Clear-Variable)", n)
+				}
+			}
+		}
+	case "set-item", "remove-item":
+		// Variable:\x targets mutate session state; every other target is
+		// reported by the spec path above.
+		for _, b := range c.Bindings {
+			if b.Param != nil && pathParam(b.Param.Bare()) && b.Value != nil {
+				l.applyVariablePath(c, b.Value, canonical)
+			}
+		}
+		for _, a := range c.Args {
+			if a != nil {
+				l.applyVariablePath(c, a, canonical)
+			}
+		}
+	}
+}
+
+// applyLocation moves $pwd to a known location, or marks it unknown.
+func (l *lowerer) applyLocation(t resolvedTarget) {
+	if t.eval.Known && t.eval.Text != "" {
+		l.state.Set("pwd", t.eval.Text, t.eval.Taint)
+		l.note("$pwd := %s", t.eval.Text)
+		return
+	}
+	l.state.SetUnknown("pwd", engine.TaintBottom())
+}
+
+// applyVariablePath recognises a Variable:\x target of Set-Item /
+// Remove-Item and writes or unsets that session variable.
+func (l *lowerer) applyVariablePath(c *Command, w *Word, canonical string) {
+	raw := unbrace(w.Text)
+	if !strings.HasPrefix(strings.ToLower(raw), "variable:") {
+		return
+	}
+	name := raw[len("variable:"):]
+	if strings.ContainsAny(name, `\/`) {
+		return
+	}
+	if strings.EqualFold(canonical, "set-item") {
+		_, value := l.namedValueBinding(c, "", "value")
+		l.bindVar(name, value, "=")
+		l.note("$%s := (Set-Item Variable:)", name)
+		return
+	}
+	l.state.Unset(name)
+	l.note("$%s unset (Remove-Item Variable:)", name)
+}
+
+// namedValueBinding extracts a named parameter's name and evaluated value.
+// Parameter matching is case-insensitive, as PowerShell's is.
+func (l *lowerer) namedValueBinding(c *Command, nameParamName, valueParamName string) (string, evaluatedWord) {
+	var name string
+	var value evaluatedWord
+	for _, b := range c.Bindings {
+		if b.Param == nil {
+			continue
+		}
+		switch {
+		case strings.EqualFold(b.Param.Bare(), nameParamName):
+			if b.Value != nil {
+				if n, ok := plainVarName(unbrace(b.Value.Text)); ok {
+					name = n
+				}
+			}
+		case strings.EqualFold(b.Param.Bare(), valueParamName):
+			if b.Value != nil {
+				l.step()
+				value = evalWordText(b.Value, l.state)
+			}
+		}
+	}
+	return name, value
+}
+
+// ===========================================================================
+// Analysis budget
+// ===========================================================================
+
+// defaultBudget bounds the abstract-lowering work: statements, loop
+// iterations and word evaluations draw on it. It is a deterministic step
+// counter, not a wall-clock budget, so a result never depends on host load and
+// the race detector needs no special case (unlike the parse budget,
+// ADR-0012/0013). The order matches the bash frontend's step budget
+// (ADR-0006).
+const defaultBudget = 50000
+
+// budgetError panics out of the lowering loop when the budget is exhausted;
+// LowerWith recovers it and records the ⊤ conclusion.
+type budgetError struct{}
+
+// step charges one unit of lowering work and panics with budgetError when the
+// budget is exhausted.
+func (l *lowerer) step() {
+	if l.budget <= 0 {
+		panic(budgetError{})
+	}
+	l.budget--
 }
 
 // ===========================================================================
@@ -119,6 +512,15 @@ type lowerer struct {
 	// order-aware: an alias only rewrites the calls that follow its declaration,
 	// as in PowerShell (a later Set-Alias must not rewrite an earlier call).
 	aliases map[string]string
+	// state is the abstract variable environment Σ: values the script
+	// assigns, consulted when a word references a variable so statically-known
+	// values can lower to concrete targets.
+	state *State
+	// budget bounds the lowering work; see defaultBudget.
+	budget int
+	// envEmitted deduplicates the EnvRead effects word evaluations request, so
+	// a value referenced ten times reports one read.
+	envEmitted map[string]bool
 	// gatedEgress records that the egress gate dropped a literal target during
 	// the command currently being lowered, so the intrinsic ProcSpawn fallback
 	// knows the command would otherwise contribute no effect.
@@ -202,6 +604,20 @@ func (l *lowerer) command(s *Stmt) {
 	}
 	canonical, viaAlias := l.resolve(c.Name)
 
+	// A splatted argument whose variable holds a fully-known hashtable
+	// expands into the parameter bindings it denotes; an unknown splat keeps
+	// its ⊤ trigger in topReason.
+	l.expandSplat(c)
+
+	// Control-flow keywords are not commands: they have no external effect of
+	// their own (an uncaught throw terminates with an error, not a mutation).
+	switch strings.ToLower(canonical) {
+	case "break", "continue", "return", "exit", "throw":
+		l.note("%s: control-flow keyword → no external effect", canonical)
+		l.redirs(c)
+		return
+	}
+
 	if reason, ok := l.topReason(c, canonical); ok {
 		l.emitEff(topEffect(engine.ModeDirect), atom(engine.AtomCommand, canonical, c.Pos))
 		l.conservative = true
@@ -229,6 +645,9 @@ func (l *lowerer) command(s *Stmt) {
 	}
 	if len(specs) == 0 {
 		l.note("%s: no external effect", canonical)
+		// A no-effect cmdlet can still mutate session state
+		// (Set-Variable, Clear-Variable, …), which later reads resolve through.
+		l.mutateState(c, canonical)
 		l.redirs(c)
 		return
 	}
@@ -237,6 +656,7 @@ func (l *lowerer) command(s *Stmt) {
 	}
 	l.dataFiles(c, canonical)
 	l.bumpFor(c, canonical)
+	l.mutateState(c, canonical)
 	// A command whose only effect was a gated-out egress target (a literal that
 	// names no network address) must not leave the report empty: emit the
 	// command's intrinsic "it ran" effect, as the bash binder does, so the
@@ -258,15 +678,6 @@ func (l *lowerer) ensureGatedEgressFallback(c *Command, canonical string, before
 	e := effectOf(engine.KindProcSpawn, scopeOf(canonical), engine.ModeDirect, false)
 	l.emitEff(e, atom(engine.AtomCommand, canonical, c.Pos))
 	l.note("%s: egress target gated out → ProcSpawn", cmdLabel(c, canonical))
-}
-
-// egressTargetUnresolved reports whether a lowering target is not a
-// confidently-literal destination word: it references a variable ($), carries a
-// backtick escape, or is a parenthesised sub-expression. Such a target's value
-// is not known at analysis time, so its egress stays as unresolved (⊤) rather
-// than being judged — and rejected — as a literal.
-func egressTargetUnresolved(s string) bool {
-	return strings.ContainsAny(s, "$`()")
 }
 
 // topReason reports whether a command must be lowered to ⊤ and why. It covers
@@ -303,12 +714,101 @@ func (l *lowerer) topReason(c *Command, canonical string) (string, bool) {
 	return "", false
 }
 
+// resolvedTarget is one cmdlet target: the raw source spelling (for why-trace
+// atoms) together with the word's evaluation against Σ (for the effect scope).
+// A statically-known evaluation yields the concrete target; an unresolved one
+// degrades the scope to ⊤ — never to a fabricated literal (ADR-0003).
+type resolvedTarget struct {
+	raw  string
+	pos  Pos
+	eval evaluatedWord
+}
+
+// resolveTarget evaluates one source word as a target.
+func (l *lowerer) resolveTarget(w *Word) resolvedTarget {
+	l.step()
+	t := resolvedTarget{raw: cleanTarget(w)}
+	if w != nil {
+		t.pos = w.Pos
+		t.eval = evalWordText(w, l.state)
+	}
+	return t
+}
+
+// scopeForTarget maps a resolved target onto an effect scope: a known value →
+// its concrete scope; a present-but-unresolved word → ⊤ (the sound stand-in);
+// no textual target → ⊥ (the spec contributes no operand).
+func scopeForTarget(t resolvedTarget) engine.Scope {
+	switch {
+	case t.raw == "":
+		return engine.ScopeBottom()
+	case t.eval.Known && t.eval.Text != "":
+		return scopeOf(t.eval.Text)
+	default:
+		return engine.ScopeTop()
+	}
+}
+
+// egressHostOf extracts a literal network host from an unresolved egress
+// target whose host part is literal and only the tail is dynamic
+// ("http://evil.example/$lines" → "evil.example"). A host that fails the
+// host grammar yields no host: the egress then stays wholly unresolved (⊤).
+func egressHostOf(s string) (string, bool) {
+	rest := ""
+	if i := strings.Index(s, "://"); i > 0 {
+		if strings.ContainsAny(s[:i], "/@$ \\") {
+			return "", false
+		}
+		rest = s[i+3:]
+	} else if strings.HasPrefix(s, "//") {
+		rest = s[2:] // UNC/SMB authority
+	} else {
+		return "", false
+	}
+	if end := strings.IndexAny(rest, "/?#\\"); end >= 0 {
+		rest = rest[:end]
+	}
+	host := rest
+	if j := strings.LastIndex(host, "@"); j >= 0 {
+		host = host[j+1:]
+	}
+	if strings.HasPrefix(host, "[") { // [IPv6]:port
+		if j := strings.Index(host, "]"); j >= 0 {
+			host = host[1:j]
+		}
+	} else if j := strings.LastIndex(host, ":"); j >= 0 {
+		host = host[:j] // host:port
+	}
+	if host == "" || !engine.HostShapedLenient(host) {
+		return "", false
+	}
+	return host, true
+}
+
+// emitEnvReads reports the environment variables word evaluations referenced:
+// each becomes one EnvRead effect, deduplicated per lowering. The analysis
+// itself never reads the host environment (SECURITY.md, Data Protection).
+func (l *lowerer) emitEnvReads(label string, pos Pos, names []string) {
+	for _, n := range names {
+		if n == "" || l.envEmitted[n] {
+			continue
+		}
+		l.envEmitted[n] = true
+		l.emitEff(effectOf(engine.KindEnvRead, scopeOf(n), engine.ModeDirect, false),
+			atom(engine.AtomCommand, label, pos), atom(engine.AtomOperand, n, pos))
+		l.note("$env:%s → EnvRead", n)
+	}
+}
+
 // emitSpec lowers one cmdlet spec: it resolves the target set and emits the
 // corresponding effect(s), handling the Env/Variable/Registry providers and
 // credential-material detection for reads.
 func (l *lowerer) emitSpec(c *Command, cmd string, sp Spec) {
 	base := atom(engine.AtomCommand, cmd, c.Pos)
 	targets := l.targetWords(c, sp.Target)
+	for _, t := range targets {
+		l.emitEnvReads(cmd, c.Pos, t.eval.EnvReads)
+	}
 	cred := sp.Kind == engine.KindFSRead && isCredentialText(c.Text)
 	if len(targets) == 0 {
 		// A path/name/url effect with no operand is fed from the pipeline or a
@@ -331,7 +831,7 @@ func (l *lowerer) emitSpec(c *Command, cmd string, sp Spec) {
 			}
 			return
 		}
-		l.emitOne(c, cmd, sp, "", cred)
+		l.emitOne(c, cmd, sp, resolvedTarget{}, cred)
 		return
 	}
 	for _, t := range targets {
@@ -339,14 +839,14 @@ func (l *lowerer) emitSpec(c *Command, cmd string, sp Spec) {
 	}
 }
 
-func (l *lowerer) emitOne(c *Command, cmd string, sp Spec, target string, cred bool) {
+func (l *lowerer) emitOne(c *Command, cmd string, sp Spec, t resolvedTarget, cred bool) {
 	base := []engine.Atom{atom(engine.AtomCommand, cmd, c.Pos)}
-	if target != "" {
-		base = append(base, atom(engine.AtomOperand, target, l.targetPos(c, target)))
+	if t.raw != "" {
+		base = append(base, atom(engine.AtomOperand, t.raw, l.targetPos(c, t.raw)))
 	}
-	switch driveOf(target) {
+	switch driveOf(t.raw) {
 	case DriveEnv:
-		en := envNameOf(target)
+		en := envNameOf(t.raw)
 		kind := engine.KindEnvRead
 		if sp.Kind == engine.KindFSWrite || sp.Kind == engine.KindFSMeta {
 			kind = engine.KindEnvWrite
@@ -368,21 +868,21 @@ func (l *lowerer) emitOne(c *Command, cmd string, sp Spec, target string, cred b
 		if sp.Kind == engine.KindFSWrite || sp.Kind == engine.KindFSMeta || sp.Kind == engine.KindFSRead {
 			kind = engine.KindPersist
 		}
-		l.emitEff(effectOf(kind, scopeOf(target), sp.Mode, sp.Reversible), base...)
-		l.note("%s: %s %s → %s", cmd, sp.Op, target, kind)
+		l.emitEff(effectOf(kind, scopeOf(t.raw), sp.Mode, sp.Reversible), base...)
+		l.note("%s: %s %s → %s", cmd, sp.Op, t.raw, kind)
 		return
 
 	case DriveFunction, DriveAlias:
 		// Function:/Alias: name in-memory session state, which is not durable
 		// off-process state: a write there has no external effect.
-		l.note("%s: %s %s → %s: session-local provider, no external effect", cmd, sp.Op, target, driveOf(target))
+		l.note("%s: %s %s → %s: session-local provider, no external effect", cmd, sp.Op, t.raw, driveOf(t.raw))
 		return
 
 	case DriveWSMan:
 		// WSMan: is durable host configuration (like the registry), so a write
 		// lowers to Persist.
-		l.emitEff(effectOf(engine.KindPersist, scopeOf(target), sp.Mode, sp.Reversible), base...)
-		l.note("%s: %s %s → Persist (WSMan configuration)", cmd, sp.Op, target)
+		l.emitEff(effectOf(engine.KindPersist, scopeOf(t.raw), sp.Mode, sp.Reversible), base...)
+		l.note("%s: %s %s → Persist (WSMan configuration)", cmd, sp.Op, t.raw)
 		return
 
 	case DriveCert:
@@ -392,72 +892,98 @@ func (l *lowerer) emitOne(c *Command, cmd string, sp Spec, target string, cred b
 		if sp.Kind == engine.KindFSWrite || sp.Kind == engine.KindFSMeta {
 			kind = engine.KindPersist
 		}
-		l.emitEff(effectOf(kind, scopeOf(target), sp.Mode, sp.Reversible), base...)
-		l.note("%s: %s %s → %s (certificate store)", cmd, sp.Op, target, kind)
+		l.emitEff(effectOf(kind, scopeOf(t.raw), sp.Mode, sp.Reversible), base...)
+		l.note("%s: %s %s → %s (certificate store)", cmd, sp.Op, t.raw, kind)
 		return
 	}
 
 	// Egress target gate: a NetEgress target must pass the host/URL grammar.
-	// A target that references a variable or an expression is unresolved: the
-	// egress stays, widened to ⊤ (the unresolved egress keeps participating in
-	// the network controls). A literal that names no network address creates
-	// no egress effect at all. Destination parameters (-Uri, -ComputerName)
-	// name hosts by declaration, so the lenient grammar accepts single-label
-	// computer names.
-	scope := scopeOf(target)
+	// A statically-known target is judged literally. An unresolved target
+	// keeps its egress: scoped to the literal host when one prefixes the
+	// dynamic tail, else widened to ⊤ (the unresolved egress keeps
+	// participating in the network controls). A literal that names no network
+	// address creates no egress effect at all. Destination parameters
+	// (-Uri, -ComputerName) name hosts by declaration, so the lenient grammar
+	// accepts single-label computer names.
+	scope := scopeForTarget(t)
+	if t.raw != "" && !t.eval.Known {
+		l.note("%s: target %s is unresolved → ⊤", cmd, quoteTarget(t.raw))
+	}
 	if sp.Kind == engine.KindNetEgress {
 		switch {
-		case target == "":
+		case t.raw == "":
 			// No target text (TargetNone/TargetSelf specs): the effect keeps
 			// the ⊥ target it always had.
-		case egressTargetUnresolved(target):
-			// A target that references a variable, carries a backtick escape or
-			// is a parenthesised sub-expression is not known at analysis time:
-			// the egress stays, widened to ⊤ (the unresolved egress keeps
-			// participating in the network controls).
-			scope = engine.ScopeTop()
-		case engine.HostShapedLenient(target):
-		default:
-			l.note("%s: %s %s names no network address → no egress", cmd, sp.Op, quoteTarget(target))
+		case t.eval.Known && t.eval.Text == "":
+			l.note("%s: %s evaluates to an empty target → no egress", cmd, sp.Op)
 			l.gatedEgress = true
 			return
+		case t.eval.Known:
+			if !engine.HostShapedLenient(t.eval.Text) {
+				l.note("%s: %s %s names no network address → no egress", cmd, sp.Op, quoteTarget(t.eval.Text))
+				l.gatedEgress = true
+				return
+			}
+			scope = scopeOf(t.eval.Text)
+		default:
+			if host, ok := egressHostOf(t.raw); ok {
+				// The endpoint is literal even though the tail is dynamic:
+				// scope the egress to the host it would contact.
+				scope = scopeOf(host)
+				l.note("%s: endpoint host %s (unresolved tail) → host-scoped egress", cmd, quoteTarget(host))
+			} else {
+				scope = engine.ScopeTop()
+				l.note("%s: unresolved egress target %s → ⊤", cmd, quoteTarget(t.raw))
+			}
 		}
 	}
 	e := effectOf(sp.Kind, scope, sp.Mode, sp.Reversible)
+	if sp.Kind == engine.KindNetEgress {
+		// The word's provenance (a secret-bearing variable interpolated into
+		// the request) flows onto the egress effect.
+		e.Taint = e.Taint.Join(t.eval.Taint)
+	}
 	l.emitEff(e, withSink(base, e)...)
-	l.note("%s: %s %s → %s", cmd, sp.Op, quoteTarget(target), sp.Kind)
+	l.note("%s: %s %s → %s", cmd, sp.Op, quoteTarget(t.eval.Text), sp.Kind)
 	if cred {
-		l.emitEff(effectOf(engine.KindCredAccess, scopeOf(target), engine.ModeDirect, false),
+		l.emitEff(effectOf(engine.KindCredAccess, scope, engine.ModeDirect, false),
 			append(base, atom(engine.AtomSource, "credential", c.Pos))...)
-		l.note("%s: credential material %s → CredAccess", cmd, quoteTarget(target))
+		l.note("%s: credential material %s → CredAccess", cmd, quoteTarget(t.eval.Text))
 	}
 }
 
-// targetWords resolves the target strings a spec applies to.
-func (l *lowerer) targetWords(c *Command, k TargetKind) []string {
+// targetWords resolves the target words a spec applies to, evaluated against Σ.
+func (l *lowerer) targetWords(c *Command, k TargetKind) []resolvedTarget {
 	switch k {
 	case TargetNone:
 		return nil
 	case TargetSelf:
 		if c.Name != "" {
-			return []string{c.Name}
+			return []resolvedTarget{{raw: c.Name, pos: c.Pos, eval: evaluatedWord{Text: c.Name, Known: true}}}
 		}
 		return nil
 	case TargetCwd:
-		return []string{"."}
+		return []resolvedTarget{{raw: ".", pos: c.Pos, eval: evaluatedWord{Text: ".", Known: true}}}
 	}
-	var vals []string
+	var vals []resolvedTarget
+	add := func(w *Word) {
+		if w != nil {
+			vals = append(vals, l.resolveTarget(w))
+		}
+	}
 	switch k {
 	case TargetPath:
 		for _, b := range c.Bindings {
 			if b.Param != nil && pathParam(b.Param.Bare()) && b.Value != nil {
-				vals = append(vals, cleanTarget(b.Value))
+				add(b.Value)
 			}
 		}
 		// A positional operand names the item the cmdlet acts on, so it is
 		// combined with the named path parameters rather than being dropped when
 		// one is present (`Move-Item C:\a -Destination C:\b` acts on both).
-		vals = append(vals, l.operands(c)...)
+		for _, a := range c.Args {
+			add(a)
+		}
 		// A filesystem-selection parameter (-Include/-Exclude/-Filter) is not a
 		// path and must not be recorded as the target: it only filters a query.
 		// When no path parameter or operand names the location, no target is
@@ -473,46 +999,34 @@ func (l *lowerer) targetWords(c *Command, k TargetKind) []string {
 		// parameter's endpoint rather than at a decoy operand.
 		for _, b := range c.Bindings {
 			if b.Param != nil && urlParam(b.Param.Bare()) && b.Value != nil {
-				vals = append(vals, cleanTarget(b.Value))
+				add(b.Value)
 			}
 		}
 		if len(vals) == 0 {
 			for _, b := range c.Bindings {
 				if b.Param != nil && nameParam(b.Param.Bare()) && b.Value != nil {
-					vals = append(vals, cleanTarget(b.Value))
+					add(b.Value)
 				}
 			}
 		}
 		if len(vals) == 0 {
-			vals = append(vals, l.operands(c)...)
+			for _, a := range c.Args {
+				add(a)
+			}
 		}
 	case TargetName:
 		for _, b := range c.Bindings {
 			if b.Param != nil && nameParam(b.Param.Bare()) && b.Value != nil {
-				vals = append(vals, cleanTarget(b.Value))
+				add(b.Value)
 			}
 		}
 		if len(vals) == 0 {
-			vals = append(vals, l.operands(c)...)
+			for _, a := range c.Args {
+				add(a)
+			}
 		}
 	}
 	return vals
-}
-
-// operands returns the positional operand texts of a command, with surrounding
-// quotes stripped.
-func (l *lowerer) operands(c *Command) []string {
-	if c == nil {
-		return nil
-	}
-	out := make([]string, 0, len(c.Args))
-	for _, a := range c.Args {
-		if a == nil {
-			continue
-		}
-		out = append(out, cleanTarget(a))
-	}
-	return out
 }
 
 // cleanTarget returns a word's target text with one matching pair of surrounding
@@ -539,18 +1053,23 @@ func (l *lowerer) dataFiles(c *Command, cmd string) {
 		if !ok {
 			continue
 		}
-		t := cleanTarget(b.Value)
-		if t == "" {
+		t := l.resolveTarget(b.Value)
+		if t.raw == "" {
 			continue
 		}
-		e := effectOf(kind, scopeOf(t), engine.ModeDirect, kind == engine.KindFSRead)
-		base := []engine.Atom{atom(engine.AtomCommand, cmd, c.Pos), atom(engine.AtomOperand, t, b.Value.Pos)}
+		l.emitEnvReads(cmd, c.Pos, t.eval.EnvReads)
+		e := effectOf(kind, scopeForTarget(t), engine.ModeDirect, kind == engine.KindFSRead)
+		base := []engine.Atom{atom(engine.AtomCommand, cmd, c.Pos), atom(engine.AtomOperand, t.raw, b.Value.Pos)}
 		l.emitEff(e, withSink(base, e)...)
-		l.note("%s: %s %s → %s", cmd, b.Param.Name, quoteTarget(t), kind)
-		if kind == engine.KindFSRead && isCredentialText(t) {
-			l.emitEff(effectOf(engine.KindCredAccess, scopeOf(t), engine.ModeDirect, false),
+		if !t.eval.Known {
+			l.note("%s: %s %s is unresolved → ⊤", cmd, b.Param.Name, quoteTarget(t.raw))
+		} else {
+			l.note("%s: %s %s → %s", cmd, b.Param.Name, quoteTarget(t.eval.Text), kind)
+		}
+		if kind == engine.KindFSRead && isCredentialText(t.raw) {
+			l.emitEff(effectOf(engine.KindCredAccess, scopeForTarget(t), engine.ModeDirect, false),
 				atom(engine.AtomCommand, cmd, c.Pos), atom(engine.AtomSource, "credential", b.Value.Pos))
-			l.note("%s: credential material %s → CredAccess", cmd, quoteTarget(t))
+			l.note("%s: credential material %s → CredAccess", cmd, quoteTarget(t.raw))
 		}
 	}
 }
@@ -596,7 +1115,9 @@ func (l *lowerer) targetPos(c *Command, target string) Pos {
 	return c.Pos
 }
 
-// redirs lowers a command's redirections: > and >> write their target file.
+// redirs lowers a command's redirections: > and >> write their target file. A
+// redirection word evaluated against Σ resolves to its concrete path; an
+// unresolved one degrades the write's target to ⊤.
 func (l *lowerer) redirs(c *Command) {
 	for _, r := range c.Redirs {
 		if strings.Contains(r.Op, "&") {
@@ -611,9 +1132,16 @@ func (l *lowerer) redirs(c *Command) {
 			l.note("redirection %s → FSWrite(⊤)", r.Op)
 			continue
 		}
-		l.emitEff(effectOf(engine.KindFSWrite, scopeOf(r.Word.Text), engine.ModeDirect, false),
+		t := l.resolveTarget(r.Word)
+		l.emitEnvReads(c.Name, c.Pos, t.eval.EnvReads)
+		e := effectOf(engine.KindFSWrite, scopeForTarget(t), engine.ModeDirect, false)
+		if !t.eval.Known {
+			l.note("redirection %s %s is unresolved → FSWrite(⊤)", r.Op, r.Word.Text)
+		} else {
+			l.note("redirection %s %s → FSWrite", r.Op, t.eval.Text)
+		}
+		l.emitEff(e,
 			atom(engine.AtomCommand, c.Name, c.Pos), atom(engine.AtomRedirect, r.Word.Text, r.Word.Pos))
-		l.note("redirection %s %s → FSWrite", r.Op, r.Word.Text)
 	}
 }
 
@@ -655,31 +1183,281 @@ func hasSwitchCanon(c *Command, canon string) bool {
 	return false
 }
 
-// assignment lowers a variable/environment assignment.
-func (l *lowerer) assignment(a *Assign) {
+// assignment lowers a variable/environment assignment and binds the assigned
+// value in Σ. A statically-known literal value makes later reads concrete; a
+// value produced by commands stays unknown and carries the provenance of the
+// right-hand side's effects.
+func (l *lowerer) assignment(a *Assign, rhs []engine.Effect) {
 	if a == nil {
 		return
 	}
-	switch a.Drive {
-	case DriveEnv:
-		if a.Name == "" {
-			l.top("environment assignment with an unknown variable name")
-			return
-		}
-		l.emitEff(effectOf(engine.KindEnvWrite, scopeOf(a.Name), engine.ModeDirect, false),
-			atom(engine.AtomLiteral, a.Name, a.Pos))
-		l.note("$env:%s = … → EnvWrite", a.Name)
-	case DriveRegistry:
-		if !l.windows {
-			l.note("registry assignment %s: Windows-only → skipped", a.Name)
-			return
-		}
-		l.emitEff(effectOf(engine.KindPersist, scopeOf(a.Name), engine.ModeDirect, false),
-			atom(engine.AtomLiteral, a.Name, a.Pos))
-		l.note("registry assignment %s → Persist", a.Name)
-	default:
-		l.note("session variable assignment %s: no external effect", a.TargetWord.Text)
+	if a.TargetWord == nil {
+		l.top("assignment with an unknown target")
+		return
 	}
+	// Classify every target: $a,$env:X = … mixes drives.
+	type bindTarget struct {
+		drive, name string
+	}
+	var binds []bindTarget
+	for _, w := range a.Targets {
+		if w == nil {
+			continue
+		}
+		d, n := classifyVar(w.Text)
+		binds = append(binds, bindTarget{d, n})
+	}
+	if len(binds) == 0 {
+		l.top("assignment with an unknown target")
+		return
+	}
+
+	// The value: a pure literal/expression right-hand side is evaluated
+	// against Σ; a command right-hand side yields an unknown value carrying
+	// the RHS effects' provenance — and untrusted, since any command's output
+	// is run-time data (the bash frontend's rule for command substitutions).
+	valueKnown := len(a.RHS) == 0
+	var value evaluatedWord
+	if valueKnown {
+		value = l.evalWord(a.Value)
+	} else {
+		value = evaluatedWord{Taint: rhsTaintOf(rhs).Join(engine.TaintOf(engine.TaintUntrusted))}
+	}
+
+	// A known hashtable literal binds entry-wise, so a later splat of the
+	// variable can expand into parameter bindings.
+	if valueKnown && a.Hash != nil {
+		kvs, allKnown, taint := l.evalHashEntries(a.Hash)
+		if allKnown && len(binds) == 1 && binds[0].drive == DriveVariable {
+			l.state.SetHash(binds[0].name, kvs, taint)
+			l.note("$%s := hashtable literal (%d entries)", binds[0].name, len(kvs))
+			l.note("session variable assignment %s: no external effect", a.TargetWord.Text)
+			return
+		}
+		value = evaluatedWord{Taint: taint}
+		valueKnown = false
+	}
+
+	for i, b := range binds {
+		switch b.drive {
+		case DriveEnv:
+			if b.name == "" {
+				l.top("environment assignment with an unknown variable name")
+				continue
+			}
+			l.emitEff(effectOf(engine.KindEnvWrite, scopeOf(b.name), engine.ModeDirect, false),
+				atom(engine.AtomLiteral, b.name, a.Pos))
+			l.note("$env:%s = … → EnvWrite", b.name)
+			// The script itself determined the value: later $env:name reads
+			// resolve through Σ (no second EnvRead is owed).
+			l.bindVar("env:"+strings.ToLower(b.name), value, a.Op)
+		case DriveRegistry:
+			if !l.windows {
+				l.note("registry assignment %s: Windows-only → skipped", b.name)
+				continue
+			}
+			l.emitEff(effectOf(engine.KindPersist, scopeOf(b.name), engine.ModeDirect, false),
+				atom(engine.AtomLiteral, b.name, a.Pos))
+			l.note("registry assignment %s → Persist", b.name)
+		default:
+			// A session-variable assignment has no external effect, but the
+			// value must bind: later reads of the variable resolve through Σ.
+			if valueKnown && len(binds) > 1 {
+				// $a,$b = 1,2: element-wise binding only when the literal
+				// element count matches the target count.
+				if parts, ok := multiAssignParts(a.Value, len(binds)); ok {
+					l.bindVar(b.name, l.evalWordTextStr(parts[i]), a.Op)
+					continue
+				}
+				l.bindVar(b.name, evaluatedWord{Taint: value.Taint}, a.Op)
+				continue
+			}
+			l.bindVar(b.name, value, a.Op)
+		}
+	}
+	l.note("session variable assignment %s: no external effect", a.TargetWord.Text)
+}
+
+// evalWord evaluates one word against Σ, charging the budget.
+func (l *lowerer) evalWord(w *Word) evaluatedWord {
+	l.step()
+	return evalWordText(w, l.state)
+}
+
+// evalWordTextStr evaluates a raw text fragment (a multi-assign element) as an
+// interpolated word, charging the budget.
+func (l *lowerer) evalWordTextStr(text string) evaluatedWord {
+	l.step()
+	return evalWordText(&Word{Text: text}, l.state)
+}
+
+// bindVar writes one assignment into Σ. "=" stores a known value when the
+// right-hand side is known; "+=" concatenates onto a known previous value;
+// every other operator (or an unknown operand) degrades to set-but-unknown.
+// evalHashEntries evaluates a hashtable literal's entries against Σ; the
+// table is known only when every entry is.
+func (l *lowerer) evalHashEntries(ht *Hashtable) ([]KV, bool, engine.Taint) {
+	taint := engine.TaintBottom()
+	allKnown := true
+	kvs := make([]KV, 0, len(ht.Entries))
+	for _, e := range ht.Entries {
+		l.step()
+		ev := evalWordText(e.Value, l.state)
+		taint = taint.Join(ev.Taint)
+		if !ev.Known {
+			allKnown = false
+		}
+		kvs = append(kvs, KV{Key: e.Name, Value: ev.Text, Known: ev.Known, Taint: ev.Taint})
+	}
+	return kvs, allKnown, taint
+}
+
+// expandSplat replaces a splatted argument whose variable holds a fully-known
+// hashtable with the parameter bindings it denotes; an unknown splat keeps
+// its ⊤ trigger.
+func (l *lowerer) expandSplat(c *Command) {
+	for _, a := range c.Args {
+		if a == nil || !a.Splat || a.VarName == "" {
+			continue
+		}
+		v := l.state.Get(a.VarName)
+		if v == nil || !v.Known || len(v.Hash) == 0 {
+			continue
+		}
+		var bindings []*Binding
+		fullyKnown := true
+		for _, kv := range v.Hash {
+			if !kv.Known {
+				fullyKnown = false
+				break
+			}
+			p := &Param{Pos: a.Pos, Name: "-" + kv.Key}
+			switch {
+			case isSwitchPrefix(kv.Key):
+				// A switch entry: `$true` binds it, `$false` omits it.
+				switch strings.ToLower(kv.Value) {
+				case "true", "1":
+					c.Params = append(c.Params, p)
+				case "false", "0", "":
+					// omit
+				default:
+					bindings = append(bindings, &Binding{Param: p,
+						Value: &Word{Pos: a.Pos, Text: kv.Value, Literal: true}})
+				}
+			default:
+				bindings = append(bindings, &Binding{Param: p,
+					Value: &Word{Pos: a.Pos, Text: kv.Value, Literal: true}})
+			}
+		}
+		if !fullyKnown {
+			continue
+		}
+		c.Bindings = append(c.Bindings, bindings...)
+		a.Splat = false // expanded: no longer a ⊤ trigger
+		l.note("splatting $%s expanded (%d known entries)", a.VarName, len(v.Hash))
+	}
+}
+
+func (l *lowerer) bindVar(name string, v evaluatedWord, op string) {
+	if name == "" {
+		return
+	}
+	switch op {
+	case "=", "":
+		if v.Known {
+			l.state.Set(name, v.Text, v.Taint)
+		} else {
+			l.state.SetUnknown(name, v.Taint)
+		}
+	case "+=":
+		if prev := l.state.Get(name); prev != nil && prev.Set && prev.Known && v.Known {
+			l.state.Set(name, prev.Value+v.Text, prev.Taint.Join(v.Taint))
+		} else {
+			t := engine.TaintBottom()
+			if prev != nil {
+				t = prev.Taint
+			}
+			l.state.SetUnknown(name, t.Join(v.Taint))
+		}
+	default:
+		t := v.Taint
+		if prev := l.state.Get(name); prev != nil {
+			t = t.Join(prev.Taint)
+		}
+		l.state.SetUnknown(name, t)
+	}
+}
+
+// multiAssignParts splits a literal right-hand side on top-level commas and
+// reports whether the element count matches the target count, so
+// $a,$b = 1,2 can bind element-wise.
+func multiAssignParts(v *Word, want int) ([]string, bool) {
+	if v == nil || v.Text == "" || want < 2 {
+		return nil, false
+	}
+	parts := splitTopLevelCommas(v.Text)
+	if len(parts) != want {
+		return nil, false
+	}
+	for _, p := range parts {
+		if p == "" {
+			return nil, false
+		}
+	}
+	return parts, true
+}
+
+// rhsTaintOf folds the provenance a right-hand side's effects contribute to
+// the assigned value: credential reads taint secret, filesystem reads
+// filesystem, network ingress network+untrusted, environment reads env. It is
+// the per-assignment counterpart of the bash frontend's outTaintOf.
+func rhsTaintOf(rhs []engine.Effect) engine.Taint {
+	t := engine.TaintBottom()
+	for _, e := range rhs {
+		switch {
+		case e.Kind == engine.KindCredAccess || engine.IsSecretRead(e):
+			t = t.Join(engine.TaintOf(engine.TaintSecret))
+		case e.Kind == engine.KindFSRead:
+			t = t.Join(engine.TaintOf(engine.TaintFileSystem))
+		case e.Kind == engine.KindNetIngress:
+			t = t.Join(engine.TaintOf(engine.TaintNetwork, engine.TaintUntrusted))
+		case e.Kind == engine.KindEnvRead:
+			t = t.Join(engine.TaintOf(engine.TaintEnv))
+		}
+	}
+	return t
+}
+
+// splitTopLevelCommas splits s on commas that sit outside any brackets, braces,
+// parentheses or quoted section: "1, 2" → ["1", " 2"], "@{a=1,b}, 2" stays
+// two parts.
+func splitTopLevelCommas(s string) []string {
+	var parts []string
+	depth := 0
+	last := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			depth--
+		case '\'', '"':
+			q := s[i]
+			i++
+			for i < len(s) && s[i] != q {
+				if s[i] == '`' {
+					i++
+				}
+				i++
+			}
+		case ',':
+			if depth == 0 {
+				parts = append(parts, strings.TrimSpace(s[last:i]))
+				last = i + 1
+			}
+		}
+	}
+	return append(parts, strings.TrimSpace(s[last:]))
 }
 
 // finish normalises the collected effects into canonical order, folds the

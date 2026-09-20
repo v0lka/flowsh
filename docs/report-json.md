@@ -15,12 +15,12 @@ Every report carries three identity fields:
 
 | Key | Value | Meaning |
 | --- | ----- | ------- |
-| `schemaVersion` | `effect-ir/v1` | Tags the **effect payload** (`effects[]` and its atoms). Equal to `engine.SchemaVersion`. |
+| `schemaVersion` | `effect-ir/v2` | Tags the **effect payload** (`effects[]` and its atoms). Equal to `engine.SchemaVersion`. |
 | `tool` | `flowsh` | The tool name (`analysis.ToolName`). |
-| `toolVersion` | `flowsh/v2` | Tags the **CLI report shape**: the envelope plus the additive `why`, `resolution`, `destructive`, `commandCalls` and `canonical` fields over v1. Equal to `analysis.ToolVersion`. |
+| `toolVersion` | `flowsh/v3` | Tags the **CLI report shape**: the envelope plus the additive `why`, `resolution`, `destructive`, `commandCalls`, `canonical` and the `score.cradleFlows`/`score.ingestFlows` network-flow fields over v1. Equal to `analysis.ToolVersion`. |
 
-A consumer that parses the effect set pins to `effect-ir/v1`; a consumer that
-reads the CLI-specific fields pins to `flowsh/v2`. Any change to the shape of an
+A consumer that parses the effect set pins to `effect-ir/v2`; a consumer that
+reads the CLI-specific fields pins to `flowsh/v3`. Any change to the shape of an
 emitted field bumps the corresponding tag; the analyser never renames or removes
 a field silently.
 
@@ -32,9 +32,9 @@ $ flowsh --json 'rm -rf $HOME'
 
 ```json
 {
-  "schemaVersion": "effect-ir/v1",
+  "schemaVersion": "effect-ir/v2",
   "tool": "flowsh",
-  "toolVersion": "flowsh/v2",
+  "toolVersion": "flowsh/v3",
   "lang": "bash",
   "input": "rm -rf $HOME",
   "root": "<argument>",
@@ -108,9 +108,9 @@ Present on every report:
 
 | Key | Type | Meaning |
 | --- | ---- | ------- |
-| `schemaVersion` | string | Frozen effect-schema tag (`effect-ir/v1`). |
+| `schemaVersion` | string | Frozen effect-schema tag (`effect-ir/v2`). |
 | `tool` | string | `flowsh`. |
-| `toolVersion` | string | CLI report-contract tag (`flowsh/v2`). |
+| `toolVersion` | string | CLI report-contract tag (`flowsh/v3`). |
 | `lang` | string | Dialect actually analysed: `bash`, `posix`, or `posh`. |
 | `input` | string | The command source text that was analysed. |
 
@@ -148,8 +148,9 @@ Each element of `effects[]` is one implied effect:
 | `certainty` | string | Confidence it occurs: `Unknown` \| `Unlikely` \| `Possible` \| `Likely` \| `Certain`. |
 | `taint` | object | `{ "labels": [string], "arbitrary": bool }` — provenance labels; `arbitrary: true` marks ⊤ provenance. |
 | `reversible` | bool | Whether the effect can be undone. |
+| `netFlow` | string | Present only when the effect is the sink of a network data flow: `cradle` (a `CodeExec` reached by network content) or `ingest` (an `FSWrite` of downloaded content). Absent otherwise. |
 
-An effect's stable identity, used as the key in `why[].effect` and `score.exfilPairs`, is `kind|mode|[targets]`. The `[targets]` part is the target set with each target's `\`, `,` and `]` backslash-escaped, so a target containing them cannot forge a set boundary and the key stays injective: a Windows target `C:\Windows` renders as `C:\\Windows`, and a single target `a,b` renders as `[a\,b]` (distinct from the two-target set `[a,b]`). For targets containing none of those three bytes (ordinary POSIX text), the spelling is unchanged (e.g. `FSWrite|Direct|[/root]`).
+An effect's stable identity, used as the key in `why[].effect`, `score.exfilPairs`, `score.cradleFlows` and `score.ingestFlows`, is `kind|mode|[targets]`. The `[targets]` part is the target set with each target's `\`, `,` and `]` backslash-escaped, so a target containing them cannot forge a set boundary and the key stays injective: a Windows target `C:\Windows` renders as `C:\\Windows`, and a single target `a,b` renders as `[a\,b]` (distinct from the two-target set `[a,b]`). For targets containing none of those three bytes (ordinary POSIX text), the spelling is unchanged (e.g. `FSWrite|Direct|[/root]`).
 
 ### score
 
@@ -164,11 +165,25 @@ An effect's stable identity, used as the key in `why[].effect` and `score.exfilP
 | `reversible` | bool | True iff every effect is reversible. |
 | `grade` | string | The joined headline grade across the dimensions above. |
 | `exfilPairs` | array | Detected credential-egress pairings (omitted when none; see below). |
+| `cradleFlows` | array | Detected network-to-code-execution flows (omitted when none; see below). |
+| `ingestFlows` | array | Detected network-to-filesystem flows (omitted when none; see below). |
 
 Each `exfilPairs[]` element is `{ "source": effect, "sink": effect }`, where
 `source` is the secret read (a `CredAccess`, or an `FSRead`/`FSMeta` of a
 secret-bearing path) and `sink` is the tainted egress carrying it out. Both are
 full effect objects in the shape of [effects](#effects).
+
+`cradleFlows[]` and `ingestFlows[]` elements have the same `{ "source": effect,
+"sink": effect }` shape. A `cradleFlows[]` `source` is a `NetEgress` and its
+`sink` is a `CodeExec` marked `netFlow: "cradle"` — content fetched over the
+network reaches code execution (a pipe to a shell/interpreter: `curl … | sh`, a
+`source`/`.` of a fetched path, `sh -c "$(curl …)"`, the exec of a downloaded
+path). An `ingestFlows[]` `source` is a `NetEgress` and its `sink` is an
+`FSWrite` marked `netFlow: "ingest"` — a download client writing the fetched
+body to a file (`curl -o`/`-O`, wget default/`-O`); a VCS sync (`git
+clone`/`fetch`/`pull`) is not an ingest. A flow is asserted only where the
+analysis established that the network content reached the sink, so a `NetEgress`
+and a sink that merely co-occur in one program yield no flow.
 
 ### resolution
 
@@ -267,8 +282,8 @@ The document is frozen. The effect payload is pinned by the golden fixtures
 [`engine/testdata/effect.golden.json`](../engine/testdata/effect.golden.json);
 the envelope is pinned by the CLI smoke test
 [`cmd/flowsh/smoke_test.go`](../cmd/flowsh/smoke_test.go). Changing the shape of an emitted
-field is a breaking change: bump the relevant tag (`effect-ir/v1` or
-`flowsh/v2`), regenerate the fixtures, and update the consumer. The full
+field is a breaking change: bump the relevant tag (`effect-ir/v2` or
+`flowsh/v3`), regenerate the fixtures, and update the consumer. The full
 checklist is in the
 [report contract](../specs/contracts/report-json.md#breaking-change-checklist).
 

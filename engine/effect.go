@@ -81,6 +81,56 @@ var effectModeSet = func() map[EffectMode]struct{} {
 // Valid reports whether m is a defined effect mode.
 func (m EffectMode) Valid() bool { _, ok := effectModeSet[m]; return ok }
 
+// FlowRole names the network data-flow relation an effect is the sink of: the
+// effect consumes content that arrived over the network. It is the flow
+// evidence a report surfaces (cradleFlows / ingestFlows), so a consumer keys on
+// an actual data flow rather than on the co-occurrence of a NetEgress and a
+// sink somewhere in the same program.
+type FlowRole string
+
+const (
+	// FlowNone is the zero role: the effect is not the sink of a network data
+	// flow.
+	FlowNone FlowRole = ""
+	// FlowCradle marks a CodeExec reached by network content: the download
+	// cradle. It covers a pipe to a shell/interpreter (curl … | sh), a
+	// source/`.` of a fetched path (source <(curl …)), a code-execution sink
+	// invoked on a command substitution (sh -c "$(curl …)") and the exec of a
+	// path a download wrote (chmod +x f && ./f).
+	FlowCradle FlowRole = "cradle"
+	// FlowIngest marks an FSWrite of downloaded content: a download client
+	// writing the fetched body to a file (curl -o/-O, wget default/-O).
+	FlowIngest FlowRole = "ingest"
+)
+
+// FlowRoles is every defined flow role, in canonical order.
+var FlowRoles = []FlowRole{FlowNone, FlowCradle, FlowIngest}
+
+var flowRoleSet = func() map[FlowRole]struct{} {
+	m := make(map[FlowRole]struct{}, len(FlowRoles))
+	for _, r := range FlowRoles {
+		m[r] = struct{}{}
+	}
+	return m
+}()
+
+// Valid reports whether r is a defined flow role.
+func (r FlowRole) Valid() bool { _, ok := flowRoleSet[r]; return ok }
+
+// kind reports the effect kind a flow role marks, or "" when the role is not
+// tied to a single kind. A cradle sink is code execution; an ingest sink is a
+// filesystem write.
+func (r FlowRole) kind() EffectKind {
+	switch r {
+	case FlowCradle:
+		return KindCodeExec
+	case FlowIngest:
+		return KindFSWrite
+	default:
+		return ""
+	}
+}
+
 // Effect is the atom of the IR: a single observable effect of the analyzed
 // program. The field set is frozen.
 //
@@ -93,6 +143,12 @@ type Effect struct {
 	Certainty  Certainty  `json:"certainty"`
 	Taint      Taint      `json:"taint"`
 	Reversible bool       `json:"reversible"`
+	// NetFlow marks the effect as the sink of a network data-flow relation: it
+	// consumes content that arrived over the network (FlowCradle for a code
+	// execution, FlowIngest for a filesystem write). It is FlowNone for an
+	// effect that is not such a sink, so a program with no network flow
+	// serialises exactly as before.
+	NetFlow FlowRole `json:"netFlow,omitempty"`
 }
 
 // Key returns a stable identity for the effect, used for deterministic sorting
@@ -117,7 +173,20 @@ func (e Effect) Join(o Effect) (Effect, bool) {
 		Certainty:  e.Certainty.Join(o.Certainty),
 		Taint:      e.Taint.Join(o.Taint),
 		Reversible: e.Reversible && o.Reversible,
+		NetFlow:    joinFlow(e.NetFlow, o.NetFlow),
 	}, true
+}
+
+// joinFlow unions two flow roles: an effect that is a network sink stays one
+// after a merge, so a tagged and an untagged effect of the same kind and mode
+// merge to the tagged form. Two distinct non-empty roles cannot collide here:
+// each role fixes its effect kind (cradle → CodeExec, ingest → FSWrite), so
+// effects that carry different roles never share a kind and never join.
+func joinFlow(a, b FlowRole) FlowRole {
+	if a != FlowNone {
+		return a
+	}
+	return b
 }
 
 // Validate reports whether the effect is well-formed.
@@ -130,6 +199,12 @@ func (e Effect) Validate() error {
 	}
 	if !e.Certainty.Valid() {
 		return fmt.Errorf("invalid certainty %d", int(e.Certainty))
+	}
+	if !e.NetFlow.Valid() {
+		return fmt.Errorf("invalid netFlow %q", string(e.NetFlow))
+	}
+	if k := e.NetFlow.kind(); k != "" && e.Kind != k {
+		return fmt.Errorf("netFlow %q requires effect kind %q, got %q", string(e.NetFlow), string(k), string(e.Kind))
 	}
 	return nil
 }

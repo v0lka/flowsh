@@ -26,8 +26,16 @@ The `kb/data/` directory holds one YAML document per command tradition (discover
 - `kb/data/procps.yaml` — procps-ng / process and system inspection (`ps`, `top`, `free`, `vmstat`, `uptime`, `pgrep`, `pkill`, `killall`, `watch`, `lsof`, …), dialect `procps`.
 - `kb/data/security.yaml` — users, permissions, security policy and auditing (`passwd`, `useradd`, `setfacl`, `chcon`, `auditctl`, `gpg`, …), dialect `security`.
 - `kb/data/systemd.yaml` — processes, services and system control (`systemctl`, `journalctl`, `service`, `crontab`, `at`, `screen`, `tmux`, …), dialect `systemd`.
+- `kb/data/codehost.yaml` — code-host and modern version-control clients (`gh`, `glab`, `jj`), dialect `vcs`.
+- `kb/data/plumbing.yaml` — command discovery and file inspection (`which`, `file`) and the document converter `markitdown`, dialects `builtin`/`build`/`gnu`.
+- `kb/data/toolchain.yaml` — language runtimes and ecosystem tooling (`node`, `bun`, `python`, `uv`, `poetry`, `ruby`, `bundle`, `java`, `mvn`, `gradle`, `dotnet`, `php`, `composer`, `elixir`, `mix`), dialect `pkgmgr`.
+- `kb/data/linting.yaml` — front-end build/test/lint drivers (`tsc`, `eslint`, `prettier`, `vitest`, `jest`, `gofmt`, `staticcheck`, `ruff`, `black`, `mypy`, `clippy-driver`, `cargo-clippy`, `shellcheck`), dialect `build`. (`golangci-lint` is deliberately left UNMODELLED — the verification marker tolerates it as an unresolved driver, and bounding it would silently clear the marker on the audited TRUE_DENY shape that rewrites the module graph; see `linting.yaml`.)
+- `kb/data/datatools.yaml` — data and query tools (`jq`, `yq`, `sqlite3`, `psql`, `redis-cli`, `rg`, `fd`, `ag`), dialects `gnu`/`findutils`/`net-tools`.
+- `kb/data/containers.yaml` — container and infrastructure tooling (`docker`, `docker-compose`, `kubectl`, `helm`, `terraform`, `ansible` and its per-binary entry points), dialect `systemd`.
+- `kb/data/cloud.yaml` — cloud provider clients (`aws`, `gcloud`, `az`), dialect `net-tools`.
 - `kb/data/destructive.yaml` — the destructive-flags table: `(command, spec)` pairs known to be destructive, with a severity class and a reason.
 - `kb/loader_test.go` — loader tests, including version-rejection and referential-integrity cases.
+- `kb/coverage_test.go` — the common-binary inventory gate: every maintained routine CLI binary resolves (no ⊤), and a representative command per family binds to a bounded, non-conservative report.
 
 ## Core Types
 
@@ -63,20 +71,20 @@ const (
 )
 ```
 
-The `Dialects` slice in `kb/schema.go` lists every valid dialect in canonical order (the order above), and `Dialect.Valid()` derives from its membership set. Each new dialect names a real tradition: the process/system utilities are `procps`, the service/journal/scheduling/power-control tier is `systemd`, the archivers and compressors are `archive`, the users/permissions/audit/crypto tier is `security`, the version-control clients (`svn`, `hg`, `bzr`, `fossil`, `darcs`) are `vcs`, and package managers and build tooling are `pkgmgr` and `build`. macOS variants of the process/system utilities stay under `bsd`.
+The `Dialects` slice in `kb/schema.go` lists every valid dialect in canonical order (the order above), and `Dialect.Valid()` derives from its membership set. Each new dialect names a real tradition: the process/system utilities are `procps`, the service/journal/scheduling/power-control tier is `systemd`, the archivers and compressors are `archive`, the users/permissions/audit/crypto tier is `security`, the version-control and code-host clients (`svn`, `hg`, `bzr`, `fossil`, `darcs`, `gh`, `glab`, `jj`) are `vcs`, and package managers, language toolchains and build tooling are `pkgmgr` and `build`. macOS variants of the process/system utilities stay under `bsd`.
 
 ### Command to dialect map (roadmap B2-B9)
 
 The expanded command sets are laid out one document per tradition, and every command in a document carries that tradition's dialect (a command belongs to exactly one dialect). The map below is the reference for that layout; the data files remain the single source of truth. macOS variants of the process/system utilities stay under `bsd`, and `find`, `tar`, `git` and `rsync` keep their dedicated dialects.
 
 - `posix` (`coreutils.yaml`): cat, chmod, chown, cp, dd, grep, ln, ls, mkdir, mv, rm, rmdir, sed, sort, touch.
-- `gnu` (`coreutils.yaml`, `gnu.yaml`): arch, b2sum, base32, base64, basename, cksum, comm, csplit, cut, date, df, dir, dircolors, dirname, du, env, expand, expr, factor, fmt, fold, groups, head, hostid, hostname, id, install, join, link, logname, md5sum, mkfifo, mknod, mktemp, nice, nl, nohup, nproc, numfmt, od, paste, pathchk, pinky, pr, printenv, ptx, readlink, realpath, runcon, seq, sha1sum, sha224sum, sha256sum, sha384sum, sha512sum, shred, shuf, sleep, split, stat, stdbuf, stty, sum, sync, tac, tail, tee, timeout, tr, truncate, tsort, tty, uname, unexpand, uniq, unlink, users, vdir, wc, who, whoami, yes.
-- `findutils` (`findutils.yaml`): find, xargs.
+- `gnu` (`coreutils.yaml`, `gnu.yaml`, `plumbing.yaml`, `datatools.yaml`): arch, b2sum, base32, base64, basename, cksum, comm, csplit, cut, date, df, dir, dircolors, dirname, du, env, expand, expr, factor, fmt, fold, groups, head, hostid, hostname, id, install, jq, join, link, logname, markitdown, md5sum, mkfifo, mknod, mktemp, nice, nl, nohup, nproc, numfmt, od, paste, pathchk, pinky, pr, printenv, ptx, readlink, realpath, runcon, seq, sha1sum, sha224sum, sha256sum, sha384sum, sha512sum, shred, shuf, sleep, split, sqlite3, stat, stdbuf, stty, sum, sync, tac, tail, tee, timeout, tr, truncate, tsort, tty, uname, unexpand, uniq, unlink, users, vdir, wc, who, whoami, yes, yq.
+- `findutils` (`findutils.yaml`, `datatools.yaml`): ag, fd, find, rg, xargs.
 - `tar` (`findutils.yaml`): tar.
 - `util-linux` (`util-linux.yaml`): blkdiscard, blkid, blockdev, cal, cfdisk, chattr, chroot, chrt, dmesg, eject, fallocate, fdisk, findmnt, flock, fsck, getopt, hexdump, hwclock, ionice, ipcmk, ipcrm, ipcs, isosize, last, ldattach, logger, login, look, losetup, lsattr, lsblk, lscpu, lslocks, lsmem, lsns, mdadm, mkfs, mkfs.ext4, mkswap, more, mount, mountpoint, namei, newgrp, nsenter, parted, partx, pivot_root, prlimit, raw, rename, renice, rev, rtcwake, runuser, script, setsid, setterm, sfdisk, sgdisk, su, swapoff, swapon, switch_root, tailf, taskset, ul, umount, unshare, uuidgen, wall, whereis, wipefs, write, zramctl.
 - `procps` (`procps.yaml`): free, fuser, killall, lsof, pgrep, pkill, pmap, ps, pstree, slabtop, top, uptime, vmstat, w, watch.
-- `systemd` (`systemd.yaml`): at, batch, crontab, halt, init, journalctl, poweroff, reboot, runlevel, screen, service, shutdown, systemctl, systemd-run, telinit, tmux.
-- `net-tools` (`net.yaml`): arp, dig, firewall-cmd, ftp, host, ifconfig, ip, ip6tables, iptables, ldapsearch, masscan, mtr, netstat, nft, nmap, nslookup, openssl, ping, ping6, route, rpcclient, smbclient, smbget, ss, tcpdump, telnet, tftp, tracepath, traceroute, tshark, ufw.
+- `systemd` (`systemd.yaml`, `containers.yaml`): ansible, ansible-config, ansible-doc, ansible-galaxy, ansible-inventory, ansible-playbook, ansible-vault, at, batch, crontab, docker, docker-compose, halt, helm, init, journalctl, kubectl, poweroff, reboot, runlevel, screen, service, shutdown, systemctl, systemd-run, telinit, terraform, tmux.
+- `net-tools` (`net.yaml`, `datatools.yaml`, `cloud.yaml`): arp, aws, az, dig, firewall-cmd, ftp, gcloud, host, ifconfig, ip, ip6tables, iptables, ldapsearch, masscan, mtr, netstat, nft, nmap, nslookup, openssl, ping, ping6, psql, redis-cli, route, rpcclient, smbclient, smbget, ss, tcpdump, telnet, tftp, tracepath, traceroute, tshark, ufw.
 - `netcat` (`net.yaml`): nc, ncat, socat.
 - `curl` (`net.yaml`): curl.
 - `wget` (`net.yaml`): wget.
@@ -84,12 +92,12 @@ The expanded command sets are laid out one document per tradition, and every com
 - `rsync` (`net.yaml`, `remote.yaml`): rclone, rsync.
 - `git` (`remote.yaml`): git.
 - `archive` (`archive.yaml`): 7z, 7za, ar, bunzip2, bzip2, compress, cpio, genisoimage, gunzip, gzip, isoinfo, mkisofs, pax, rar, uncompress, unrar, unxz, unzip, xz, zcat, zip, zstd.
-- `pkgmgr` (`pkgmgr.yaml`): apk, apt, cargo, dnf, dpkg, flatpak, gem, go, npm, pacman, pip, pnpm, rpm, rustc, snap, yarn, yum, zypper.
-- `build` (`build.yaml`): as, cmake, cmp, diff, gcc, gdb, ld, ltrace, make, ninja, nm, objdump, patch, readelf, strace, strings, strip, valgrind.
+- `pkgmgr` (`pkgmgr.yaml`, `toolchain.yaml`): apk, apt, bun, bundle, cargo, composer, dnf, dotnet, dpkg, elixir, flatpak, gem, go, gradle, java, mix, mvn, node, npm, pacman, php, pip, pnpm, poetry, python, rpm, ruby, rustc, snap, uv, yarn, yum, zypper.
+- `build` (`build.yaml`, `plumbing.yaml`, `linting.yaml`): as, black, cargo-clippy, clippy-driver, cmake, cmp, diff, eslint, file, gcc, gdb, gofmt, jest, ld, ltrace, make, mypy, ninja, nm, objdump, patch, prettier, readelf, ruff, shellcheck, staticcheck, strace, strings, strip, tsc, valgrind, vitest.
 - `security` (`security.yaml`): auditctl, ausearch, chage, chcon, chfn, chpasswd, chsh, getfacl, gpasswd, gpg, groupadd, groupdel, groupmod, passwd, restorecon, semanage, setfacl, useradd, userdel, usermod, visudo.
-- `vcs` (`vcs.yaml`): bzr, darcs, fossil, hg, svn.
+- `vcs` (`vcs.yaml`, `codehost.yaml`): bzr, darcs, fossil, gh, glab, hg, jj, svn.
 - `bsd` (`bsd.yaml`): caffeinate, chflags, defaults, diskutil, dscl, launchctl, mdfind, mdls, open, pbcopy, pbpaste, softwareupdate, sw_vers, sysctl, xattr.
-- `builtin` (`builtins.yaml`): bind, caller, cd, command, compgen, complete, declare, echo, enable, eval, exec, export, fc, hash, help, history, kill, local, mapfile, printf, pwd, read, readonly, set, source, test, trap, type, ulimit, umask, unset, wait.
+- `builtin` (`builtins.yaml`, `plumbing.yaml`): bind, caller, cd, command, compgen, complete, declare, echo, enable, eval, exec, export, fc, hash, help, history, kill, local, mapfile, printf, pwd, read, readonly, set, source, test, trap, type, ulimit, umask, unset, wait, which.
 
 ### ParamKind / ValueSource
 

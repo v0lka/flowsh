@@ -100,8 +100,8 @@ func TestSmoke(t *testing.T) {
 		if len(rep.Effects) == 0 {
 			t.Errorf("no effects for %q", rep.Input)
 		}
-		if rep.ToolVersion != "flowsh/v2" {
-			t.Errorf("toolVersion = %q, want %q", rep.ToolVersion, "flowsh/v2")
+		if rep.ToolVersion != "flowsh/v3" {
+			t.Errorf("toolVersion = %q, want %q", rep.ToolVersion, "flowsh/v3")
 		}
 	})
 
@@ -111,11 +111,11 @@ func TestSmoke(t *testing.T) {
 			t.Fatalf("exit %d, want 0", code)
 		}
 		// ci.yml greps the literals; assert the same literals appear.
-		if !strings.Contains(out, "flowsh/v2") {
-			t.Errorf("--version output missing %q:\n%s", "flowsh/v2", out)
+		if !strings.Contains(out, "flowsh/v3") {
+			t.Errorf("--version output missing %q:\n%s", "flowsh/v3", out)
 		}
-		if !strings.Contains(out, "effect-ir/v1") {
-			t.Errorf("--version output missing %q:\n%s", "effect-ir/v1", out)
+		if !strings.Contains(out, "effect-ir/v2") {
+			t.Errorf("--version output missing %q:\n%s", "effect-ir/v2", out)
 		}
 		if !strings.Contains(out, engine.SchemaVersion) {
 			t.Errorf("--version output missing the engine schema %q:\n%s", engine.SchemaVersion, out)

@@ -1,0 +1,597 @@
+version: effect-kb/v2
+# ---------------------------------------------------------------------------
+# Data and query command-line tools: the JSON/YAML processors (jq, yq), the
+# database clients (sqlite3, psql, redis-cli) and the fast search tools
+# (ripgrep `rg`, `fd`, the_silver_searcher `ag`).
+#
+# Sources: jq(1), yq(1), sqlite3(1), psql(1), redis-cli(1), rg(1), fd(1) and
+# ag(1).  The dialect is chosen per tradition: jq/yq/sqlite3 are local
+# text/data filters (the GNU filter tradition, `gnu`); psql and redis-cli are
+# network database clients (`net-tools`, whose lenient egress grammar accepts a
+# bare host); and rg/fd/ag are grep/find replacements (`findutils`, the GNU
+# findutils tradition).
+#
+# Modelling.  A tool that reads its operands is FSRead; one that rewrites them
+# in place (yq -i) is FSWrite; one that runs a subcommand over its results
+# (rg --pre, fd -x, redis-cli --eval, sqlite3 -cmd) is CodeExec/ProcSpawn; a
+# database client that connects to a server is NetEgress; and rendered output
+# is Stdio.
+# ---------------------------------------------------------------------------
+commands:
+  - name: jq
+    dialect: gnu
+    params:
+      - spec: FILTER
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-e"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--exit-status"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--raw-output"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--compact-output"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--null-input"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--slurp"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-S"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--sort-keys"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--ascii-output"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-j"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--join-output"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-C"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--color-output"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--indent"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "--tab"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--from-file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--arg"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--argjson"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--slurpfile"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--rawfile"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: yq
+    dialect: gnu
+    params:
+      - spec: EXPR
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--inplace"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--null-input"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-e"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--exit-status"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-P"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--prettyPrint"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--output-format"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--input-format"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-s"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--split-exp"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--front-matter"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: sqlite3
+    dialect: gnu
+    params:
+      - spec: DATABASE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: SQL
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: "-init"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-cmd"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-separator"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "-readonly"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-csv"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-json"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-line"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-header"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: psql
+    dialect: net-tools
+    params:
+      - spec: DBNAME
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: "-h"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "--host"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "--port"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "-d"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "--dbname"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "-U"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "--username"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "-c"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "--command"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-o"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--output"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-W"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "--password"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "-w"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "--no-password"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: "--list"
+        kind: flag
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: "-A"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--no-align"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-t"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--tuples-only"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--csv"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-x"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+
+  - name: redis-cli
+    dialect: net-tools
+    params:
+      - spec: COMMAND
+        kind: positional
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: "-h"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "-p"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "-u"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "--uri"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      - spec: "-a"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "--pass"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "-n"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-r"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "--eval"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-x"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--raw"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--csv"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--json"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+
+  - name: rg
+    dialect: findutils
+    params:
+      - spec: PATTERN
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: PATH
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-e"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--regexp"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-g"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--glob"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--type"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--type-add"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-r"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "--replace"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "-j"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "--threads"
+        kind: option
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+      - spec: "--pre"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--ignore-case"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--files-with-matches"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--count"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--line-number"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-H"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--json"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-z"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--search-zip"
+        kind: flag
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: "--files"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--hidden"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--unrestricted"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: fd
+    dialect: findutils
+    params:
+      - spec: PATTERN
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: PATH
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-e"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--extension"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--type"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-d"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--max-depth"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-x"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "--exec"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-X"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "--exec-batch"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-H"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--hidden"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-I"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--no-ignore"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-a"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--absolute-path"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--list-details"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--case-sensitive"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-V"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+  - name: ag
+    dialect: findutils
+    params:
+      - spec: PATTERN
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: PATH
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-g"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-G"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--file-search-regex"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--depth"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-A"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "-B"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "--after"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "--before"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "-i"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-l"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--files-with-matches"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-c"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--count"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--hidden"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--search-binary"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--ackmate"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--version"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "--help"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
