@@ -51,6 +51,41 @@ func targetHas(r *Result, k engine.EffectKind, want string) bool {
 	return false
 }
 
+// targetHasExact reports whether any effect of kind k targets exactly want,
+// ignoring the ⊤ scope. Target.Contains is true for ⊤, so a plain Contains
+// assertion is satisfied by an unrelated ⊤ effect of the same kind and cannot
+// fail; this helper can (⊤ is not a match).
+func targetHasExact(r *Result, k engine.EffectKind, want string) bool {
+	for _, e := range effectsOfKind(r, k) {
+		if e.Target.IsTop() {
+			continue
+		}
+		for _, t := range e.Target.Targets() {
+			if t == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// targetContainsRaw reports whether any effect of kind k carries a target
+// containing sub, ⊤ excluded: it is the "no fabricated pseudo-literal target"
+// assertion.
+func targetContainsRaw(r *Result, k engine.EffectKind, sub string) bool {
+	for _, e := range effectsOfKind(r, k) {
+		if e.Target.IsTop() {
+			continue
+		}
+		for _, t := range e.Target.Targets() {
+			if strings.Contains(t, sub) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func notesContain(r *Result, sub string) bool {
 	for _, n := range r.Notes {
 		if strings.Contains(n, sub) {

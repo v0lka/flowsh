@@ -334,6 +334,11 @@ type substInfo struct {
 	out   string
 	known bool
 	taint engine.Taint
+	// net records that the substitution's body itself performed a network
+	// effect, so its output is content that arrived over the network. It is what
+	// distinguishes a value fetched over the network from the merely-untrusted
+	// output of any command (see partTaint and taintIsNetwork).
+	net bool
 }
 
 // newCfg builds a fresh expansion configuration bound to the current state.
@@ -356,8 +361,8 @@ func (it *interp) newCfg() *expand.Config {
 				_, _ = io.WriteString(w, info.out)
 				return nil
 			}
-			out, known, taint := it.captureSubst(cs)
-			info := substInfo{out: out, known: known, taint: taint}
+			out, known, taint, net := it.captureSubst(cs)
+			info := substInfo{out: out, known: known, taint: taint, net: net}
 			it.subst[cs] = info
 			if it.substMemo != nil {
 				it.substMemo[cs] = info
@@ -369,8 +374,8 @@ func (it *interp) newCfg() *expand.Config {
 			if it.procMemo[ps] {
 				return "/dev/fd/63", nil
 			}
-			it.execProcSubst(ps)
-			it.subst[ps] = substInfo{known: false, taint: engine.TaintOf(engine.TaintUntrusted)}
+			net := it.execProcSubst(ps)
+			it.subst[ps] = substInfo{known: false, taint: engine.TaintOf(engine.TaintUntrusted), net: net}
 			if it.procMemo != nil {
 				it.procMemo[ps] = true
 			}
@@ -989,10 +994,18 @@ func (it *interp) partTaint(p syntax.WordPart) engine.Taint {
 	case *syntax.CmdSubst, *syntax.ProcSubst:
 		// The output of an executed command is attacker-influenceable at least
 		// insofar as any code's output is (untrusted); it additionally carries
-		// whatever provenance dataflow tracked for it.
+		// whatever provenance dataflow tracked for it. The network label is
+		// added only when the substitution's body actually performed a network
+		// effect — the value then genuinely arrived over the network, which is
+		// what a download-cradle sink is keyed on (see taintIsNetwork). A
+		// substitution that merely reads a local file is untrusted, not network
+		// content.
 		t := engine.TaintOf(engine.TaintUntrusted)
 		if si, ok := it.subst[p]; ok {
 			t = t.Join(si.taint)
+			if si.net {
+				t = t.Join(engine.TaintOf(engine.TaintNetwork))
+			}
 		}
 		return t
 	case *syntax.DblQuoted:

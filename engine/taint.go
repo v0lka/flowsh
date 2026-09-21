@@ -421,18 +421,26 @@ func DetectExfil(effects []Effect) []Exfil {
 // ===========================================================================
 
 // CradleFlow is one network-to-code-execution flow: content fetched over the
-// network reaches a code-execution sink. Source is the NetEgress the content
-// arrived on; Sink is the CodeExec reached by that content (a pipe to a
-// shell/interpreter, a source/`.` of a fetched path, a sink invoked on a
-// command substitution, the exec of a path a download wrote).
+// network reaches a code-execution sink. Source is a NetEgress the content could
+// have arrived on; Sink is the CodeExec the analysis found reached by network
+// content (a pipe to a shell/interpreter, a source/`.` of a fetched path, a sink
+// invoked on a command substitution). The exec of a path a download wrote is
+// not currently asserted: no frontend establishes that flow.
+//
+// The IR carries the flow evidence per sink (Effect.NetFlow == FlowCradle) but
+// records no link from a sink to the particular egress that fed it, so Source is
+// the egress set of the whole program rather than one identified connection; see
+// DetectCradleFlows.
 type CradleFlow struct {
 	Source Effect `json:"source"`
 	Sink   Effect `json:"sink"`
 }
 
 // IngestFlow is one network-to-filesystem flow: a download client writes
-// content it fetched to a file. Source is the NetEgress the content arrived on;
-// Sink is the FSWrite of the downloaded body (curl -o/-O, wget default/-O).
+// content it fetched to a file. Source is a NetEgress the content could have
+// arrived on; Sink is the FSWrite of the downloaded body (curl -o/-O, wget
+// default/-O). As with CradleFlow, Source is the program's egress set, not a
+// link to the egress that fed this sink; see DetectIngestFlows.
 type IngestFlow struct {
 	Source Effect `json:"source"`
 	Sink   Effect `json:"sink"`
@@ -445,11 +453,26 @@ func IsCradleSink(e Effect) bool { return e.Kind == KindCodeExec && e.NetFlow ==
 // IsIngestSink reports whether e is a filesystem write of downloaded content.
 func IsIngestSink(e Effect) bool { return e.Kind == KindFSWrite && e.NetFlow == FlowIngest }
 
-// DetectCradleFlows pairs every network source with every code-execution sink
-// flagged as reached by network content (Effect.NetFlow == FlowCradle), in
-// canonical (deterministic) order. A NetEgress alone, or a CodeExec alone, is
-// not a flow: the flow is asserted only where the analysis established that the
-// network content reached the sink.
+// DetectCradleFlows returns every network-to-code-execution flow established by
+// the analysis, in canonical (deterministic) order: each CodeExec the frontend
+// flagged as reached by network content (Effect.NetFlow == FlowCradle) paired
+// with a NetEgress of the program.
+//
+// A flow is asserted only for a flagged sink: a NetEgress alone, or a CodeExec
+// alone, produces no pair, so the mere co-occurrence of an egress and an
+// untagged code execution asserts nothing.
+//
+// The pairing itself is an over-approximation, and deliberately so: the effect
+// IR carries the flow evidence on the sink but no link from that sink to the
+// egress that fed it (the Effect field set is frozen), so a sink flagged as
+// cradle is paired with *every* NetEgress of the program. For a program that
+// fetched over n connections and executed one of them, all n pairs are
+// reported: the pair for the connection that actually fed the sink is always
+// among them (no established flow is lost), at the cost of n-1 pairs naming a
+// source that did not feed this particular sink. A consumer must therefore read
+// a pair as "network content reached this sink, and this is one of the program's
+// egresses", not as a confirmed end-to-end path between exactly those two
+// effects.
 func DetectCradleFlows(effects []Effect) []CradleFlow {
 	sources := netEgressSources(effects)
 	var sinks []Effect
@@ -473,9 +496,15 @@ func DetectCradleFlows(effects []Effect) []CradleFlow {
 	return out
 }
 
-// DetectIngestFlows pairs every network source with every filesystem sink
-// flagged as a download output (Effect.NetFlow == FlowIngest), in canonical
-// (deterministic) order.
+// DetectIngestFlows returns every network-to-filesystem flow established by the
+// analysis, in canonical (deterministic) order: each FSWrite flagged as a
+// download output (Effect.NetFlow == FlowIngest) paired with a NetEgress of the
+// program.
+//
+// As with DetectCradleFlows, the source of a pair is the program's egress set
+// rather than the one connection that fed the sink (the IR records no such
+// link), so a program that downloaded from n connections reports n pairs per
+// flagged write.
 func DetectIngestFlows(effects []Effect) []IngestFlow {
 	sources := netEgressSources(effects)
 	var sinks []Effect
@@ -499,8 +528,10 @@ func DetectIngestFlows(effects []Effect) []IngestFlow {
 	return out
 }
 
-// netEgressSources collects every NetEgress effect that can source a network
-// data flow, in the effects' given order.
+// netEgressSources collects every NetEgress effect of the program, in the
+// effects' given order. Every one of them is a candidate source for any flagged
+// sink, since an effect carries no link to the egress that actually fed it (see
+// DetectCradleFlows).
 func netEgressSources(effects []Effect) []Effect {
 	var out []Effect
 	for _, e := range effects {

@@ -217,15 +217,17 @@ flag/class, edit `destructive.yaml`. Read
 
 `testdata/corpus/*.json` is the regression corpus, loaded by
 `internal/corpus/corpus.go` and exercised by
-`internal/analysis/corpus_test.go`. It currently holds 58 cases across five
+`internal/analysis/corpus_test.go`. It currently holds 170 cases across seven
 documents:
 
 | File | Group | Role |
 | ---- | ----- | ---- |
 | `guardfall_bash.json` | `guardfall` | Adversarial bash inputs that evade a surface-level scanner (classes A–E). |
 | `guardfall_posh.json` | `guardfall` | The same, for PowerShell. |
+| `guardfall_posix.json` | `guardfall` | The same, for the POSIX shell dialect (`lang: posix`). |
 | `destructive_bash.json` | `destructive` | Canonical destructive commands (recall; must reach at least the Medium grade). |
 | `ps_cases.json` | `ps` | PowerShell-specific recall cases. |
+| `resolution_bash.json` | `resolution` | Name-resolution recall: each case exercises one link of the chain (builtin → function → alias → external command → unknown). |
 | `benign_bash.json` | `benign` | Ordinary commands (precision control). |
 
 Every non-benign case must be classified as **effect present or ⊤** (the

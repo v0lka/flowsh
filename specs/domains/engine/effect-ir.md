@@ -30,7 +30,7 @@ type Effect struct {
 }
 ```
 
-`NetFlow` is the additive `effect-ir/v2` field: it marks the effect as the **sink of a network data flow** — it consumes content that arrived over the network. `FlowNone` (`""`, omitted from the JSON) means the effect is not such a sink; `FlowCradle` marks a `CodeExec` reached by network content (the download cradle — a pipe to a shell/interpreter, a `source`/`.` of a fetched path, a sink invoked on a command substitution, the exec of a downloaded path); `FlowIngest` marks an `FSWrite` of downloaded content (curl `-o`/`-O`, wget default/`-O`). The role is what lets a report assert the flow rather than leave a consumer to infer it from the co-occurrence of a `NetEgress` and a sink; an effect with no network flow serialises exactly as in `effect-ir/v1`.
+`NetFlow` is the additive `effect-ir/v2` field: it marks the effect as the **sink of a network data flow** — it consumes content that arrived over the network. `FlowNone` (`""`, omitted from the JSON) means the effect is not such a sink; `FlowCradle` marks a `CodeExec` reached by network content (the download cradle — a pipe to a shell/interpreter, a `source`/`.` of a fetched path, a sink invoked on a command substitution; a download-then-execute chain (`curl -o f … && chmod +x f && ./f`) is **not** currently asserted, because no frontend establishes that flow); `FlowIngest` marks an `FSWrite` of downloaded content (curl `-o`/`-O`, wget default/`-O`). The role is what lets a report assert the flow rather than leave a consumer to infer it from the co-occurrence of a `NetEgress` and a sink; an effect with no network flow serialises exactly as in `effect-ir/v1`.
 
 ```go
 type FlowRole string
@@ -134,7 +134,7 @@ type SourceLoc struct {
 Report lifecycle operators:
 
 - `NewReport` returns an empty report stamped with the current schema version (`Effects: []Effect{}`).
-- `Normalize` canonicalises the report: effects that share a `(Kind, Mode)` pair are merged with `Join`, `Destructiveness` is recomputed, and every slice is sorted. Two reports built from the same effects normalise to byte-identical JSON.
+- `Normalize` canonicalises the report: effects that share a `(Kind, Mode, NetFlow)` triple are merged with `Join`, `Destructiveness` is recomputed, and every slice is sorted. (The `NetFlow` role is part of the merge key so the flow evidence of one effect cannot bleed onto the targets of another.) Two reports built from the same effects normalise to byte-identical JSON.
 - `Sort` orders `Effects` by `Key`, `Why` by `(Effect, whyFingerprint)`, and `Notes` lexicographically — the canonical deterministic order.
 - `Validate` reports whether the report is well-formed: a schema version is set, every effect is valid, and every why-trace references a non-empty effect key.
 - `Encode` validates the report and returns its canonical indented JSON (`json.MarshalIndent` with a two-space indent).
@@ -190,7 +190,7 @@ Premises are free-form tokens the frontend defines (call ids, argument slices, o
 - `Join` is commutative over matching kind/mode and unions targets and taint; reversibility is the logical AND of the operands'.
 - `Effect.Key` is a function of `Kind`, `Mode` and the canonical target form only.
 - `SchemaVersion` is the constant `"effect-ir/v2"` and every freshly built report carries it.
-- `Report.Normalize` is idempotent and merges on `(Kind, Mode)`; two reports over the same effects normalise to byte-identical JSON.
+- `Report.Normalize` is idempotent and merges on `(Kind, Mode, NetFlow)`; two reports over the same effects normalise to byte-identical JSON.
 - `Report.Encode` validates before encoding, so an invalid report never produces output.
 - Why-trace `Effect` keys are non-empty and stable (`Effect.Key()` values).
 - The IR carries no frontend-specific types: `Report`, `Effect`, `WhyTrace` and `SourceLoc` are plain serialisable data.
@@ -201,5 +201,5 @@ Premises are free-form tokens the frontend defines (call ids, argument slices, o
 - [Lattices](lattices.md) — `Certainty`, `Scope`, `Taint` and the other value lattices referenced by `Effect`.
 - [Scoring](scoring.md) — how `Report`/`Effect` sets are folded into a `Score`, and how why-trace gaps are reported.
 - [Contract: Analyzer <-> CLI/CI (JSON Report)](../../contracts/report-json.md) — the frozen report JSON an `Effect`/`Report` encodes to.
-- [ADR-0001: Freeze the effect IR](../../decisions/0001-frozen-effect-ir.md) — why the IR is closed and pinned to `effect-ir/v1`.
+- [ADR-0001: Freeze the effect IR](../../decisions/0001-frozen-effect-ir.md) — why the IR is closed and pinned to `effect-ir/v2`.
 - [META.md](../../META.md) — spec formats and update rules.

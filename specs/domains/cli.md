@@ -220,7 +220,7 @@ Exit codes:
 
 - **Add a flag**: add a `case` in `parseArgs`, a field on `options`, and a branch in `run` (or `runBatch`); document it in the `usage` constant. A new error class must be wrapped as a `usageError`/`inputError` so `exitCode` maps it onto `0`/`1`/`2`/`3` — do not invent ad-hoc exit codes.
 - **Add a dialect to `--lang auto`**: extend `detectLang`'s marker tables (`psVerbs`, `psParams`, `shellTokens`, `psSyntax`, `shSyntax`); keep it a total function that falls back to `bash`.
-- **Extend the summary**: add a line in `writeText`; keep it one line per field (use `oneLine` for multi-line values). The summary already carries the score dimensions (`destructiveness`, `irreversibility`, `breadth`, `influence`, `exfil`), the resolution and the matched destructive entries.
+- **Extend the summary**: add a line in `writeText`; keep it one line per field (use `oneLine` for multi-line values). The summary already carries the score dimensions (`destructiveness`, `irreversibility`, `breadth`, `influence`, `exfil`), the resolution and the matched destructive entries. The two network-flow signals `score.cradleFlows` and `score.ingestFlows` are deliberately **JSON-only**: `writeText` does not render them, so a text-mode consumer must use `--json` (or the `--batch` NDJSON) to read them.
 - **Add an output format**: add a branch after `analysis.Analyze` (mirroring the `o.json` branch) and render from the `*analysis.Report`.
 - **Change the summary header**: the tests assert on `flowsh effect report` and `lang:            bash`, so update both `writeText` and `main_test.go` together.
 

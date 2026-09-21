@@ -14,6 +14,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"testing"
 	"time"
@@ -35,6 +36,14 @@ const (
 // latencyBaseline is the committed reference the gate compares against. Keeping
 // it in the repository makes both the absolute budget and the regression
 // tolerance reviewable and adjustable.
+//
+// The reference is a *host* reference: its numbers were calibrated on one
+// machine, so they describe that machine's CPU. A CI-matrix host whose CPU is
+// materially slower spends proportionally longer on the same code and would
+// otherwise report a "regression" that is really only a slower runner — the
+// same false alarm ADR-0013 removed for the Windows monotonic clock. A host
+// that cannot meet the shared numbers therefore names its own in
+// HostOverrides rather than inflating the constants every host shares.
 type latencyBaseline struct {
 	Note            string  `json:"note"`
 	BudgetMs        float64 `json:"budgetMs"`
@@ -42,6 +51,37 @@ type latencyBaseline struct {
 	ToleranceFactor float64 `json:"toleranceFactor"`
 	RecallMisses    int     `json:"recallMisses"`
 	Cases           int     `json:"cases"`
+	// HostOverrides replaces the shared numbers for a host, keyed by GOOS
+	// (runtime.GOOS). A field left out keeps its shared value.
+	HostOverrides map[string]latencyOverride `json:"hostOverrides,omitempty"`
+}
+
+// latencyOverride is the set of latency numbers one host replaces. Each field is
+// optional: a host overrides only what it cannot meet, and nil keeps the shared
+// value.
+type latencyOverride struct {
+	BudgetMs        *float64 `json:"budgetMs,omitempty"`
+	BaselineP95Ms   *float64 `json:"baselineP95Ms,omitempty"`
+	ToleranceFactor *float64 `json:"toleranceFactor,omitempty"`
+}
+
+// forHost returns the baseline that applies to the given GOOS: the shared
+// numbers with that host's override (if any) applied on top.
+func (b latencyBaseline) forHost(goos string) latencyBaseline {
+	ov, ok := b.HostOverrides[goos]
+	if !ok {
+		return b
+	}
+	if ov.BudgetMs != nil {
+		b.BudgetMs = *ov.BudgetMs
+	}
+	if ov.BaselineP95Ms != nil {
+		b.BaselineP95Ms = *ov.BaselineP95Ms
+	}
+	if ov.ToleranceFactor != nil {
+		b.ToleranceFactor = *ov.ToleranceFactor
+	}
+	return b
 }
 
 // loadBaseline reads testdata/latency_baseline.json (relative to the engine
@@ -59,6 +99,13 @@ func loadBaseline(tb testing.TB) latencyBaseline {
 	}
 	if b.BudgetMs <= 0 || b.BaselineP95Ms <= 0 || b.ToleranceFactor <= 0 {
 		tb.Fatalf("latency baseline %s is not fully populated: %+v", path, b)
+	}
+	for goos, ov := range b.HostOverrides {
+		if (ov.BudgetMs != nil && *ov.BudgetMs <= 0) ||
+			(ov.BaselineP95Ms != nil && *ov.BaselineP95Ms <= 0) ||
+			(ov.ToleranceFactor != nil && *ov.ToleranceFactor <= 0) {
+			tb.Fatalf("latency baseline %s: override for %q has a non-positive value: %+v", path, goos, ov)
+		}
 	}
 	return b
 }
@@ -136,7 +183,10 @@ func TestPerCommandLatencyBudget(t *testing.T) {
 	}
 	a := mustAnalyzer(t)
 	cases := mustCorpus(t)
-	base := loadBaseline(t)
+	// The shared reference is calibrated on one host; a slower CI runner names
+	// its own numbers, so the gate compares each host against its own reference
+	// instead of reporting a slower runner as a regression.
+	base := loadBaseline(t).forHost(runtime.GOOS)
 
 	worst := 0.0
 	worstID := ""
@@ -151,11 +201,54 @@ func TestPerCommandLatencyBudget(t *testing.T) {
 	}
 
 	ceiling := base.BaselineP95Ms * base.ToleranceFactor
-	t.Logf("latency over %d commands: worst p95 %.3f ms (%s); budget %.1f ms; baseline %.3f ms x%.1f = %.3f ms",
-		len(cases), worst, worstID, base.BudgetMs, base.BaselineP95Ms, base.ToleranceFactor, ceiling)
+	t.Logf("latency over %d commands on %s: worst p95 %.3f ms (%s); budget %.1f ms; baseline %.3f ms x%.1f = %.3f ms",
+		len(cases), runtime.GOOS, worst, worstID, base.BudgetMs, base.BaselineP95Ms, base.ToleranceFactor, ceiling)
 	if worst > ceiling {
 		t.Errorf("latency regression: worst p95 %.3f ms exceeds the baseline ceiling %.3f ms (baseline %.3f ms x%.1f)",
 			worst, ceiling, base.BaselineP95Ms, base.ToleranceFactor)
+	}
+}
+
+// TestLatencyBaselineHostOverride pins the resolution the gate relies on: a host
+// named in the baseline uses its override, every other host keeps the shared
+// numbers, and a slower host is given more room without the tripwire crossing
+// its own budget. It runs on every host, so the Windows override is exercised
+// even where Windows is not.
+func TestLatencyBaselineHostOverride(t *testing.T) {
+	base := loadBaseline(t)
+
+	// A host with no override keeps the shared numbers verbatim.
+	other := base.forHost("plan9")
+	if other.BudgetMs != base.BudgetMs || other.BaselineP95Ms != base.BaselineP95Ms ||
+		other.ToleranceFactor != base.ToleranceFactor {
+		t.Errorf("forHost on a host without an override changed the baseline: %+v", other)
+	}
+
+	ov, ok := base.HostOverrides["windows"]
+	if !ok {
+		t.Fatal("baseline has no windows override")
+	}
+	got := base.forHost("windows")
+	if ov.BudgetMs == nil || got.BudgetMs != *ov.BudgetMs {
+		t.Errorf("windows budget not applied: got %v, override %v", got.BudgetMs, ov.BudgetMs)
+	}
+	if ov.BaselineP95Ms == nil || got.BaselineP95Ms != *ov.BaselineP95Ms {
+		t.Errorf("windows reference not applied: got %v, override %v", got.BaselineP95Ms, ov.BaselineP95Ms)
+	}
+	if ov.ToleranceFactor == nil || got.ToleranceFactor != *ov.ToleranceFactor {
+		t.Errorf("windows tolerance not applied: got %v, override %v", got.ToleranceFactor, ov.ToleranceFactor)
+	}
+	// The slower host must be allowed at least as much as the shared reference,
+	// or the override would not fix the false alarm it exists for.
+	if got.BudgetMs < base.BudgetMs || got.BaselineP95Ms < base.BaselineP95Ms {
+		t.Errorf("windows override is stricter than the shared reference: %+v", got)
+	}
+	// The tripwire must stay below the absolute budget on every host, or it
+	// could never fire before the budget does.
+	for _, b := range []latencyBaseline{base, got} {
+		if b.BaselineP95Ms*b.ToleranceFactor >= b.BudgetMs {
+			t.Errorf("tripwire %.1f ms is not below budget %.1f ms", b.BaselineP95Ms*b.ToleranceFactor, b.BudgetMs)
+		}
 	}
 }
 

@@ -104,57 +104,141 @@ func (r *Report) Sort() {
 	sort.Strings(r.Notes)
 }
 
-// Normalize canonicalises the report: effects that share a kind and a mode are
-// merged with join (unioning targets and taint, joining certainty), the
-// destructiveness summary is recomputed, and every slice is sorted. Two reports
-// built from the same effects normalise to byte-identical JSON.
+// normalizeKey is the identity Normalize merges on: two effects join exactly
+// when their kind, their mode and their network-flow role agree. The flow role
+// belongs in the key because it is per-effect evidence, not a property of a
+// kind: merging a write tagged as carrying downloaded content (FlowIngest) with
+// an unrelated untagged write of the same kind and mode would promote the
+// merged effect to the tagged role and thereby claim the unrelated write's
+// targets as download sinks.
+func normalizeKey(e Effect) string {
+	return string(e.Kind) + "|" + string(e.Mode) + "|" + string(e.NetFlow)
+}
+
+// Normalize canonicalises the report: effects that share a kind, a mode and a
+// network-flow role are merged with join (unioning targets and taint, joining
+// certainty), the destructiveness summary is recomputed, and every slice is
+// sorted. Two reports built from the same effects normalise to byte-identical
+// JSON.
 func (r *Report) Normalize() {
 	if r.SchemaVersion == "" {
 		r.SchemaVersion = SchemaVersion
 	}
-	merged := make([]Effect, 0, len(r.Effects))
-	index := make(map[string]int, len(r.Effects))
-	for _, e := range r.Effects {
-		k := string(e.Kind) + "|" + string(e.Mode)
-		if i, ok := index[k]; ok {
-			if joined, ok := merged[i].Join(e); ok {
-				merged[i] = joined
+	orig := r.Effects
+	// group[i] is the index in merged of the effect the i-th input effect was
+	// merged into; it is what re-points the why-traces afterwards.
+	group := make([]int, len(orig))
+	merged := make([]Effect, 0, len(orig))
+	index := make(map[string]int, len(orig))
+	for i, e := range orig {
+		k := normalizeKey(e)
+		if gi, ok := index[k]; ok {
+			if joined, ok := merged[gi].Join(e); ok {
+				merged[gi] = joined
+				group[i] = gi
+				continue
 			}
-			continue
+			// Unreachable while normalizeKey covers every field Join compares;
+			// if it ever were reached, the effect is kept as its own group
+			// rather than silently dropped.
 		}
 		index[k] = len(merged)
+		group[i] = len(merged)
 		merged = append(merged, e)
 	}
 	r.Effects = merged
 	// Merging under join changes the merged effect's Key, so re-point every
 	// why-trace at the effect it now explains; otherwise WhyGaps would report
 	// a spurious gap for a fully explained (merged) effect.
-	keyByMode := make(map[string]string, len(merged))
-	for _, e := range merged {
-		keyByMode[string(e.Kind)+"|"+string(e.Mode)] = e.Key()
-	}
-	r.Why = remapWhy(r.Why, keyByMode)
+	r.Why = remapWhy(r.Why, newWhyRemap(orig, merged, group))
 	r.Destructiveness = ComputeDestructiveness(r.Effects)
 	r.Sort()
 }
 
-// remapWhy re-points why-traces at the effects Normalize merged them into.
-// Traces are matched by the (kind, mode) pair Normalize merges on, so a trace
-// recorded for a narrower target still explains the merged effect; traces that
-// land on the same effect are combined. A trace whose kind/mode matches no
-// effect is left untouched. The result is order-stable for a report that is
-// already normalised, so Normalize is idempotent.
-func remapWhy(why []WhyTrace, keyByMode map[string]string) []WhyTrace {
+// whyRemap resolves the key a why-trace carries onto the key of the effect
+// Normalize merged it into.
+//
+// The exact table maps every pre-merge effect key to its merged counterpart and
+// is what makes the remap precise now that the merge key carries the flow role:
+// two effects of the same kind and mode but different roles merge into two
+// distinct effects, so a kind/mode-only lookup could no longer tell them apart.
+//
+// The kind/mode table is the fallback for a trace whose key names no known
+// pre-merge effect (a hand-built report). It is populated only when a kind/mode
+// pair identifies exactly one merged effect, so it can never pick the wrong one
+// of two flow-split effects. A key left ambiguous by both tables is not
+// re-pointed — the trace keeps the key it had.
+type whyRemap struct {
+	exact      map[string]string
+	byKindMode map[string]string
+}
+
+// newWhyRemap builds the remap table for a Normalize pass: orig are the effects
+// before the merge, merged the effects after it, and group[i] the merged index
+// the i-th original effect went into.
+func newWhyRemap(orig, merged []Effect, group []int) whyRemap {
+	rm := whyRemap{
+		exact:      make(map[string]string, len(orig)),
+		byKindMode: make(map[string]string, len(merged)),
+	}
+	// A pre-merge key is ambiguous when two effects that carry it merged into
+	// different effects (they differ only in a field the key does not spell
+	// out, i.e. their network-flow role). Such a key is dropped from the exact
+	// table: the trace cannot be attributed to one of the two.
+	ambiguous := make(map[string]bool)
+	for i, e := range orig {
+		k := e.Key()
+		want := merged[group[i]].Key()
+		if prev, ok := rm.exact[k]; ok {
+			if prev != want {
+				ambiguous[k] = true
+			}
+			continue
+		}
+		rm.exact[k] = want
+	}
+	for k := range ambiguous {
+		delete(rm.exact, k)
+	}
+	dup := make(map[string]bool, len(merged))
+	for _, e := range merged {
+		km := effectKindMode(e.Key())
+		if _, ok := rm.byKindMode[km]; ok {
+			dup[km] = true
+			continue
+		}
+		rm.byKindMode[km] = e.Key()
+	}
+	for k := range dup {
+		delete(rm.byKindMode, k)
+	}
+	return rm
+}
+
+// resolve returns the merged-effect key a trace key now names.
+func (rm whyRemap) resolve(key string) string {
+	if k, ok := rm.exact[key]; ok {
+		return k
+	}
+	if k, ok := rm.byKindMode[effectKindMode(key)]; ok {
+		return k
+	}
+	return key
+}
+
+// remapWhy re-points why-traces at the effects Normalize merged them into, so
+// that a trace recorded for a narrower target still explains the merged effect;
+// traces that land on the same effect are combined. A trace no table resolves is
+// left untouched. The result is order-stable for a report that is already
+// normalised, so Normalize is idempotent.
+func remapWhy(why []WhyTrace, rm whyRemap) []WhyTrace {
 	if len(why) == 0 {
 		return why
 	}
 	merged := make(map[string]*WhyTrace, len(why))
 	order := make([]string, 0, len(why))
 	for _, w := range why {
-		key := w.Effect
-		if nk, ok := keyByMode[effectKindMode(key)]; ok {
-			key = nk
-		}
+		key := rm.resolve(w.Effect)
 		m, ok := merged[key]
 		if !ok {
 			m = &WhyTrace{Effect: key}

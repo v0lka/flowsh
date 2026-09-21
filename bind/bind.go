@@ -392,17 +392,41 @@ func (b *Binder) bindCommand(cmd *kb.Command, argv []Arg, stdinTaint engine.Tain
 		specs = append(specs, p.Spec)
 	}
 
-	// A wget invocation that names a concrete URL writes the fetched body to a
-	// file by default (named after the URL's last path segment): an ingest of
-	// downloaded content. The KB models only the URL positional's egress, so
-	// the implicit file output is synthesised here — unless an explicit -O
-	// already named the output. A dynamic (⊤) destination is not synthesised:
-	// its local file name is unknown, so there is no ingest sink to point at.
-	if cmd.Dialect == kb.DialectWget && !containsSpec(specs, "-O") {
-		if url, ok := firstConcreteNetEgress(out); ok {
+	// A wget invocation that names concrete URL operands writes each fetched
+	// body to a local file by default — named after the URL's last path segment
+	// (plus its query string, as wget does), inside the -P/--directory-prefix
+	// directory when one is given: an ingest of downloaded content. The KB
+	// models only the URL positional's egress, so the implicit file output is
+	// synthesised here, one sink per URL operand.
+	//
+	// The sink is named from the URL *operand* and never from the first
+	// concrete egress in effect order: an option value that is itself an
+	// egress target (wget --user-agent Foo) names no local file. The synthesis
+	// is suppressed when an output parameter already named the destination
+	// (-O/--output-document), when the invocation writes no body at all
+	// (--spider, --delete-after), and for a dynamic (⊤) destination — its local
+	// file name is unknown, so there is no ingest sink to point at.
+	if isImplicitDownload(cmd) && !matchesAnySpec(specs, downloadOutputSpecs[cmd.Name]) &&
+		!matchesAnySpec(specs, downloadNoOutputSpecs[cmd.Name]) {
+		urls := downloadURLs(rest, lenientHostDialect(cmd))
+		prefix, prefixKnown := downloadPrefix(cmd, matches)
+		for _, url := range urls {
+			// The -P directory, when present and statically known, relocates
+			// the write; an unresolved prefix leaves the written path unknown
+			// (⊤), never a fabricated concrete file.
+			var target engine.Scope
+			if !prefixKnown {
+				target = engine.ScopeTop()
+			} else {
+				name := downloadFileName(url)
+				if prefix != "" {
+					name = strings.TrimRight(prefix, "/") + "/" + name
+				}
+				target = engine.ScopeOf(name)
+			}
 			e := engine.Effect{
 				Kind:       engine.KindFSWrite,
-				Target:     defaultDownloadTarget(url),
+				Target:     target,
 				Mode:       engine.ModeDirect,
 				Certainty:  engine.CertaintyCertain,
 				Taint:      engine.TaintBottom(),
@@ -411,6 +435,8 @@ func (b *Binder) bindCommand(cmd *kb.Command, argv []Arg, stdinTaint engine.Tain
 			}
 			out = append(out, e)
 			ders = append(ders, derive(e, []engine.Atom{cmdAtom, {Kind: engine.AtomSink, Text: "NetIngest"}}, "fs.write", "net.ingest"))
+		}
+		if len(urls) > 0 {
 			specs = append(specs, "URL")
 		}
 	}
@@ -579,12 +605,29 @@ func lowerParam(cmd *kb.Command, p kb.Param, value Arg, argScope engine.Scope, a
 	}
 
 	if !p.Effect.FileRef || !fileRef {
+		// A download client's output parameter writes no file when its value is
+		// "-": that is standard output (curl -o -, wget -O -), so it contributes
+		// the Stdio effect of the body going to stdout. An FSWrite would name a
+		// file literally called "-", and an ingest sink pointing at it would be
+		// a fabricated write target.
+		if isDownloadOutput(cmd, p) && value.Value == "-" {
+			e := engine.Effect{
+				Kind:       engine.KindStdio,
+				Target:     engine.ScopeBottom(),
+				Mode:       p.Effect.Mode,
+				Certainty:  cert,
+				Taint:      taint,
+				Reversible: kb.DefaultReversible(engine.KindStdio),
+			}
+			return []engine.Effect{e}, []engine.Derivation{derive(e, withSink(atoms, e), ruleForKind(engine.KindStdio))}
+		}
+		// curl's -O names the local file after the URL, not after a flag value.
+		target = downloadOutputTarget(cmd, p, target)
 		e := p.Effect.EngineEffect(target, taint, cert)
 		// Mark the download client's file-output parameter as the sink of a
 		// network ingest flow, so the report can assert the flow rather than
-		// leave it to be inferred from co-occurrence. A value of "-" is standard
-		// output (curl -o -, wget -O -), not a file, so it is not an ingest.
-		if isDownloadOutput(cmd, p) && value.Value != "-" {
+		// leave it to be inferred from co-occurrence.
+		if isDownloadOutput(cmd, p) {
 			e.NetFlow = engine.FlowIngest
 		}
 		return []engine.Effect{e}, []engine.Derivation{derive(e, withSink(atoms, e), ruleForKind(e.Kind))}
@@ -852,15 +895,6 @@ func isDownloadClient(cmd *kb.Command) bool {
 	return false
 }
 
-// downloadOutputSpecs names, per download client, the parameters whose value is
-// the file the fetched body is written to (the ingest sink). curl's -o/-O write
-// the response body; wget's -O does. wget's -o is a log file and -P a directory
-// prefix, so neither is a download output — they stay plain FSWrite effects.
-var downloadOutputSpecs = map[string]map[string]bool{
-	"curl": {"-o": true, "-O": true},
-	"wget": {"-O": true},
-}
-
 // isDownloadOutput reports whether p is the parameter of download client cmd
 // that names the file a fetched body is written to, so the FSWrite effect it
 // contributes is an ingest sink.
@@ -868,48 +902,119 @@ func isDownloadOutput(cmd *kb.Command, p kb.Param) bool {
 	if !isDownloadClient(cmd) || p.Effect.Kind != engine.KindFSWrite {
 		return false
 	}
-	specs, ok := downloadOutputSpecs[cmd.Name]
-	return ok && specs[p.Spec]
+	return downloadOutputSpecs[cmd.Name][p.Spec]
 }
 
-// containsSpec reports whether spec is among the parameter specs the invocation
-// matched.
-func containsSpec(specs []string, spec string) bool {
+// isImplicitDownload reports whether cmd is the download client whose implicit
+// output file the binder synthesises: wget, which writes every fetched body to
+// a file named after the URL unless told otherwise. curl has no implicit output
+// (without -o/-O the body goes to standard output), so it is excluded.
+func isImplicitDownload(cmd *kb.Command) bool {
+	return cmd != nil && cmd.Dialect == kb.DialectWget
+}
+
+// downloadOutputSpecs names, per download client, the parameters whose value is
+// the file the fetched body is written to (the ingest sink). curl's -o/-O write
+// the response body; wget's -O/--output-document does. wget's -o is a log file
+// and -P/--directory-prefix a directory, so neither is a download output — they
+// stay plain FSWrite effects.
+var downloadOutputSpecs = map[string]map[string]bool{
+	"curl": {"-o": true, "-O": true},
+	"wget": {"-O": true, "--output-document": true},
+}
+
+// downloadNoOutputSpecs names, per download client, the parameters that leave no
+// downloaded body on disk, so the implicit sink must not be synthesised for
+// them: wget --spider fetches the response headers only and writes nothing, and
+// --delete-after removes the file it has just written. Neither command leaves
+// downloaded content at a file path, so claiming an ingest sink would be a
+// fabricated write target.
+var downloadNoOutputSpecs = map[string]map[string]bool{
+	"wget": {"--spider": true, "--delete-after": true},
+}
+
+// downloadPrefixSpecs names, per download client, the parameters whose value is
+// the directory the fetched body is written into (wget -P/--directory-prefix).
+var downloadPrefixSpecs = map[string]map[string]bool{
+	"wget": {"-P": true, "--directory-prefix": true},
+}
+
+// matchesAnySpec reports whether any of the given parameter specs is in the set.
+func matchesAnySpec(specs []string, set map[string]bool) bool {
+	if len(set) == 0 {
+		return false
+	}
 	for _, s := range specs {
-		if s == spec {
+		if set[s] {
 			return true
 		}
 	}
 	return false
 }
 
-// firstConcreteNetEgress returns the target of the first NetEgress effect whose
-// scope is a concrete (non-⊤, non-⊥) set, so an implicit download output can be
-// named after it. It returns false when no concrete egress is present — a
-// dynamic destination names no local file the analysis can point at.
-func firstConcreteNetEgress(effs []engine.Effect) (string, bool) {
-	for _, e := range effs {
-		if e.Kind != engine.KindNetEgress || e.Target.IsTop() || e.Target.IsBottom() {
+// downloadPrefix returns the directory a download client was told to write into
+// (wget -P/--directory-prefix) and whether that directory is statically known.
+// No prefix matched yields ("", true): the write happens in the working
+// directory. A matched prefix whose value is not a known literal yields
+// ("", false): the resulting path cannot be named, so the caller degrades the
+// synthesised target to ⊤ rather than inventing a directory.
+func downloadPrefix(cmd *kb.Command, matches []match) (string, bool) {
+	if cmd == nil {
+		return "", true
+	}
+	set := downloadPrefixSpecs[cmd.Name]
+	if len(set) == 0 {
+		return "", true
+	}
+	for _, m := range matches {
+		if !set[m.param.Spec] {
 			continue
 		}
-		if ts := e.Target.Targets(); len(ts) > 0 {
-			return ts[0], true
+		if m.hasVal && m.value.Literal && m.value.Value != "" {
+			return m.value.Value, true
 		}
+		return "", false
 	}
-	return "", false
+	return "", true
 }
 
-// defaultDownloadTarget names the local file a download client writes a fetched
-// URL to by default: the URL's last path segment (wget's naming rule). An empty
-// segment (a bare host or a trailing slash) falls back to "index.html", wget's
-// own default.
-func defaultDownloadTarget(url string) engine.Scope {
+// downloadURLs returns the concrete URL operands of a download invocation, in
+// operand order: the operands the egress gate accepts as a host/URL under the
+// client's grammar tier. A dynamic operand is skipped — its local file name is
+// unknown — while the other, concrete URLs keep their synthesised sinks.
+func downloadURLs(g []Arg, lenient bool) []string {
+	var out []string
+	for _, a := range g {
+		if !a.Literal || a.Value == "" {
+			continue
+		}
+		if _, keep := engine.FilterEgressTargets(engine.ScopeOf(a.Value), lenient); keep {
+			out = append(out, a.Value)
+		}
+	}
+	return out
+}
+
+// downloadFileName names the local file a download client writes a fetched URL
+// to by default: the URL's last path segment, with its query string, or
+// "index.html" when the path names no file. This is wget's naming rule,
+// verified against GNU Wget 1.25: `wget HOST/dir/file.tgz` writes `file.tgz`,
+// `wget HOST/dir/file.tgz?a=1&b=2` keeps the query and writes
+// `file.tgz?a=1&b=2`, `wget HOST/dir/` writes `index.html`, and a fragment is
+// dropped because it is never sent to the server.
+func downloadFileName(url string) string {
 	p := url
 	if i := strings.Index(p, "://"); i >= 0 {
 		p = p[i+3:]
 	}
-	if i := strings.IndexAny(p, "?#"); i >= 0 {
+	// The fragment is not sent to the server and never reaches the file name.
+	if i := strings.IndexByte(p, '#'); i >= 0 {
 		p = p[:i]
+	}
+	// The query string, however, is part of the local name wget creates.
+	query := ""
+	if i := strings.IndexByte(p, '?'); i >= 0 {
+		p, query = p[:i], p[i:]
 	}
 	// Drop the authority (host[:port]); what remains is the path.
 	if i := strings.IndexByte(p, '/'); i >= 0 {
@@ -917,14 +1022,36 @@ func defaultDownloadTarget(url string) engine.Scope {
 	} else {
 		p = ""
 	}
-	p = strings.TrimRight(p, "/")
+	// A path that names no file — empty, or a directory (a trailing '/') — is
+	// saved as index.html, matching wget.
+	if p == "" || strings.HasSuffix(p, "/") {
+		return "index.html" + query
+	}
 	if i := strings.LastIndexByte(p, '/'); i >= 0 {
 		p = p[i+1:]
 	}
-	if p == "" {
-		return engine.ScopeOf("index.html")
+	return p + query
+}
+
+// downloadOutputTarget rewrites the target of a download-output parameter whose
+// value is the remote URL rather than a local file name. curl's -O is
+// "remote-name" mode: it writes the response body to a file named after the
+// URL's last path segment, so its FSWrite target is that local file — reporting
+// the URL itself would name something the command never writes. Every other
+// output parameter (curl -o FILE, wget -O FILE/--output-document) already
+// carries the local file name as its flag value.
+func downloadOutputTarget(cmd *kb.Command, p kb.Param, s engine.Scope) engine.Scope {
+	if cmd == nil || cmd.Dialect != kb.DialectCurl || p.Spec != "-O" {
+		return s
 	}
-	return engine.ScopeOf(p)
+	if s.IsTop() || s.IsBottom() {
+		return s
+	}
+	names := make([]string, 0, len(s.Targets()))
+	for _, t := range s.Targets() {
+		names = append(names, downloadFileName(t))
+	}
+	return engine.ScopeOf(names...)
 }
 
 // targetFor computes the target scope an effect applies to from its value
@@ -946,8 +1073,12 @@ func targetFor(cmd *kb.Command, p kb.Param, value Arg, argScope engine.Scope) en
 	case kb.ValueCwd:
 		return engine.ScopeOf(".")
 	case kb.ValueEnv:
-		// The target is derived from an environment variable's value, which the
-		// analysis cannot pin down: ⊤ (unknown), never ⊥ (no target).
+		// The target comes from outside the command line — an environment
+		// variable, or the endpoint a service client is configured with
+		// (AWS_REGION/AWS_ENDPOINT_URL, KUBECONFIG, GH_HOST, PGHOST, …), which
+		// is how the KB models a remote subcommand whose operand names the
+		// operation and not an address. The analysis cannot pin it down: ⊤
+		// (unknown), never ⊥ (no target) — the call does reach that endpoint.
 		return engine.ScopeTop()
 	default: // stdin
 		return engine.ScopeBottom()

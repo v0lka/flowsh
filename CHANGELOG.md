@@ -32,7 +32,8 @@ only on a breaking shape change, not on every module release.
   asserts two network data flows so a consumer can key on the flow rather than
   infer it from the co-occurrence of a `NetEgress` and a sink:
   `score.cradleFlows` (network content reaching code execution — `curl … | sh`,
-  `source <(curl …)`, `sh -c "$(curl …)"`, the exec of a downloaded path) and
+  `source <(curl …)`, `sh -c "$(curl …)"`; a download-then-execute chain is not
+  currently asserted, because no frontend establishes that flow) and
   `score.ingestFlows` (a download client writing fetched content to a file —
   `curl -o`/`-O`, wget default/`-O`). The sink is marked by the additive
   effect-level `netFlow` role (`cradle` on a `CodeExec`, `ingest` on an

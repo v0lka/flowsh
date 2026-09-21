@@ -177,13 +177,16 @@ full effect objects in the shape of [effects](#effects).
 "sink": effect }` shape. A `cradleFlows[]` `source` is a `NetEgress` and its
 `sink` is a `CodeExec` marked `netFlow: "cradle"` — content fetched over the
 network reaches code execution (a pipe to a shell/interpreter: `curl … | sh`, a
-`source`/`.` of a fetched path, `sh -c "$(curl …)"`, the exec of a downloaded
-path). An `ingestFlows[]` `source` is a `NetEgress` and its `sink` is an
-`FSWrite` marked `netFlow: "ingest"` — a download client writing the fetched
-body to a file (`curl -o`/`-O`, wget default/`-O`); a VCS sync (`git
-clone`/`fetch`/`pull`) is not an ingest. A flow is asserted only where the
-analysis established that the network content reached the sink, so a `NetEgress`
-and a sink that merely co-occur in one program yield no flow.
+`source`/`.` of a fetched path, `sh -c "$(curl …)"`); a download-then-execute
+chain (`curl -o f … && chmod +x f && ./f`) is **not** currently asserted, because no
+frontend establishes that flow. An `ingestFlows[]` `source` is a `NetEgress`
+and its `sink` is an `FSWrite` marked `netFlow: "ingest"` — a download client
+writing the fetched body to a file (`curl -o`/`-O`, wget default/`-O`); a VCS
+sync (`git clone`/`fetch`/`pull`) is not an ingest. A flow is asserted only
+where the analysis established that the network content reached the sink, so a
+`NetEgress` and a sink that merely co-occur in one program yield no flow. Both fields are
+**JSON-only**: the CLI's human summary does not render them, so a text-mode
+consumer must read the JSON (see the [CLI guide](cli.md#human-summary)).
 
 ### resolution
 

@@ -1,6 +1,7 @@
 package ps
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/v0lka/flowsh/engine"
@@ -72,12 +73,21 @@ func evalWordText(w *Word, st *State) evaluatedWord {
 		// Splatting (@p, @{p}) hides the parameter set; only a statically
 		// known hashtable refines this (a later milestone).
 		return evaluatedWord{Taint: engine.TaintOf(engine.TaintUntrusted)}
-	case strings.HasPrefix(text, "'"):
-		// A single-quoted string is fully literal: only '' escapes a quote.
-		return evaluatedWord{Text: unquoteSingle(text), Known: true}
-	case strings.HasPrefix(text, "\""):
-		inner := unquoteWord(text)
-		return interpolate(inner, st, false)
+	case strings.HasPrefix(text, "'"), strings.HasPrefix(text, "\""):
+		// A word is a quoted literal only when the *whole* word is one balanced
+		// quoted string. A word that merely starts with a quote is a
+		// concatenation or an operator expression ('x' + $y, 'a.txt','b.txt'):
+		// its value is not the text between the first pair of quotes, so it must
+		// not be bound as one (ADR-0003/ADR-0014: never fabricate a literal).
+		if inner, ok := wholeQuoted(text); ok {
+			if text[0] == '\'' {
+				// A single-quoted string is fully literal: only '' escapes a
+				// quote.
+				return evaluatedWord{Text: strings.ReplaceAll(inner, "''", "'"), Known: true}
+			}
+			return interpolate(inner, st, false)
+		}
+		return evaluatedWord{Taint: engine.TaintOf(engine.TaintUntrusted)}
 	default:
 		// A bare argument expands variables and honours backtick escapes,
 		// exactly like a double-quoted string — but an unquoted parenthesis
@@ -88,6 +98,39 @@ func evalWordText(w *Word, st *State) evaluatedWord {
 		}
 		return interpolate(text, st, true)
 	}
+}
+
+// wholeQuoted reports whether s is one balanced quoted string literal with
+// nothing following the closing quote, and returns the text it encloses. A
+// single-quoted string escapes a quote by doubling it; a double-quoted string
+// escapes it with a backtick. `'a.txt','b.txt'` is not one literal (the first
+// pair of quotes closes before the end of the word), and neither is `'x' + $y`.
+func wholeQuoted(s string) (inner string, ok bool) {
+	if len(s) < 2 {
+		return "", false
+	}
+	q := s[0]
+	if q != '\'' && q != '"' {
+		return "", false
+	}
+	for i := 1; i < len(s); i++ {
+		switch s[i] {
+		case '`':
+			if q == '"' {
+				i++ // a backtick escape inside a double-quoted string
+			}
+		case q:
+			if q == '\'' && i+1 < len(s) && s[i+1] == '\'' {
+				i++ // '' escapes a single quote
+				continue
+			}
+			if i != len(s)-1 {
+				return "", false // something follows the closing quote
+			}
+			return s[1:i], true
+		}
+	}
+	return "", false
 }
 
 // hasUnquotedParen reports whether s contains a `(` outside any quoted
@@ -241,7 +284,10 @@ func scanDollar(s string, bare bool) (segment, int) {
 	if len(s) >= 2 && s[1] == '(' {
 		// A sub-expression $(…): executes at run time, never known here.
 		if end := matchParen(s[1:]); end > 0 {
-			return segment{kind: segUnknown, taint: engine.TaintOf(engine.TaintUntrusted)}, 1 + end
+			// end is the offset of the closing ')' within s[1:], so the whole
+			// reference spans 1 + end + 1 bytes: consuming only 1+end would
+			// leave the ')' to be re-scanned as literal text.
+			return segment{kind: segUnknown, taint: engine.TaintOf(engine.TaintUntrusted)}, end + 2
 		}
 		return segment{kind: segUnknown, taint: engine.TaintOf(engine.TaintUntrusted)}, len(s)
 	}
@@ -392,9 +438,166 @@ func unescape(c byte) string {
 	}
 }
 
-// unquoteSingle strips one surrounding single-quoted pair and folds the ”
-// quote escape; single quotes have no other escapes.
-func unquoteSingle(s string) string {
-	inner := unquoteWord(s)
-	return strings.ReplaceAll(inner, "''", "'")
+// ===========================================================================
+// Literal expressions
+// ===========================================================================
+
+// numericLiteral parses a PowerShell numeric literal and returns its value.
+// The text must be the whole literal, so an expression (`1 + 2`), a range
+// (`1..3`) or a path that merely starts with a digit is not one.
+func numericLiteral(s string) (float64, bool) {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return 0, false
+	}
+	switch c := t[0]; {
+	case c >= '0' && c <= '9', c == '-', c == '+', c == '.':
+	default:
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(t, 64)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
+// maxRangeIterations bounds the exact expansion of a PowerShell range: a range
+// wider than this is analysed as an unresolved iterable (one iteration with an
+// unknown loop variable) rather than expanded, so a `1..100000` cannot exhaust
+// the analysis budget.
+const maxRangeIterations = 64
+
+// literalRange parses the PowerShell range operator applied to two literal
+// integers (`1..3`, `5..-2`) and returns its inclusive bounds. A dynamic bound
+// (`1..$n`) is not a literal range, and a range wider than maxRangeIterations
+// is not expanded exactly. The operator counts in either direction (`3..1`
+// yields 3, 2, 1), so the span, not the signed difference, is bounded.
+func literalRange(text string) (lo, hi int, ok bool) {
+	t := strings.TrimSpace(text)
+	i := strings.Index(t, "..")
+	if i <= 0 {
+		return 0, 0, false
+	}
+	lo, okLo := intLiteral(t[:i])
+	hi, okHi := intLiteral(t[i+2:])
+	if !okLo || !okHi {
+		return 0, 0, false
+	}
+	span := hi - lo
+	if span < 0 {
+		span = -span
+	}
+	if span >= maxRangeIterations {
+		return 0, 0, false
+	}
+	return lo, hi, true
+}
+
+// intLiteral parses a whole-number literal.
+func intLiteral(s string) (int, bool) {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return 0, false
+	}
+	if _, ok := numericLiteral(t); !ok {
+		return 0, false
+	}
+	v, err := strconv.Atoi(t)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
+// hasRangeOp reports whether text contains the range operator.
+func hasRangeOp(text string) bool { return strings.Contains(text, "..") }
+
+// isSingleExpression reports whether text is one PowerShell value: a single
+// token with no top-level `+` operator. Anything else — `1 + 2`,
+// `'a' + $b`, `$a+$b`, a parenthesised call — is an expression whose value the
+// analysis does not compute, so binding its raw text would fabricate a literal
+// target (ADR-0003/ADR-0014).
+func isSingleExpression(text string) bool {
+	return len(tokenFields(text)) <= 1 && !hasTopLevelPlus(text)
+}
+
+// hasTopLevelPlus reports whether a `+` appears in text outside quotes and
+// brackets (a concatenation or an addition operator).
+func hasTopLevelPlus(s string) bool {
+	depth := 0
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; c {
+		case '\'', '"':
+			q := c
+			i++
+			for i < len(s) && s[i] != q {
+				if s[i] == '`' {
+					i++
+				}
+				i++
+			}
+		case '`':
+			i++
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			depth--
+		case '+':
+			if depth == 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// tokenFields splits text into top-level tokens (runs separated by whitespace
+// outside quotes and brackets).
+func tokenFields(s string) []string {
+	var out []string
+	start := -1
+	depth := 0
+	flush := func(end int) {
+		if start >= 0 {
+			out = append(out, s[start:end])
+			start = -1
+		}
+	}
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; c {
+		case '\'', '"':
+			if start < 0 {
+				start = i
+			}
+			q := c
+			i++
+			for i < len(s) && s[i] != q {
+				if s[i] == '`' {
+					i++
+				}
+				i++
+			}
+		case '(', '[', '{':
+			depth++
+			if start < 0 {
+				start = i
+			}
+		case ')', ']', '}':
+			depth--
+			if start < 0 {
+				start = i
+			}
+		case ' ', '\t', '\n', '\r':
+			if depth <= 0 {
+				flush(i)
+			}
+		default:
+			if start < 0 {
+				start = i
+			}
+		}
+	}
+	flush(len(s))
+	return out
 }

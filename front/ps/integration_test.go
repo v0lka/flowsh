@@ -117,9 +117,16 @@ func TestLowerQuotedDotIsLiteralText(t *testing.T) {
 	// Inside a quoted string a dot after a variable is literal text: with $h
 	// known the whole URL is known.
 	r := lowerOK(t, "$h = 'srv1'\nInvoke-WebRequest -Uri \"http://$h.example/x\"")
-	eg := effectsOfKind(r, engine.KindNetEgress)
-	if len(eg) == 0 || !eg[0].Target.Contains("http://srv1.example/x") {
-		t.Fatalf("the quoted dot must not be member access; effects=%+v", r.Effects)
+	// The assertion must exclude ⊤: Target.Contains is true of the ⊤ scope, so
+	// a plain Contains check would pass vacuously (finding #23) even if the
+	// target had been degraded to ⊤.
+	if !targetHasExact(r, engine.KindNetEgress, "http://srv1.example/x") {
+		t.Fatalf("the quoted dot must not be member access; effects=%+v notes=%v", r.Effects, r.Notes)
+	}
+	for _, e := range effectsOfKind(r, engine.KindNetEgress) {
+		if e.Target.IsTop() {
+			t.Fatalf("a resolved URL must not degrade the egress target to ⊤: %+v", r.Effects)
+		}
 	}
 }
 

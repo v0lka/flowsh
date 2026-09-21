@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/v0lka/flowsh/engine"
@@ -163,25 +164,49 @@ func (l *lowerer) stmtsExec(ss []*Stmt) {
 	}
 }
 
-// condTruthy evaluates a condition word: a statically-known condition yields
-// its truth (PowerShell truthiness: $false, 0 and the empty string are false);
-// an unresolved condition reports unknown.
-func condTruthy(ev evaluatedWord) (truth, known bool) {
-	if !ev.Known {
+// condTruthy decides a condition only when the condition word is a *literal
+// constant*: $true, $false, $null, a numeric literal, or a whole quoted string
+// literal. PowerShell truthiness for those is: $false/$null, the number 0 and
+// the empty string are false, every other literal is true — in particular a
+// non-empty *string* is true whatever it spells, so the strings "0" and "false"
+// are truthy (unlike the boolean/number constants of the same spelling).
+//
+// Any other condition — a cmdlet call (Get-Item x), an operator expression
+// ($a -eq $b, $n -lt 3), a variable — is not decidable from the text, so it is
+// reported unresolved: the caller then keeps every arm that is not
+// known-false, exactly as ADR-0014 requires. Deciding such a condition as
+// "certainly true" would drop the sibling arms and bind a value from a branch
+// that may never run.
+func condTruthy(w *Word) (truth, known bool) {
+	if w == nil {
 		return false, false
 	}
-	switch strings.ToLower(strings.TrimSpace(ev.Text)) {
-	case "false", "0", "":
-		return false, true
-	default:
+	t := strings.TrimSpace(w.Text)
+	switch strings.ToLower(t) {
+	case "$true":
 		return true, true
+	case "$false", "$null":
+		return false, true
 	}
+	if v, ok := numericLiteral(t); ok {
+		return v != 0, true
+	}
+	// A double-quoted literal that interpolates is not a constant.
+	if inner, ok := wholeQuoted(t); ok {
+		if t[0] == '"' && strings.ContainsAny(inner, "$`") {
+			return false, false
+		}
+		return inner != "", true
+	}
+	return false, false
 }
 
 // ifStmt lowers an if/elseif…/else statement: every arm whose condition is not
 // known-false runs in a forked Σ; the results join to a least upper bound. A
 // known-true arm reached without a preceding unresolved arm decides the whole
-// conditional.
+// conditional. Each arm's condition pipeline (its Head) is lowered first,
+// because PowerShell evaluates the condition before deciding the branch — an
+// `if (Remove-Item -Force C:\x) { }` deletes the file.
 func (l *lowerer) ifStmt(is *IfStmt) {
 	if is == nil {
 		return
@@ -192,7 +217,10 @@ func (l *lowerer) ifStmt(is *IfStmt) {
 	decided := false
 	for i := range is.Arms {
 		br := &is.Arms[i]
-		truth, known := condTruthy(l.evalWord(br.Cond))
+		l.stmtsExec(br.Head)
+		ev := l.evalWord(br.Cond)
+		l.emitEnvReads("if", br.Pos, ev.EnvReads)
+		truth, known := condTruthy(br.Cond)
 		switch {
 		case known && truth:
 			// This arm certainly runs — but only if no earlier unresolved arm
@@ -257,40 +285,31 @@ func joinAll(states []*State) *State {
 }
 
 // loopStmt lowers a foreach/for/while/do loop. A foreach over a statically
-// known literal list iterates exactly; every other loop runs its body once
-// (the sound single-iteration convention the bash frontend uses for
-// undecidable loops) under the step budget.
+// known literal list or literal range iterates exactly; every other loop runs
+// its body once (the sound single-iteration convention the bash frontend uses
+// for undecidable loops) under the step budget. The loop's header clauses are
+// lowered first: a foreach iterable, a while/do condition and a for header are
+// all evaluated by PowerShell, so the commands in them run.
 func (l *lowerer) loopStmt(lp *LoopStmt) {
 	if lp == nil {
 		return
 	}
 	l.step()
+	l.stmtsExec(lp.Head)
 	switch lp.Text {
 	case "foreach":
 		var ev evaluatedWord
 		if lp.Iter != nil {
 			ev = l.evalWord(lp.Iter)
 			l.emitEnvReads(lp.Text, lp.Pos, ev.EnvReads)
-			if ev.Known {
-				// A comma list of literal elements iterates exactly, each
-				// element evaluated on its own (quotes stripped per element).
-				parts := splitTopLevelCommas(lp.Iter.Text)
-				if elems, ok := l.literalElements(parts); ok {
-					for _, e := range elems {
-						l.step()
-						if lp.Var != nil && lp.Var.VarName != "" {
-							l.state.Set(lp.Var.VarName, e, ev.Taint)
-						}
-						l.stmtsExec(lp.Body)
-					}
-					return
+		}
+		if lp.Var != nil && lp.Var.VarName != "" {
+			if elems, ok := l.foreachElems(lp, ev); ok {
+				for _, e := range elems {
+					l.step()
+					l.state.Set(lp.Var.VarName, e, ev.Taint)
+					l.stmtsExec(lp.Body)
 				}
-				// A single known value: one iteration bound to it.
-				l.step()
-				if lp.Var != nil && lp.Var.VarName != "" {
-					l.state.Set(lp.Var.VarName, ev.Text, ev.Taint)
-				}
-				l.stmtsExec(lp.Body)
 				return
 			}
 		}
@@ -304,7 +323,8 @@ func (l *lowerer) loopStmt(lp *LoopStmt) {
 	case "while", "do":
 		truth, known := false, false
 		if lp.Cond != nil {
-			truth, known = condTruthy(l.evalWord(lp.Cond))
+			l.emitEnvReads(lp.Text, lp.Pos, l.evalWord(lp.Cond).EnvReads)
+			truth, known = condTruthy(lp.Cond)
 		}
 		if known && !truth && lp.Text == "while" {
 			l.note("while: known-false condition → body skipped")
@@ -323,6 +343,64 @@ func iterText(lp *LoopStmt) string {
 		return lp.Iter.Text
 	}
 	return ""
+}
+
+// foreachElems returns the exact values a foreach iterates, when the analysis
+// can determine them: the elements of a literal range (1..3 → 1, 2, 3) or of a
+// literal comma list ('a.txt','b.txt'). It reports ok=false for anything else —
+// in particular for an iterable that carries a command, whose *output* is
+// run-time data: its source text is not a value and must never be bound as one
+// (the iterable itself is lowered through Head instead).
+func (l *lowerer) foreachElems(lp *LoopStmt, ev evaluatedWord) ([]string, bool) {
+	if len(lp.Head) != 0 {
+		return nil, false
+	}
+	// A literal range iterates exactly, whether it is written literally (1..3)
+	// or evaluates to one (1..$n with $n known).
+	if lo, hi, ok := literalRange(iterText(lp)); ok {
+		return rangeElems(lo, hi), true
+	}
+	if ev.Known {
+		if lo, hi, ok := literalRange(ev.Text); ok {
+			return rangeElems(lo, hi), true
+		}
+		if hasRangeOp(ev.Text) {
+			// A range the analysis cannot expand exactly (a dynamic bound, or
+			// one wider than maxRangeIterations): its elements are unknown.
+			return nil, false
+		}
+	}
+	// A literal list iterates exactly, each element evaluated on its own
+	// (quotes stripped per element); a single literal value is a one-element
+	// list.
+	return l.literalElements(splitTopLevelCommas(iterText(lp)))
+}
+
+// rangeElems expands an inclusive integer range into its elements. The
+// PowerShell range operator counts in either direction (3..1 yields 3, 2, 1),
+// so a descending range is expanded descending rather than as an empty list —
+// an empty list would silently drop the loop body's effects.
+func rangeElems(lo, hi int) []string {
+	step := 1
+	if hi < lo {
+		step = -1
+	}
+	out := make([]string, 0, abs(hi-lo)+1)
+	for v := lo; ; v += step {
+		out = append(out, strconv.Itoa(v))
+		if v == hi {
+			break
+		}
+	}
+	return out
+}
+
+// abs returns the absolute value of n.
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 // literalElements evaluates each comma-separated element of a literal list
@@ -392,14 +470,12 @@ func (l *lowerer) mutateState(c *Command, canonical string) {
 		}
 		l.bindVar(name, value, "=")
 		l.note("$%s := (Set-Variable)", name)
-	case "clear-variable":
-		for _, b := range c.Bindings {
-			if b.Param != nil && strings.EqualFold(b.Param.Bare(), "name") && b.Value != nil {
-				if n, ok := plainVarName(unbrace(b.Value.Text)); ok {
-					l.state.Unset(n)
-					l.note("$%s unset (Clear-Variable)", n)
-				}
-			}
+	case "clear-variable", "remove-variable", "rv":
+		// Clear-Variable / Remove-Variable / rv unset the named variables,
+		// whether the name is named (-Name x) or positional (rv x).
+		for _, n := range l.variableNameTargets(c) {
+			l.state.Unset(n)
+			l.note("$%s unset (%s)", n, cmdLabel(c, canonical))
 		}
 	case "set-item", "remove-item":
 		// Variable:\x targets mutate session state; every other target is
@@ -428,14 +504,16 @@ func (l *lowerer) applyLocation(t resolvedTarget) {
 }
 
 // applyVariablePath recognises a Variable:\x target of Set-Item /
-// Remove-Item and writes or unsets that session variable.
+// Remove-Item and writes or unsets that session variable. The provider
+// separator after `Variable:` is not part of the variable name, so
+// `Variable:\x` names $x.
 func (l *lowerer) applyVariablePath(c *Command, w *Word, canonical string) {
 	raw := unbrace(w.Text)
 	if !strings.HasPrefix(strings.ToLower(raw), "variable:") {
 		return
 	}
-	name := raw[len("variable:"):]
-	if strings.ContainsAny(name, `\/`) {
+	name := strings.TrimLeft(raw[len("variable:"):], `\/`)
+	if name == "" || strings.ContainsAny(name, `\/`) {
 		return
 	}
 	if strings.EqualFold(canonical, "set-item") {
@@ -448,8 +526,40 @@ func (l *lowerer) applyVariablePath(c *Command, w *Word, canonical string) {
 	l.note("$%s unset (Remove-Item Variable:)", name)
 }
 
+// variableNameTargets collects the session-variable names a state-mutating
+// cmdlet acts on: the -Name parameter's value (quoted or not) and, when no
+// -Name is given, the first positional operand (Clear-Variable x,
+// `rv x`).
+func (l *lowerer) variableNameTargets(c *Command) []string {
+	var out []string
+	add := func(text string) {
+		if n, ok := plainVarName(unbrace(unquoteWord(text))); ok {
+			out = append(out, n)
+		}
+	}
+	for _, b := range c.Bindings {
+		if b.Param != nil && b.Value != nil && strings.EqualFold(b.Param.Bare(), "name") {
+			add(b.Value.Text)
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	for _, a := range c.Args {
+		if a != nil {
+			// The first operand is the variable name of the positional form.
+			add(a.Text)
+			break
+		}
+	}
+	return out
+}
+
 // namedValueBinding extracts a named parameter's name and evaluated value.
-// Parameter matching is case-insensitive, as PowerShell's is.
+// Parameter matching is case-insensitive, as PowerShell's is; the name is
+// unquoted, so `-Name 'h'` names $h. When no -Name parameter is present, the
+// positional form Set-Variable x 'v' supplies the name and the value from the
+// operands.
 func (l *lowerer) namedValueBinding(c *Command, nameParamName, valueParamName string) (string, evaluatedWord) {
 	var name string
 	var value evaluatedWord
@@ -460,7 +570,7 @@ func (l *lowerer) namedValueBinding(c *Command, nameParamName, valueParamName st
 		switch {
 		case strings.EqualFold(b.Param.Bare(), nameParamName):
 			if b.Value != nil {
-				if n, ok := plainVarName(unbrace(b.Value.Text)); ok {
+				if n, ok := plainVarName(unbrace(unquoteWord(b.Value.Text))); ok {
 					name = n
 				}
 			}
@@ -468,6 +578,19 @@ func (l *lowerer) namedValueBinding(c *Command, nameParamName, valueParamName st
 			if b.Value != nil {
 				l.step()
 				value = evalWordText(b.Value, l.state)
+			}
+		}
+	}
+	if name == "" {
+		// The positional form: the first operand is the variable name and the
+		// second its value (Set-Variable x 'v.txt').
+		if len(c.Args) >= 1 && c.Args[0] != nil {
+			if n, ok := plainVarName(unbrace(unquoteWord(c.Args[0].Text))); ok {
+				name = n
+				if len(c.Args) >= 2 && c.Args[1] != nil {
+					l.step()
+					value = evalWordText(c.Args[1], l.state)
+				}
 			}
 		}
 	}
@@ -1068,6 +1191,15 @@ func cleanTarget(w *Word) string {
 	return unquoteWord(w.Text)
 }
 
+// downloadOutputCmdlets are the download clients whose output-file parameter
+// receives the fetched body: the write of that file is the ingest sink of the
+// fetch (curl -o f URL's PowerShell counterpart), so the report can pair the
+// egress with the file it wrote.
+var downloadOutputCmdlets = map[string]bool{
+	"invoke-webrequest": true,
+	"invoke-restmethod": true,
+}
+
 // dataFiles lowers the data-file parameters of a cmdlet that is otherwise about
 // something else (a network request, a mail message): -InFile and -Attachments
 // name a file that is read, -OutFile names a file that is written, and the
@@ -1088,6 +1220,11 @@ func (l *lowerer) dataFiles(c *Command, cmd string) {
 		}
 		l.emitEnvReads(cmd, c.Pos, t.eval.EnvReads)
 		e := effectOf(kind, scopeForTarget(t), engine.ModeDirect, kind == engine.KindFSRead)
+		if kind == engine.KindFSWrite && downloadOutputCmdlets[strings.ToLower(cmd)] {
+			// The file a download client writes holds the body it fetched:
+			// that write is the ingest sink of the fetch (NetFlow == ingest).
+			e.NetFlow = engine.FlowIngest
+		}
 		base := []engine.Atom{atom(engine.AtomCommand, cmd, c.Pos), atom(engine.AtomOperand, t.raw, b.Value.Pos)}
 		l.emitEff(e, withSink(base, e)...)
 		if !t.eval.Known {
@@ -1144,30 +1281,57 @@ func (l *lowerer) targetPos(c *Command, target string) Pos {
 	return c.Pos
 }
 
-// redirs lowers a command's redirections: > and >> write their target file. A
-// redirection word evaluated against Σ resolves to its concrete path; an
-// unresolved one degrades the write's target to ⊤.
+// redirectKind maps a redirection operator onto the effect it has on its
+// target file: `>`/`>>` (optionally stream-qualified, `2>`, `*>>`) write it,
+// while `<` reads it. ok is false for an operator that names no file — in
+// particular a stream merge (2>&1, *>&1), whose target is a file descriptor.
+func redirectKind(op string) (engine.EffectKind, bool) {
+	if strings.Contains(op, "&") {
+		return "", false
+	}
+	s := strings.TrimSpace(op)
+	i := 0
+	for i < len(s) && (s[i] == '*' || (s[i] >= '0' && s[i] <= '9')) {
+		i++
+	}
+	if i >= len(s) {
+		return "", false
+	}
+	switch s[i] {
+	case '>':
+		return engine.KindFSWrite, true
+	case '<':
+		return engine.KindFSRead, true
+	}
+	return "", false
+}
+
+// redirs lowers a command's redirections: > and >> write their target file and
+// < reads it. A redirection word evaluated against Σ resolves to its concrete
+// path; an unresolved one degrades the effect's target to ⊤.
 func (l *lowerer) redirs(c *Command) {
 	for _, r := range c.Redirs {
-		if strings.Contains(r.Op, "&") {
+		kind, ok := redirectKind(r.Op)
+		if !ok {
 			// A stream merge (2>&1, *>&1): the target is a file descriptor, not
-			// a path, so no file is written.
-			l.note("redirection %s → stream merge (no file)", r.Op)
+			// a path, so no file is read or written.
+			l.note("redirection %s → no file target", r.Op)
 			continue
 		}
+		read := kind == engine.KindFSRead
 		if r.Word == nil || r.Word.Text == "" {
-			l.emitEff(effectOf(engine.KindFSWrite, engine.ScopeTop(), engine.ModeDirect, false),
+			l.emitEff(effectOf(kind, engine.ScopeTop(), engine.ModeDirect, read),
 				atom(engine.AtomRedirect, r.Op, r.Pos))
-			l.note("redirection %s → FSWrite(⊤)", r.Op)
+			l.note("redirection %s → %s(⊤)", r.Op, kind)
 			continue
 		}
 		t := l.resolveTarget(r.Word)
 		l.emitEnvReads(c.Name, c.Pos, t.eval.EnvReads)
-		e := effectOf(engine.KindFSWrite, scopeForTarget(t), engine.ModeDirect, false)
+		e := effectOf(kind, scopeForTarget(t), engine.ModeDirect, read)
 		if !t.eval.Known {
-			l.note("redirection %s %s is unresolved → FSWrite(⊤)", r.Op, r.Word.Text)
+			l.note("redirection %s %s is unresolved → %s(⊤)", r.Op, r.Word.Text, kind)
 		} else {
-			l.note("redirection %s %s → FSWrite", r.Op, t.eval.Text)
+			l.note("redirection %s %s → %s", r.Op, t.eval.Text, kind)
 		}
 		l.emitEff(e,
 			atom(engine.AtomCommand, c.Name, c.Pos), atom(engine.AtomRedirect, r.Word.Text, r.Word.Pos))
@@ -1215,13 +1379,11 @@ func hasSwitchCanon(c *Command, canon string) bool {
 // assignment lowers a variable/environment assignment and binds the assigned
 // value in Σ. A statically-known literal value makes later reads concrete; a
 // value produced by commands stays unknown and carries the provenance of the
-// right-hand side's effects.
+// right-hand side's effects. A member/index target ($o.Prop = v) binds nothing:
+// its base variable is invalidated instead, so a later read of the base
+// degrades to ⊤ rather than to the member's value.
 func (l *lowerer) assignment(a *Assign, rhs []engine.Effect) {
 	if a == nil {
-		return
-	}
-	if a.TargetWord == nil {
-		l.top("assignment with an unknown target")
 		return
 	}
 	// Classify every target: $a,$env:X = … mixes drives.
@@ -1236,7 +1398,7 @@ func (l *lowerer) assignment(a *Assign, rhs []engine.Effect) {
 		d, n := classifyVar(w.Text)
 		binds = append(binds, bindTarget{d, n})
 	}
-	if len(binds) == 0 {
+	if len(binds) == 0 && len(a.Invalidate) == 0 {
 		l.top("assignment with an unknown target")
 		return
 	}
@@ -1265,6 +1427,45 @@ func (l *lowerer) assignment(a *Assign, rhs []engine.Effect) {
 		}
 		value = evaluatedWord{Taint: taint}
 		valueKnown = false
+	}
+
+	// A comma list is a PowerShell array and an operator expression (`1 + 2`,
+	// `'a' + $b`) is a computed value: neither is one literal, so binding the
+	// raw text would fabricate a target no PowerShell expression could name
+	// (ADR-0003/ADR-0014). The documented multi-target form $a,$b = 'p1','p2'
+	// is bound element-wise by the loop below instead.
+	elementwise := false
+	if valueKnown && len(binds) > 1 {
+		_, elementwise = multiAssignParts(a.Value, len(binds))
+	}
+	if valueKnown && !elementwise {
+		raw := ""
+		if a.Value != nil {
+			raw = a.Value.Text
+		}
+		if !isSingleExpression(raw) || len(splitTopLevelCommas(raw)) > 1 {
+			value = evaluatedWord{Taint: value.Taint}
+			valueKnown = false
+		}
+	}
+
+	// A write through a member or an index does not give the base variable the
+	// member's value: invalidate it, so a later read of the base degrades to ⊤
+	// instead of resolving to a value the script never stored there.
+	for _, w := range a.Invalidate {
+		if w == nil {
+			continue
+		}
+		if _, name := classifyVar(w.Text); name != "" {
+			l.state.SetUnknown(name, value.Taint)
+			l.note("$%s invalidated (member/index assignment)", name)
+		}
+	}
+	if len(binds) == 0 {
+		if a.TargetWord != nil {
+			l.note("session variable assignment %s: no external effect", a.TargetWord.Text)
+		}
+		return
 	}
 
 	for i, b := range binds {
@@ -1298,8 +1499,6 @@ func (l *lowerer) assignment(a *Assign, rhs []engine.Effect) {
 					l.bindVar(b.name, l.evalWordTextStr(parts[i]), a.Op)
 					continue
 				}
-				l.bindVar(b.name, evaluatedWord{Taint: value.Taint}, a.Op)
-				continue
 			}
 			l.bindVar(b.name, value, a.Op)
 		}
@@ -1321,10 +1520,62 @@ func (l *lowerer) evalWordTextStr(text string) evaluatedWord {
 }
 
 // bindVar writes one assignment into Σ. "=" stores a known value when the
-// right-hand side is known; "+=" concatenates onto a known previous value;
-// every other operator (or an unknown operand) degrades to set-but-unknown.
-// evalHashEntries evaluates a hashtable literal's entries against Σ; the
-// table is known only when every entry is.
+// right-hand side is known; "+=" adds onto a known previous value when both
+// operands are numeric and concatenates them otherwise; every other operator
+// (or an unknown operand) degrades to set-but-unknown.
+func (l *lowerer) bindVar(name string, v evaluatedWord, op string) {
+	if name == "" {
+		return
+	}
+	switch op {
+	case "=", "":
+		if v.Known {
+			l.state.Set(name, v.Text, v.Taint)
+		} else {
+			l.state.SetUnknown(name, v.Taint)
+		}
+	case "+=":
+		if prev := l.state.Get(name); prev != nil && prev.Set && prev.Known && v.Known {
+			l.state.Set(name, plusValue(prev.Value, v.Text), prev.Taint.Join(v.Taint))
+		} else {
+			t := engine.TaintBottom()
+			if prev != nil {
+				t = prev.Taint
+			}
+			l.state.SetUnknown(name, t.Join(v.Taint))
+		}
+	default:
+		t := v.Taint
+		if prev := l.state.Get(name); prev != nil {
+			t = t.Join(prev.Taint)
+		}
+		l.state.SetUnknown(name, t)
+	}
+}
+
+// plusValue evaluates PowerShell's `+` on two known values: the sum when both
+// are numeric (0 + 1 is 1, not "01"), a string concatenation otherwise.
+// PowerShell's operand-typed `+` is richer than this (a string left operand
+// concatenates even when the right one is numeric), so the numeric case is an
+// approximation — but it is the one that keeps `$i += 1` from producing a
+// fabricated numeric-looking target.
+func plusValue(a, b string) string {
+	av, aNum := numericLiteral(a)
+	bv, bNum := numericLiteral(b)
+	if !aNum || !bNum {
+		return a + b
+	}
+	if ai, aInt := intLiteral(a); aInt {
+		if bi, bInt := intLiteral(b); bInt {
+			return strconv.Itoa(ai + bi)
+		}
+	}
+	return strconv.FormatFloat(av+bv, 'g', -1, 64)
+}
+
+// evalHashEntries evaluates a hashtable literal's entries against Σ; the table
+// is known only when every entry is. It returns the entries, that knownness,
+// and the joined provenance of the entry values.
 func (l *lowerer) evalHashEntries(ht *Hashtable) ([]KV, bool, engine.Taint) {
 	taint := engine.TaintBottom()
 	allKnown := true
@@ -1341,80 +1592,85 @@ func (l *lowerer) evalHashEntries(ht *Hashtable) ([]KV, bool, engine.Taint) {
 	return kvs, allKnown, taint
 }
 
-// expandSplat replaces a splatted argument whose variable holds a fully-known
-// hashtable with the parameter bindings it denotes; an unknown splat keeps
-// its ⊤ trigger.
+// expandSplat replaces a splatted operand or parameter value whose variable
+// holds a fully-known hashtable with the parameter bindings it denotes; an
+// unknown splat keeps its ⊤ trigger. An expanded operand is removed from the
+// argument list: a splat denotes parameters, never an operand of its own, so
+// leaving the raw `@p` text behind would let it be evaluated as a literal
+// target (ADR-0014).
 func (l *lowerer) expandSplat(c *Command) {
+	var args []*Word
+	expanded := false
 	for _, a := range c.Args {
-		if a == nil || !a.Splat || a.VarName == "" {
+		if b, ok := l.splatBindings(c, a); ok {
+			c.Bindings = append(c.Bindings, b...)
+			expanded = true
 			continue
 		}
-		v := l.state.Get(a.VarName)
-		if v == nil || !v.Known || len(v.Hash) == 0 {
-			continue
-		}
-		var bindings []*Binding
-		fullyKnown := true
-		for _, kv := range v.Hash {
-			if !kv.Known {
-				fullyKnown = false
-				break
+		args = append(args, a)
+	}
+	if expanded {
+		c.Args = args
+	}
+
+	// A splat in a parameter-value position (-Path @p) is expanded the same
+	// way: the entries denote the parameters, so the splat binding is replaced
+	// by the bindings it stands for.
+	orig := c.Bindings
+	var binds []*Binding
+	for _, b := range orig {
+		if b != nil && b.Value != nil {
+			if kv, ok := l.splatBindings(c, b.Value); ok {
+				binds = append(binds, kv...)
+				continue
 			}
-			p := &Param{Pos: a.Pos, Name: "-" + kv.Key}
-			switch {
-			case isSwitchPrefix(kv.Key):
-				// A switch entry: `$true` binds it, `$false` omits it.
-				switch strings.ToLower(kv.Value) {
-				case "true", "1":
+		}
+		binds = append(binds, b)
+	}
+	c.Bindings = binds
+}
+
+// splatBindings expands one splatted word into the bindings its hashtable
+// denotes, and reports ok=false when the word is not a splat, its variable is
+// unknown, or any entry value is not statically known (the splat then keeps
+// its ⊤ trigger). A switch entry registers its parameter on the command, so
+// the escalations a switch carries (-Recurse → Critical) survive the splat.
+func (l *lowerer) splatBindings(c *Command, a *Word) ([]*Binding, bool) {
+	if a == nil || !a.Splat || a.VarName == "" {
+		return nil, false
+	}
+	v := l.state.Get(a.VarName)
+	if v == nil || !v.Known || len(v.Hash) == 0 {
+		return nil, false
+	}
+	var bindings []*Binding
+	for _, kv := range v.Hash {
+		if !kv.Known {
+			return nil, false
+		}
+		p := &Param{Pos: a.Pos, Name: "-" + kv.Key}
+		switch {
+		case isSwitchPrefix(kv.Key):
+			// A switch entry: `$true` binds it, `$false` omits it.
+			switch strings.ToLower(kv.Value) {
+			case "true", "1":
+				if c != nil {
 					c.Params = append(c.Params, p)
-				case "false", "0", "":
-					// omit
-				default:
-					bindings = append(bindings, &Binding{Param: p,
-						Value: &Word{Pos: a.Pos, Text: kv.Value, Literal: true}})
 				}
+			case "false", "0", "":
+				// omit
 			default:
 				bindings = append(bindings, &Binding{Param: p,
 					Value: &Word{Pos: a.Pos, Text: kv.Value, Literal: true}})
 			}
+		default:
+			bindings = append(bindings, &Binding{Param: p,
+				Value: &Word{Pos: a.Pos, Text: kv.Value, Literal: true}})
 		}
-		if !fullyKnown {
-			continue
-		}
-		c.Bindings = append(c.Bindings, bindings...)
-		a.Splat = false // expanded: no longer a ⊤ trigger
-		l.note("splatting $%s expanded (%d known entries)", a.VarName, len(v.Hash))
 	}
-}
-
-func (l *lowerer) bindVar(name string, v evaluatedWord, op string) {
-	if name == "" {
-		return
-	}
-	switch op {
-	case "=", "":
-		if v.Known {
-			l.state.Set(name, v.Text, v.Taint)
-		} else {
-			l.state.SetUnknown(name, v.Taint)
-		}
-	case "+=":
-		if prev := l.state.Get(name); prev != nil && prev.Set && prev.Known && v.Known {
-			l.state.Set(name, prev.Value+v.Text, prev.Taint.Join(v.Taint))
-		} else {
-			t := engine.TaintBottom()
-			if prev != nil {
-				t = prev.Taint
-			}
-			l.state.SetUnknown(name, t.Join(v.Taint))
-		}
-	default:
-		t := v.Taint
-		if prev := l.state.Get(name); prev != nil {
-			t = t.Join(prev.Taint)
-		}
-		l.state.SetUnknown(name, t)
-	}
+	a.Splat = false // expanded: no longer a ⊤ trigger
+	l.note("splatting $%s expanded (%d known entries)", a.VarName, len(v.Hash))
+	return bindings, true
 }
 
 // multiAssignParts splits a literal right-hand side on top-level commas and
@@ -1506,13 +1762,15 @@ func (l *lowerer) finish(r *Result) {
 
 // markEgressTaint pairs a secret read with an egress sink at the program level.
 //
-// The PowerShell frontend does not track dataflow, so provenance is never
-// propagated from a credential read into the request that could carry it, and
-// the exfiltration detector therefore never fires on a PowerShell input. As a
-// conservative remedy, when the analysed program reads credential material and
-// also reaches an egress sink, the sink is marked secret-bearing so DetectExfil
-// can pair them. It over-approximates (the read need not feed the request), but
-// it cannot miss an exfiltration the way the provenance-light path did.
+// The frontend tracks dataflow through Σ (ADR-0014): a value a credential read
+// produced carries the secret label into the request that carries it, and the
+// egress effect it feeds is tainted directly. That per-command provenance only
+// covers the flows the word evaluator follows, so this program-level pass
+// remains as a backstop: when the analysed program reads credential material
+// and also reaches an egress sink, the sink is marked secret-bearing so
+// DetectExfil can pair them. It over-approximates (the read need not feed the
+// request), but it cannot miss an exfiltration the way a provenance-only path
+// would.
 func (l *lowerer) markEgressTaint(effs []engine.Effect) {
 	secret := false
 	for _, e := range effs {

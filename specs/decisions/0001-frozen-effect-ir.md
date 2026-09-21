@@ -4,6 +4,14 @@
 
 Accepted
 
+> **Historical record.** This decision introduced the frozen IR tag as
+> `effect-ir/v1`, under the working name `cmdscope` (the facade at
+> `internal/cmdscope`, the binary at `cmd/cmdscope`). The live schema tag is now
+> `effect-ir/v2` — v2 added the additive, optional `netFlow` role on `Effect`
+> (see [`specs/domains/engine/effect-ir.md`](../domains/engine/effect-ir.md) and
+> `engine.SchemaVersion`) — and the facade is `internal/analysis` at
+> `cmd/flowsh` (see [ADR-0009](0009-rename-identity-to-flowsh.md)).
+
 ## Context
 
 The analyzer is consumed from several directions at once: two frontends
@@ -35,12 +43,16 @@ defined only for two effects that share both kind and mode (unioning targets and
 taint, joining certainty; reversible only if both are).
 
 The serialised schema is tagged by a single constant — `SchemaVersion =
-"effect-ir/v1"` in `engine/report.go` — which "consumers and
+"effect-ir/v2"` in `engine/report.go` — which "consumers and
 golden fixtures pin to". `Report.Validate`/`Encode` refuse to emit a malformed
 report, and `Report.Normalize` canonicalises so that two reports built from the
-same effects encode to byte-identical JSON. `kb.SchemaVersion` and
-`cmdscope.SchemaVersion` are derived from `engine.SchemaVersion`, so one bump
-propagates to every layer.
+same effects encode to byte-identical JSON. `analysis.SchemaVersion` (the
+report envelope's `schemaVersion`, `internal/analysis/analyze.go`) is derived
+from `engine.SchemaVersion`, so one bump propagates to the envelope.
+`kb.SchemaVersion` is **not** derived from it: `kb/schema.go` defines the
+independent knowledge-base *document* schema `effect-kb/v2`, which versions the
+`kb/data/*.yaml` documents (their `version:` field) rather than the effect IR,
+and the two axes evolve separately.
 
 ## Consequences
 

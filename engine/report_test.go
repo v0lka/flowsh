@@ -395,6 +395,64 @@ func TestNormalizeRemapsWhy(t *testing.T) {
 	}
 }
 
+// TestNormalizeKeepsFlowSplit is the regression test for the merge key carrying
+// the network-flow role (code review #12): a write tagged as carrying downloaded
+// content (FlowIngest) and an unrelated untagged write of the same kind and mode
+// must stay separate effects, so the tagged role cannot bleed onto the unrelated
+// write's targets and claim them as download sinks. Effects that agree on the
+// whole key still merge, and the why-traces follow them.
+func TestNormalizeKeepsFlowSplit(t *testing.T) {
+	body := Effect{Kind: KindFSWrite, Target: ScopeOf("file.tar.gz"), Mode: ModeDirect, Certainty: CertaintyCertain, NetFlow: FlowIngest}
+	log := Effect{Kind: KindFSWrite, Target: ScopeOf("log.txt"), Mode: ModeDirect, Certainty: CertaintyCertain}
+	why := BuildWhy([]Derivation{
+		{Effect: body, Atoms: []Atom{{Kind: AtomOperand, Text: "file.tar.gz"}}},
+		{Effect: log, Atoms: []Atom{{Kind: AtomOperand, Text: "log.txt"}}},
+	})
+	rep := &Report{SchemaVersion: SchemaVersion, Effects: []Effect{body, log}, Why: why}
+	rep.Normalize()
+	if len(rep.Effects) != 2 {
+		t.Fatalf("effects merged across flow roles: %+v", rep.Effects)
+	}
+	var sinks []Effect
+	for _, e := range rep.Effects {
+		if IsIngestSink(e) {
+			sinks = append(sinks, e)
+		}
+	}
+	if len(sinks) != 1 {
+		t.Fatalf("ingest sinks after normalize = %d, want 1 (%+v)", len(sinks), rep.Effects)
+	}
+	if !sinks[0].Target.Equal(ScopeOf("file.tar.gz")) {
+		t.Errorf("ingest sink target = %v, want [file.tar.gz]", sinks[0].Target.Targets())
+	}
+	// The untagged write matches no target of an ingest sink.
+	for _, e := range rep.Effects {
+		if IsIngestSink(e) {
+			continue
+		}
+		if e.NetFlow != FlowNone {
+			t.Errorf("untagged write carries netFlow %q", string(e.NetFlow))
+		}
+	}
+	if gaps := WhyGaps(rep.Effects, rep.Why); len(gaps) != 0 {
+		t.Errorf("after normalize, unexplained effects: %v (why=%v)", gaps, rep.Why)
+	}
+
+	// A tagged and an untagged effect that share kind, mode *and* role merge as
+	// before, and the merge stays idempotent.
+	other := Effect{Kind: KindFSWrite, Target: ScopeOf("other.bin"), Mode: ModeDirect, Certainty: CertaintyCertain, NetFlow: FlowIngest}
+	rep2 := &Report{SchemaVersion: SchemaVersion, Effects: []Effect{body, other, log}}
+	rep2.Normalize()
+	if len(rep2.Effects) != 2 {
+		t.Fatalf("effects did not merge by whole key: %+v", rep2.Effects)
+	}
+	merged := rep2.Effects
+	rep2.Normalize()
+	if !reflect.DeepEqual(merged, rep2.Effects) {
+		t.Errorf("Normalize is not idempotent on a flow-split report:\n before=%+v\n after=%+v", merged, rep2.Effects)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Dependency-direction test
 // ---------------------------------------------------------------------------

@@ -125,6 +125,11 @@ name resolution, any matched destructive-flags entries, one line per effect
 (keyed `kind|mode|[targets]`), any proven exfiltration pairs, and any frontend
 `note:` diagnostics. Each field maps onto a key of the [JSON report](report-json.md).
 
+The summary is a fixed subset of the report: the two network-flow signals
+`score.cradleFlows` and `score.ingestFlows` are **JSON-only** and are *not*
+rendered in the human summary, so read them from `--json` output (or from the
+per-line NDJSON of `--batch`).
+
 ### Why-trace
 
 ```sh

@@ -154,7 +154,7 @@
       "group": "ps",
       "lang": "posh",
       "input": "epsn",
-      "note": "B12 alias epsn → Enter-PSSession: interactive remote session"
+      "note": "B12 alias epsn → Export-PSSession: writes a session export file (etsn, not epsn, is Enter-PSSession)"
     },
     {
       "id": "ps-comma-args",
@@ -209,8 +209,8 @@
       "id": "ps-var-interp",
       "group": "ps",
       "lang": "posh",
-      "input": "$dir = '/etc'\nGet-Content $dir/passwd",
-      "note": "variable interpolation resolves a concrete read target"
+      "input": "$dir = '/etc'\nGet-Content \"$dir/passwd\"",
+      "note": "variable interpolation resolves a concrete read target (quoted so the interpolation is parseable)"
     },
     {
       "id": "ps-var-exfil",

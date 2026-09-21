@@ -94,9 +94,10 @@ const (
 	FlowNone FlowRole = ""
 	// FlowCradle marks a CodeExec reached by network content: the download
 	// cradle. It covers a pipe to a shell/interpreter (curl … | sh), a
-	// source/`.` of a fetched path (source <(curl …)), a code-execution sink
-	// invoked on a command substitution (sh -c "$(curl …)") and the exec of a
-	// path a download wrote (chmod +x f && ./f).
+	// source/`.` of a fetched path (source <(curl …)) and a code-execution sink
+	// invoked on a command substitution (sh -c "$(curl …)"). The exec of a path
+	// a download wrote (chmod +x f && ./f) is not currently asserted: no
+	// frontend establishes that flow.
 	FlowCradle FlowRole = "cradle"
 	// FlowIngest marks an FSWrite of downloaded content: a download client
 	// writing the fetched body to a file (curl -o/-O, wget default/-O).
@@ -177,11 +178,18 @@ func (e Effect) Join(o Effect) (Effect, bool) {
 	}, true
 }
 
-// joinFlow unions two flow roles: an effect that is a network sink stays one
-// after a merge, so a tagged and an untagged effect of the same kind and mode
-// merge to the tagged form. Two distinct non-empty roles cannot collide here:
-// each role fixes its effect kind (cradle → CodeExec, ingest → FSWrite), so
-// effects that carry different roles never share a kind and never join.
+// joinFlow unions two flow roles: a tagged role survives a join with FlowNone,
+// so an explicit Effect.Join of a tagged and an untagged effect of the same kind
+// and mode keeps the flow evidence — dropping it would lose a flow the analysis
+// did establish. Two distinct non-empty roles cannot collide here: each role
+// fixes its effect kind (cradle → CodeExec, ingest → FSWrite), so effects that
+// carry different roles never share a kind and never join.
+//
+// Report.Normalize never joins a tagged with an untagged effect: it keys the
+// merge on (kind, mode, netFlow) precisely so the flow evidence of one effect
+// cannot bleed onto the targets of another (see normalizeKey). This function is
+// therefore reached only by a caller that joins such a pair itself, and it
+// prefers an over-approximated sink target set over dropping the flow.
 func joinFlow(a, b FlowRole) FlowRole {
 	if a != FlowNone {
 		return a

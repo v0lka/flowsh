@@ -346,13 +346,17 @@ type Score struct {
 	ExfilPairs []Exfil `json:"exfilPairs,omitempty"`
 	// CradleFlows lists the network-to-code-execution flows, if any: content
 	// fetched over the network reaches a code-execution sink (the download
-	// cradle — curl … | sh, source <(curl …), sh -c "$(curl …)", the exec of a
-	// downloaded path). A consumer keys on this rather than on the
-	// co-occurrence of a NetEgress and a CodeExec.
+	// cradle — curl … | sh, source <(curl …), sh -c "$(curl …)"). A consumer
+	// keys on this rather than on the
+	// co-occurrence of a NetEgress and a CodeExec. A pair's source is one of the
+	// program's egresses, not necessarily the one that fed the sink; see
+	// DetectCradleFlows for the over-approximation this implies.
 	CradleFlows []CradleFlow `json:"cradleFlows,omitempty"`
 	// IngestFlows lists the network-to-filesystem flows, if any: a download
 	// client writes the content it fetched to a file (curl -o/-O, wget
-	// default/-O). VCS sync (git clone/fetch/pull) is not an ingest.
+	// default/-O). VCS sync (git clone/fetch/pull) is not an ingest. As with
+	// CradleFlows, a pair's source is one of the program's egresses; see
+	// DetectIngestFlows.
 	IngestFlows []IngestFlow `json:"ingestFlows,omitempty"`
 }
 

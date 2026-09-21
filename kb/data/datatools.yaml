@@ -16,6 +16,21 @@ version: effect-kb/v2
 # (rg --pre, fd -x, redis-cli --eval, sqlite3 -cmd) is CodeExec/ProcSpawn; a
 # database client that connects to a server is NetEgress; and rendered output
 # is Stdio.
+#
+# Output-format and selector parameters are Stdio, not FSRead: `yq -o json`
+# selects how the tool renders its result and names no file, so declaring it
+# FSRead fabricated a file read of its value.  A parameter that does name a
+# path (`jq -f`, `rg -f`, `psql -f`) stays FSRead, and a destination slot
+# (`psql -h/--host`, `redis-cli -h/-u`) is NetEgress — but a *port* is not an
+# address: `psql -p/--port` is advisory, with `-h/--host` carrying the
+# destination.
+#
+# The database client's database name / operation word (`psql DBNAME`,
+# `redis-cli COMMAND`) is `valueFrom: env`, not `valueFrom: args`: the endpoint
+# is the host from `-h/--host` or the client's environment (PGHOST, the default
+# local socket), never the database name or the command word.  Reading the
+# operand as the target produced a phantom egress to a token like `ping`; the
+# effect is kept with the unresolved (⊤) target instead.
 # ---------------------------------------------------------------------------
 commands:
   - name: jq
@@ -147,10 +162,10 @@ commands:
         effect: {kind: Stdio, mode: Direct, valueFrom: args}
       - spec: "-o"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--output-format"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "-p"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
@@ -218,7 +233,7 @@ commands:
     params:
       - spec: DBNAME
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: "-h"
         kind: option
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
@@ -227,10 +242,10 @@ commands:
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
       - spec: "-p"
         kind: option
-        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--port"
         kind: option
-        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "-d"
         kind: option
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
@@ -261,6 +276,10 @@ commands:
       - spec: "--output"
         kind: option
         effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      # -w/--no-password means "never prompt for a password": the flag reads no
+      # credential material, so it is advisory (Stdio). -W/--password stays
+      # CredAccess: it *forces* a password prompt, so credential material does
+      # enter the process.
       - spec: "-W"
         kind: flag
         effect: {kind: CredAccess, mode: Direct, valueFrom: args}
@@ -269,10 +288,10 @@ commands:
         effect: {kind: CredAccess, mode: Direct, valueFrom: args}
       - spec: "-w"
         kind: flag
-        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
       - spec: "--no-password"
         kind: flag
-        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
       - spec: "-l"
         kind: flag
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
@@ -303,7 +322,7 @@ commands:
     params:
       - spec: COMMAND
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: "-h"
         kind: option
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
@@ -322,12 +341,14 @@ commands:
       - spec: "--pass"
         kind: option
         effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      # -n selects the Redis database index and -r a repeat count: neither
+      # names a file nor spawns a process, so both are advisory (Stdio).
       - spec: "-n"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "-r"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--eval"
         kind: option
         effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}

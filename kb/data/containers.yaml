@@ -21,6 +21,31 @@ version: effect-kb/v2
 # `ansible-playbook` take a host pattern / playbook as their operand (so they
 # use a single generic positional), while `ansible-vault`, `ansible-galaxy`,
 # `ansible-inventory`, `ansible-doc` and `ansible-config` are subcommand-first.
+#
+# A workload/service selector carries `valueFrom: env`, not `valueFrom: args`.
+# `kubectl get pods`, `helm list`, `terraform init` name the operation and its
+# object — a verb, a resource kind, a release or a module — and the exchange
+# goes to the cluster, registry or module source the client is configured for
+# (KUBECONFIG, DOCKER_HOST, the terraform backend, the Galaxy server), not to
+# an address written on the command line.  Reading the operand group as the
+# target made the lenient grammar accept the operation word itself as a
+# destination (`kubectl get pods` → `NetEgress {"pods"}` — the phantom-egress
+# class the host-shape gate exists to prevent).  The effect is kept, with the
+# unresolved (⊤) target the configured endpoint deserves; an address written on
+# the command line (`kubectl -s/--server URL`) still lowers to its concrete
+# host.  `ansible`'s PATTERN is deliberately left on `args`: it names the host
+# pattern the play runs on and is modelled CodeExec, so it is not an egress
+# selector and this change does not touch it.
+#
+# Parameters that select *which* object or *how* the result is rendered
+# (`kubectl -n/--namespace, -o/--output, -l/--selector, --context, --cluster`,
+# `helm -n/--namespace, -o/--output, --version`, `terraform -target`,
+# `docker --platform`, `docker-compose -p/--project-name, --profile`,
+# `ansible`/`ansible-playbook -l/--limit, -t/--tags, --skip-tags`,
+# `ansible-doc -t/--type`) are Stdio, not FSRead: they name no file, so an
+# FSRead of their value was a fabricated file read.  Parameters that do name a
+# path (`-f/--filename`, `--values`, `--kubeconfig`, `--inventory`, `-chdir`)
+# stay FSRead.
 # ---------------------------------------------------------------------------
 commands:
   - name: docker
@@ -223,7 +248,7 @@ commands:
         effect: {kind: PrivEsc, mode: Conditional, valueFrom: flagValue}
       - spec: "--platform"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--privileged"
         kind: flag
         effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
@@ -262,10 +287,10 @@ commands:
         effect: {kind: CodeExec, mode: Direct, valueFrom: args}
       - spec: pull
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: push
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: logs
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -331,16 +356,16 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "-p"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--project-name"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--env-file"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "--profile"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "-d"
         kind: flag
         effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
@@ -362,85 +387,85 @@ commands:
     params:
       - spec: get
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: describe
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: logs
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: apply
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: create
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: delete
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: edit
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: patch
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: replace
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: scale
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: rollout
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: set
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: annotate
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: label
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: taint
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: cordon
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: uncordon
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: drain
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: expose
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: run
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: top
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: wait
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: diff
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: api-resources
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: api-versions
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: cluster-info
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: explain
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: auth
         kind: positional
         effect: {kind: CredAccess, mode: Direct, valueFrom: args}
@@ -473,10 +498,10 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: "-n"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--namespace"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "-f"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
@@ -485,22 +510,22 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "-o"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--output"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "-l"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--selector"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--kubeconfig"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "--context"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--dry-run"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
@@ -515,7 +540,7 @@ commands:
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
       - spec: "--cluster"
         kind: option
-        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--token"
         kind: option
         effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
@@ -534,52 +559,52 @@ commands:
     params:
       - spec: install
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: upgrade
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: uninstall
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: delete
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: rollback
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: list
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: ls
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: get
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: status
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: history
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: repo
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: search
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: pull
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: push
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: dependency
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: test
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: template
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -612,10 +637,10 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: "-n"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--namespace"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "-f"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
@@ -636,13 +661,13 @@ commands:
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
       - spec: "-o"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--output"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--version"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--dry-run"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -664,25 +689,25 @@ commands:
     params:
       - spec: init
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: apply
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: destroy
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: import
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: providers
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: get
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: refresh
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: plan
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -751,7 +776,7 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "-target"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "-parallelism"
         kind: option
         effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
@@ -794,10 +819,10 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "-l"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--limit"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "-u"
         kind: option
         effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
@@ -867,19 +892,19 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "-t"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--tags"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--skip-tags"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "-l"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--limit"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "-e"
         kind: option
         effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
@@ -983,22 +1008,22 @@ commands:
     params:
       - spec: role
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: collection
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: install
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: search
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: import
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: delete
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: remove
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -1087,10 +1112,10 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: "-t"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--type"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "-l"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}

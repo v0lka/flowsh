@@ -157,6 +157,60 @@ func TestDetectFlowsDeterministic(t *testing.T) {
 	}
 }
 
+// TestDetectFlowsMultiEgress pins the deliberate over-approximation documented
+// on DetectCradleFlows/DetectIngestFlows (code review #27): the IR flags the sink
+// that network content reached but does not record which egress fed it, so a
+// flagged sink is paired with every NetEgress of the program. The pair for the
+// egress that actually fed the sink is always among them (no established flow is
+// lost), and the extra pairs are candidate sources rather than confirmed paths.
+func TestDetectFlowsMultiEgress(t *testing.T) {
+	a := netEffect("https://a.example/x")
+	b := netEffect("https://b.example/x")
+
+	// Two unrelated egresses, one cradle sink: both egresses are reported as
+	// candidate sources, so a consumer cannot mistake the list for a single
+	// confirmed path.
+	cradle := DetectCradleFlows([]Effect{a, b, cradleSink()})
+	if len(cradle) != 2 {
+		t.Fatalf("cradle flows for two egresses and one sink = %d, want 2", len(cradle))
+	}
+	got := map[string]bool{}
+	for _, f := range cradle {
+		if !IsCradleSink(f.Sink) {
+			t.Errorf("cradle flow sink is not a cradle sink: %+v", f.Sink)
+		}
+		got[f.Source.Key()] = true
+	}
+	if !got[a.Key()] || !got[b.Key()] {
+		t.Errorf("cradle flows did not cover both egresses: %v", got)
+	}
+
+	// Every flagged sink is paired, and no unflagged one is.
+	ingest := DetectIngestFlows([]Effect{a, b, ingestSink("f"), cradleSink()})
+	if len(ingest) != 2 {
+		t.Fatalf("ingest flows for two egresses and one ingest sink = %d, want 2", len(ingest))
+	}
+	for _, f := range ingest {
+		if f.Sink.Kind != KindFSWrite {
+			t.Errorf("ingest flow sink kind = %q, want %q", string(f.Sink.Kind), string(KindFSWrite))
+		}
+	}
+}
+
+// TestDetectFlowsMultiEgressUniqueSource pins the complement: with a single
+// egress the pairing is exact — one pair per flagged sink, and none for an
+// untagged effect of the same kind.
+func TestDetectFlowsMultiEgressUniqueSource(t *testing.T) {
+	ne := netEffect("https://a.example/x")
+	untagged := Effect{Kind: KindCodeExec, Target: ScopeOf("x"), Mode: ModeDirect, Certainty: CertaintyCertain}
+	if got := len(DetectCradleFlows([]Effect{ne, cradleSink(), untagged})); got != 1 {
+		t.Errorf("cradle flows = %d, want 1 (only the flagged sink)", got)
+	}
+	if got := len(DetectCradleFlows([]Effect{ne, untagged})); got != 0 {
+		t.Errorf("cradle flows for an untagged sink = %d, want 0", got)
+	}
+}
+
 // TestScoreCarriesFlows pins that the composite score surfaces the flows (the
 // report's score.cradleFlows / score.ingestFlows).
 func TestScoreCarriesFlows(t *testing.T) {

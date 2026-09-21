@@ -26,8 +26,62 @@ var sinkSet = map[string]bool{
 	"osascript": true, "docker": true, "podman": true,
 }
 
-// isSink reports whether name is a code-execution sink.
-func isSink(name string) bool { return sinkSet[name] }
+// isSink reports whether name is a code-execution sink. The name is matched by
+// its basename, because a shell resolves a program through PATH and executes the
+// file: `/bin/sh` and `/usr/bin/python3` are the same sinks as `sh` and
+// `python3`.
+func isSink(name string) bool { return sinkSet[commandBase(name)] }
+
+// commandBase returns the name an invocation actually runs: the basename of a
+// path-qualified name ("/bin/sh" → "sh"), and the name itself when it carries no
+// path separator. A path with no final component ("/", "/x/..") is returned
+// unchanged rather than reduced to "." or "..".
+func commandBase(name string) string {
+	if !strings.ContainsRune(name, '/') {
+		return name
+	}
+	if b := path.Base(name); b != "." && b != "/" && b != ".." {
+		return b
+	}
+	return name
+}
+
+// sinkName returns the code-execution sink an invocation runs — its effective
+// program name — or "" when it runs none. It resolves the two spellings that do
+// not name the sink directly:
+//
+//   - a path-qualified interpreter (`/bin/sh`), matched by basename; and
+//   - `env <interpreter>` (`/usr/bin/env bash`), where env execs its first
+//     operand. The bare `env` spelling is already peeled by the wrapper
+//     machinery; this covers a path-qualified `env`, which the wrapper table
+//     does not list.
+func sinkName(name string, argv []string) string {
+	base := commandBase(name)
+	if base == "env" {
+		return envSink(argv)
+	}
+	if sinkSet[base] {
+		return base
+	}
+	return ""
+}
+
+// envSink returns the code-execution sink an `env` invocation runs, or "" when
+// it runs none. env skips its own options and its NAME=value operands, then
+// execs the first remaining operand, so `env -i bash` and `env FOO=1 bash` both
+// run bash and `env dirname` runs no sink.
+func envSink(argv []string) string {
+	for _, a := range argv {
+		if a == "--" || strings.HasPrefix(a, "-") || strings.ContainsRune(a, '=') {
+			continue
+		}
+		if isSink(a) {
+			return commandBase(a)
+		}
+		return ""
+	}
+	return ""
+}
 
 // codeExecBuiltins execute shell source supplied as an argument or read from a
 // file, so — like a sink — their effects cannot be bounded statically. `trap`

@@ -15,72 +15,96 @@ version: effect-kb/v2
 # Modelling.  These clients are remote-first, so a subcommand that talks to
 # the code host is NetEgress.  Subcommands that only render local output are
 # FSRead; those that carry an identity or a secret (auth, ssh-key, secret) are
-# CredAccess; local configuration and extension management is FSWrite/FSMeta;
-# and a subcommand that runs another program (gh run, jj git) is
-# ProcSpawn/CodeExec.  Subcommands are modelled as positional operands: the
-# binder matches the leading operand by value and consumes the rest of the
-# operands as that subcommand's operand group.
+# CredAccess; and local configuration and extension management is FSWrite/FSMeta.
+#
+# No subcommand here is ProcSpawn/CodeExec.  An earlier revision of this comment
+# claimed `gh run` and `jj git` were, which contradicted the data: `gh run`
+# drives the workflow-run API of the code host (`gh run --help` lists cancel,
+# delete, download, list, rerun, view and watch — none of them runs a local
+# program), and `jj git` drives the git backend, whose remote half
+# (clone/fetch/push) is a network operation.  Subcommands are modelled as
+# positional operands: the binder matches the leading operand by value and
+# consumes the rest of the operands as that subcommand's operand group.
+#
+# Remote-operation selectors carry `valueFrom: env`, not `valueFrom: args`.
+# Their operand group is the subcommand's arguments — a verb (`list`), a number
+# (`pr view 5`) or an API path (`api /user`) — and the exchange goes to the code
+# host the client is configured for (GH_HOST, gh's own configuration), never to
+# an address written on the command line.  Taking the operands as the egress
+# target either fabricated a destination from a subcommand word or, under the
+# strict grammar, dropped the egress altogether.  `valueFrom: env` states the
+# truth both ways: the command does reach the network, and the destination is
+# not statically known, so the effect keeps the unresolved (⊤) target while an
+# explicit destination an operand *does* name (`-R HOST/OWNER/REPO`,
+# `--hostname`, `jj clone URL`) still lowers to its concrete host.
+#
+# Output-shaping parameters (`--json`, `--jq`, `-q`, `-t`/`--template`,
+# `-F`/`--output`, `jj -r`/`-T`/`--at-op`) are Stdio, not FSRead: they select
+# how the result is rendered and name no file, so declaring them FSRead
+# fabricated a file read of their value.  Parameters that do name a path
+# (`jj -R PATH`) stay FSRead.
 # ---------------------------------------------------------------------------
 commands:
   - name: gh
     dialect: vcs
     params:
-      # Remote subcommands (NetEgress; the strict vcs egress gate keeps a
-      # non-address operand from becoming a fabricated destination).
+      # Remote subcommands: the destination is the configured code host
+      # (valueFrom: env), so the target is unresolved (⊤) rather than the
+      # subcommand word the operand group happens to hold.
       - spec: api
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: pr
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: issue
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: run
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: repo
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: release
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: gist
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: search
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: browse
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: status
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: codespace
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: label
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: project
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: variable
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: workflow
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: org
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: ruleset
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: attestation
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       # Credential-bearing subcommands.
       - spec: auth
         kind: positional
@@ -131,77 +155,77 @@ commands:
         effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
       - spec: "--json"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "-q"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--jq"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "-t"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--template"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
 
   - name: glab
     dialect: vcs
     params:
       - spec: mr
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: issue
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: ci
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: pipeline
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: job
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: runner
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: release
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: repo
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: api
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: cluster
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: snippet
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: user
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: variable
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: label
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: milestone
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: incident
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: todo
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: schedule
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: auth
         kind: positional
         effect: {kind: CredAccess, mode: Direct, valueFrom: args}
@@ -237,10 +261,10 @@ commands:
         effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
       - spec: "-F"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--output"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--gl-host"
         kind: option
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
@@ -254,16 +278,16 @@ commands:
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
       - spec: fetch
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: push
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: pull
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: git
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       # Working-copy and history rewrites.
       - spec: commit
         kind: positional
@@ -372,19 +396,19 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "-r"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--revisions"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "-T"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--template"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--at-op"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--ignore-working-copy"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}

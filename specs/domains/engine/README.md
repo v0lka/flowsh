@@ -14,7 +14,7 @@ The `engine` package is the frontend-agnostic core of the effect-analysis IR. It
 - `engine/why.go` — why-trace construction: `AtomKind`, `Atom`, `Derivation`, `BuildWhy`, `WhyStepsFor`, `WhyGaps`.
 - `engine/report_test.go` — golden JSON, round-trip, lattice-law and import-direction tests.
 - `engine/score_test.go` — fixtures and unit tests for every scoring dimension.
-- `engine/bench_test.go` — external test package (`engine_test`): per-command latency and recall gates.
+- `engine/bench_test.go` — external test package (`engine_test`): per-command latency and recall gates. The latency reference is committed per host (`engine/testdata/latency_baseline.json`), so a slower CI runner is compared against its own numbers rather than the developer reference ([ADR-0015](../../decisions/0015-per-host-latency-reference.md)).
 - `engine/testdata/report.golden.json`, `engine/testdata/effect.golden.json` — frozen canonical JSON the schema is pinned to.
 
 ## Core Types
@@ -29,8 +29,11 @@ type Effect struct {
 	Certainty  Certainty  `json:"certainty"`
 	Taint      Taint      `json:"taint"`
 	Reversible bool       `json:"reversible"`
+	NetFlow    FlowRole   `json:"netFlow,omitempty"`
 }
 ```
+
+`NetFlow` is the additive `effect-ir/v2` field (`FlowNone`/`""`, `FlowCradle`/`cradle` on a `CodeExec`, `FlowIngest`/`ingest` on an `FSWrite`); it marks the effect as the sink of a network data flow and is omitted when the effect is not one.
 
 The closed kind set and the mode set:
 
@@ -87,7 +90,7 @@ source text ──front/bash, front/ps──▶ normalized call ──bind (kb +
                                                                                     │
                                           ┌─────────────────────────────────────────┘
                                           ▼
-        Report{Effects} ──Normalize──▶ merge same (Kind,Mode) via Effect.Join
+        Report{Effects} ──Normalize──▶ merge same (Kind,Mode,NetFlow) via Effect.Join
                         ──Normalize──▶ ComputeDestructiveness(Effects)   (max over effects)
                         ──Normalize──▶ Sort(Effects by Key, Why by fingerprint, Notes)
                         ──Encode────▶ canonical indented JSON  (Validate first)
@@ -104,7 +107,7 @@ Two reports built from the same set of effects normalise to byte-identical JSON.
 - `SchemaVersion` is the constant string `"effect-ir/v2"`; consumers and golden fixtures pin to this value.
 - The `engine` package depends on the standard library only (plus other core packages of the same module); `TestCoreDoesNotImportFrontends` fails if the package gains any other import.
 - `Effect.Join` succeeds if and only if both operands share a `Kind` and a `Mode`; it unions targets and taint, joins certainty, and is reversible only if both operands are.
-- `Report.Normalize` merges every set of effects that share a kind and a mode, recomputes `Destructiveness`, and sorts every slice into canonical order.
+- `Report.Normalize` merges every set of effects that share a kind, a mode and a network-flow role, recomputes `Destructiveness`, and sorts every slice into canonical order. (The flow role is part of the merge key so an effect tagged as a network sink never bleeds its role onto an untagged effect of the same kind and mode.)
 - `Effect.Key` is a stable identity, a function of `Kind`, `Mode` and the canonical form of `Target`.
 - Every non-empty effect has a why-trace citing a concrete node or flag; `WhyGaps` returns the empty set for a fully explained report.
 - `Scope` and `Taint` are canonical: elements are kept sorted and unique, and each has a single JSON encoding.

@@ -483,7 +483,7 @@ Every report carries a small envelope (`schemaVersion`, `tool`, `toolVersion`,
 
 | Field | Meaning |
 | --- | --- |
-| `effects` | The set of implied effects, merged by kind and mode. Always an array (never `null`). |
+| `effects` | The set of implied effects, merged by kind, mode and network-flow role. Always an array (never `null`). |
 | `destructiveness` | `None` \| `Low` \| `Medium` \| `High` \| `Critical`. |
 | `score` | Composite risk: `destructiveness`, `irreversibility`, `breadth`, `influence`, `exfil`, `confidence` (0–100), `reversible`, `grade`, `exfilPairs`, and the network-flow fields `cradleFlows` (network → code execution) and `ingestFlows` (network → file write). |
 | `conservative` | The analysis could not bound the input but did not fully degrade to ⊤. |

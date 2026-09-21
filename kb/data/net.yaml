@@ -234,10 +234,26 @@ commands:
   - name: wget
     dialect: wget
     params:
+      # -O/--output-document names the file the fetched body is written to
+      # ("-" means standard output, handled by the binder as Stdio);
+      # -o names the log file, and -P/--directory-prefix the directory the
+      # download is written into.
       - spec: "-O"
         kind: option
         effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--output-document"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
       - spec: "-o"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--output-file"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-P"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--directory-prefix"
         kind: option
         effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
       - spec: "-c"
@@ -249,9 +265,6 @@ commands:
       - spec: "-m"
         kind: flag
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
-      - spec: "-P"
-        kind: option
-        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
       - spec: "--post-data"
         kind: option
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}

@@ -27,10 +27,10 @@ The core has no initialization. A frontend is constructed per analysis: `bash.Ex
 frontend internals (syntax tree, Σ, cmdlet tables)
         |  lower each construct
         v
-[]engine.Effect   (Kind, Target=Scope, Mode, Certainty, Taint, Reversible)
+[]engine.Effect   (Kind, Target=Scope, Mode, Certainty, Taint, Reversible, NetFlow)
         |
         v
-engine.Report.Normalize  (merge equal kind|mode by Join, sort)
+engine.Report.Normalize  (merge equal kind|mode|netFlow by Join, sort)
         |
         v
 engine.ComputeDestructiveness / engine.ScoreEffects

@@ -17,6 +17,23 @@ version: effect-kb/v2
 # is FSWrite; and informational subcommands are FSRead/Stdio.  The first
 # operand is always the service or group, so subcommands are modelled as
 # positional operands.
+#
+# A service/group selector carries `valueFrom: env`, not `valueFrom: args`.
+# The service name and the operation after it (`aws s3 ls`, `az group list`,
+# `gcloud compute instances list`) are the request the client *sends*, not the
+# address it sends it to: the endpoint comes from the client's configuration
+# (AWS_REGION / --region, GOOGLE_CLOUD_PROJECT, az's cloud and subscription).
+# Reading the operand group as the target made the lenient grammar accept the
+# operation word itself as a destination (`NetEgress {"ls"}`, `{"list"}`) — the
+# phantom-egress class the host-shape gate exists to prevent.  The effect is
+# kept, with the unresolved (⊤) target the configured endpoint deserves; an
+# address written on the command line (`aws --endpoint-url URL`) still lowers
+# to its concrete host.
+#
+# Parameters that select *which* resource or *how* the result is rendered
+# (`--region`, `--project`, `--configuration`, `--subscription`, `--output`,
+# `--query`, `--format`, `--filter`) are Stdio, not FSRead: they name no file,
+# so an FSRead of their value was a fabricated file read.
 # ---------------------------------------------------------------------------
 commands:
   - name: aws
@@ -24,94 +41,94 @@ commands:
     params:
       - spec: s3
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: s3api
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: ec2
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: iam
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: lambda
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: sts
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: route53
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: cloudformation
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: dynamodb
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: ecs
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: eks
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: ecr
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: rds
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: sqs
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: sns
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: logs
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: cloudwatch
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: secretsmanager
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: ssm
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: organizations
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: kms
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: glue
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: athena
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: autoscaling
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: elb
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: elbv2
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: apigateway
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: events
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: ce
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: config
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: configure
         kind: positional
         effect: {kind: CredAccess, mode: Direct, valueFrom: args}
@@ -126,13 +143,13 @@ commands:
         effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
       - spec: "--region"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--output"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--query"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--endpoint-url"
         kind: option
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
@@ -154,106 +171,106 @@ commands:
     params:
       - spec: compute
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: container
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: storage
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: sql
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: iam
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: projects
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: app
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: functions
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: run
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: builds
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: kms
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: logging
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: monitoring
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: dns
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: pubsub
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: secrets
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: services
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: deployment-manager
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: spanner
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: bigquery
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: datastore
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: filestore
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: firestore
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: organizations
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: resource-manager
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: scheduler
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: tasks
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: endpoints
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: artifacts
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: asset
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: ai
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: ml
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: beta
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: alpha
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: auth
         kind: positional
         effect: {kind: CredAccess, mode: Direct, valueFrom: args}
@@ -277,22 +294,22 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: "--project"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--account"
         kind: option
         effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
       - spec: "--configuration"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--impersonate-service-account"
         kind: option
         effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
       - spec: "--format"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--filter"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--verbosity"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
@@ -305,115 +322,115 @@ commands:
     params:
       - spec: group
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: vm
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: vmss
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: storage
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: network
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: webapp
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: functionapp
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: staticwebapp
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: acr
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: aks
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: appconfig
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: keyvault
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: monitor
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: role
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: deployment
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: resource
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: ad
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: devops
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: pipelines
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: boards
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: repos
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: artifacts
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: disk
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: snapshot
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: image
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: cosmosdb
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: redis
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: mysql
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: postgres
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: sql
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: cdn
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: dns
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: provider
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: feature
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: tag
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: lock
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: rest
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: login
         kind: positional
         effect: {kind: CredAccess, mode: Direct, valueFrom: args}
@@ -431,10 +448,10 @@ commands:
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: upgrade
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
       - spec: "--subscription"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--tenant"
         kind: option
         effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
@@ -443,13 +460,13 @@ commands:
         effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
       - spec: "-o"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--output"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--query"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--debug"
         kind: flag
         effect: {kind: Stdio, mode: Direct, valueFrom: args}

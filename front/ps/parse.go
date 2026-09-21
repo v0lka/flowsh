@@ -174,6 +174,12 @@ type Assign struct {
 	// Targets lists every variable the assignment writes ($a,$b = 1,2 has
 	// two); the first entry mirrors TargetWord.
 	Targets []*Word `json:"targets,omitempty"`
+	// Invalidate lists the base variables of member/index assignment targets
+	// ($o.Prop = v, $f[0] = v): a write through a member does not give the
+	// base variable the member's value, so the base is invalidated instead of
+	// bound — a later read then degrades to ⊤ rather than to a fabricated
+	// literal. A subscript variable ($i in $a[$i]) is never a target.
+	Invalidate []*Word `json:"invalidate,omitempty"`
 	// RHS holds the statements of a command-bearing right-hand side
 	// ($x = Get-Content f, $x = "a$(cmd)b"): they are lowered in place, before
 	// the assignment binds its value, so their effects and provenance are
@@ -218,8 +224,13 @@ const (
 
 // Branch is one conditional arm of an if statement.
 type Branch struct {
-	Pos  Pos     `json:"pos"`
-	Cond *Word   `json:"cond,omitempty"`
+	Pos  Pos   `json:"pos"`
+	Cond *Word `json:"cond,omitempty"`
+	// Head holds the statements of the arm's condition pipeline. PowerShell
+	// evaluates the condition before the body, so the commands in it run: an
+	// `if (Remove-Item -Force C:\x) { }` deletes the file. They are lowered in
+	// place, before the arm is decided.
+	Head []*Stmt `json:"head,omitempty"`
 	Body []*Stmt `json:"body"`
 }
 
@@ -236,11 +247,16 @@ type IfStmt struct {
 // condition. The analysis runs the body once unless the iterable is a literal
 // list or the condition is known-false.
 type LoopStmt struct {
-	Pos  Pos     `json:"pos"`
-	Text string  `json:"text"` // "foreach" | "for" | "while" | "do"
-	Var  *Word   `json:"var,omitempty"`
-	Iter *Word   `json:"iter,omitempty"`
-	Cond *Word   `json:"cond,omitempty"`
+	Pos  Pos    `json:"pos"`
+	Text string `json:"text"` // "foreach" | "for" | "while" | "do"
+	Var  *Word  `json:"var,omitempty"`
+	Iter *Word  `json:"iter,omitempty"`
+	Cond *Word  `json:"cond,omitempty"`
+	// Head holds the statements of the loop's header expression(s): a foreach
+	// iterable, a while/do condition, a for initializer/condition/iterator.
+	// PowerShell evaluates each header clause, so the commands in them are
+	// lowered in place — they are not dead code.
+	Head []*Stmt `json:"head,omitempty"`
 	Body []*Stmt `json:"body"`
 }
 
@@ -399,34 +415,58 @@ func ParseTimeout(name, src string, timeoutMicros uint64) (prog *Program) {
 	// list (the latter is repaired by the comma-array path) — is instead handled
 	// best-effort, and a source with no command at all is not a miss and stays
 	// an empty program.
-	if e := statementLevelError(root, lang); e != nil && hasDescendantType(root, lang, "command_name") {
+	if e := statementLevelError(root, lang, w.src, false); e != nil && hasDescendantType(root, lang, "command_name") {
 		return topProgram(name, src, w.pos(e), "a command could not be parsed from the source")
 	}
 	return prog
 }
 
-// statementLevelError returns the first ERROR (or MISSING) node that is not
-// inside any command, or nil. Such a node is a fragment the grammar could not
-// attach to a command — a truncated operand suffix or a dropped pipeline stage —
-// so the source it belongs to must degrade to ⊤ rather than be lowered from its
-// salvaged prefix. Descent stops at a command node: an ERROR inside one is
-// repaired best-effort (in its operand) or by the comma-array path (in its
-// element list), and must not escalate the whole source to ⊤.
-func statementLevelError(n *gotreesitter.Node, lang *gotreesitter.Language) *gotreesitter.Node {
-	if n == nil || n.Type(lang) == "command" {
+// statementLevelError returns the first ERROR (or MISSING) node the source
+// cannot be lowered soundly from, or nil. Such a node is a fragment the grammar
+// could not attach to a command — a truncated operand suffix or a dropped
+// pipeline stage — so the source it belongs to must degrade to ⊤ rather than be
+// lowered from its salvaged prefix.
+//
+// Descent into a command stops at an ERROR that stays on one line: an ERROR
+// inside a command is repaired best-effort (in its operand) or by the
+// comma-array path (in its element list), and must not escalate the whole
+// source to ⊤. An ERROR *inside* a command that spans a statement or pipeline
+// boundary is different: the grammar has swallowed a following statement or
+// stage into it (a `$var\suffix` operand makes that usual), so the destructive
+// command it absorbed would be silently dropped — such an ERROR is
+// statement-level too.
+func statementLevelError(n *gotreesitter.Node, lang *gotreesitter.Language, src []byte, inCommand bool) *gotreesitter.Node {
+	if n == nil {
 		return nil
 	}
+	if n.Type(lang) == "command" {
+		inCommand = true
+	}
 	for i := 0; i < n.ChildCount(); i++ {
-		if ch := n.Child(i); ch.Type(lang) == "ERROR" || ch.IsMissing() {
-			return ch
+		ch := n.Child(i)
+		if ch == nil {
+			continue
+		}
+		if ch.Type(lang) == "ERROR" || ch.IsMissing() {
+			if !inCommand || spansStatementBoundary(ch.Text(src)) {
+				return ch
+			}
 		}
 	}
 	for i := 0; i < n.ChildCount(); i++ {
-		if e := statementLevelError(n.Child(i), lang); e != nil {
+		if e := statementLevelError(n.Child(i), lang, src, inCommand); e != nil {
 			return e
 		}
 	}
 	return nil
+}
+
+// spansStatementBoundary reports whether an ERROR node's text spans a statement
+// or pipeline boundary (a newline, `;` or `|`). Such an ERROR swallowed a
+// following statement or pipeline stage, so lowering the salvaged prefix would
+// report a silently narrower effect set.
+func spansStatementBoundary(text string) bool {
+	return strings.ContainsAny(text, "\n;|")
 }
 
 // hasDescendantType reports whether n or any of its descendants has the given
@@ -476,11 +516,20 @@ type walker struct {
 	// side list (an assignment's right-hand side) instead of the program's
 	// top-level statement list. nil means top-level.
 	stmts *[]*Stmt
+	// inArg reports that the walker is inside a command's argument (a script
+	// block): such a statement is not a stage of the enclosing pipeline, so it
+	// must not be stamped with the pipeline group.
+	inArg bool
+	// skipRange reports that the walker is walking a control-flow header, where
+	// the grammar parses a range expression (`1..3`, `1..$n`) as a command whose
+	// name is the whole range: it is an expression, not an invocation, and must
+	// not be lowered as an unknown command.
+	skipRange bool
 }
 
 // emit appends a statement to the current collection target.
 func (w *walker) emit(s *Stmt) {
-	if s.Kind == KindCommand && s.Pipe == 0 {
+	if s.Kind == KindCommand && s.Pipe == 0 && !w.inArg {
 		s.Pipe = w.pipeGroup
 	}
 	if w.stmts != nil {
@@ -518,10 +567,14 @@ func (w *walker) walk(n *gotreesitter.Node) {
 		w.function(n)
 		return
 	case "class_statement", "trap_statement", "param_block":
-		// A class definition, a trap handler and a parameter default are each a
+		// A class definition, a trap handler and a parameter block are each a
 		// definition (or a deferred handler), not code executed at the point it
-		// appears. Like a function body they must not be mistaken for executed
-		// code, so the walker does not descend into them.
+		// appears. Like a function body the walker does not descend into them —
+		// their (conditionally executed) contents must not be reported as if
+		// unconditional — but they must not be dropped either: ADR-0014 keeps
+		// them opaque (⊤), so the statement lowers to ⊤ rather than to a
+		// silently narrower effect set.
+		w.emit(&Stmt{Kind: KindTop, Pos: w.pos(n), Reason: w.definitionReason(n)})
 		return
 	case "switch_statement":
 		// A switch is not modelled: it can read a file (-File), evaluate a
@@ -538,12 +591,26 @@ func (w *walker) walk(n *gotreesitter.Node) {
 		w.pipelineNode(n)
 		return
 	case "command":
+		if w.skipRange && isRangeExpr(n, w.lang, w.src) {
+			// A range expression in a control-flow header, not an invocation.
+			return
+		}
 		c := w.command(n)
 		w.emit(&Stmt{Kind: KindCommand, Pos: c.Pos, Cmd: c})
 		w.maybeDeclareAlias(c)
-		// Fall through to the transparent descent: an argument may itself
-		// carry an assignable expression — Remove-Item ($x = Get-Content f) —
-		// whose inner statements must still be recognised.
+		// Descend into the command's own children with the in-argument mark
+		// set: an argument may itself carry an assignable expression —
+		// Remove-Item ($x = Get-Content f) — whose inner statements must still
+		// be recognised, but a statement inside an argument (a script block the
+		// command may never run) is not a stage of the enclosing pipeline, so
+		// it must not inherit the pipeline group.
+		outerArg := w.inArg
+		w.inArg = true
+		for i := 0; i < n.ChildCount(); i++ {
+			w.walk(n.Child(i))
+		}
+		w.inArg = outerArg
+		return
 	case "assignment_expression":
 		// The assignment owns its right-hand side: the RHS is walked into
 		// Assign.RHS (not the enclosing statement list), so the lowerer runs it
@@ -595,12 +662,44 @@ func (w *walker) pipelineNode(n *gotreesitter.Node) {
 		return
 	}
 	w.pipeSeq++
-	prev := w.pipeGroup
-	w.pipeGroup = w.pipeSeq
+	prevGroup, prevArg := w.pipeGroup, w.inArg
+	w.pipeGroup, w.inArg = w.pipeSeq, false
 	for i := 0; i < n.ChildCount(); i++ {
 		w.walk(n.Child(i))
 	}
-	w.pipeGroup = prev
+	w.pipeGroup, w.inArg = prevGroup, prevArg
+}
+
+// isRangeExpr reports whether n is the grammar's encoding of a PowerShell range
+// expression (`1..3`, `1..$n`): the grammar parses the range as a *command*
+// whose name is the whole range text. A range is an expression, not an
+// invocation, so a range in a control-flow header must not be lowered as an
+// unknown command (which would fabricate a ⊤).
+func isRangeExpr(n *gotreesitter.Node, lang *gotreesitter.Language, src []byte) bool {
+	if n == nil || n.Type(lang) != "command" {
+		return false
+	}
+	name := findDirect(n, "command_name", lang)
+	if name == nil || !strings.Contains(name.Text(src), "..") {
+		return false
+	}
+	return len(directChildren(n, "command_elements", lang)) == 0
+}
+
+// headerStmts walks a control-flow header expression (an if/elseif condition, a
+// while/do condition, a foreach iterable, a for header clause) into a side
+// statement list, so the commands it contains are lowered in place before the
+// construct's body. The header is marked as such, so a range expression's
+// pseudo-command is skipped rather than treated as an unknown command.
+func (w *walker) headerStmts(n *gotreesitter.Node) []*Stmt {
+	if n == nil {
+		return nil
+	}
+	prev := w.skipRange
+	w.skipRange = true
+	out := w.walkInto(n)
+	w.skipRange = prev
+	return out
 }
 
 // function records a function definition's name without descending into its
@@ -613,6 +712,20 @@ func (w *walker) function(n *gotreesitter.Node) {
 		if ch.Type(w.lang) == "function_name" {
 			w.prog.Funcs[strings.ToLower(ch.Text(w.src))] = true
 		}
+	}
+}
+
+// definitionReason renders the ⊤ reason for a definition the walker keeps
+// opaque: ADR-0014 makes a class, a trap handler and a parameter block opaque,
+// and an opaque construct lowers to ⊤ rather than to nothing.
+func (w *walker) definitionReason(n *gotreesitter.Node) string {
+	switch n.Type(w.lang) {
+	case "class_statement":
+		return "class definition is opaque"
+	case "trap_statement":
+		return "trap handler is opaque"
+	default:
+		return "param block is opaque"
 	}
 }
 
@@ -870,10 +983,12 @@ func (w *walker) firstWord(n *gotreesitter.Node) *Word {
 	return nil
 }
 
-// assignment builds an Assign from an assignment_expression node. Every
-// variable on the left becomes a target ($a,$b = 1,2), and the right-hand side
-// is walked into Assign.RHS so the lowerer runs its commands before the
-// assignment binds its value; a pure-expression RHS leaves RHS nil.
+// assignment builds an Assign from an assignment_expression node. Every plain
+// variable on the left becomes a target ($a,$b = 1,2); a member or index target
+// ($o.Prop, $f[0]) contributes no target and invalidates its base variable
+// instead, and the right-hand side is walked into Assign.RHS so the lowerer
+// runs its commands before the assignment binds its value; a pure-expression
+// RHS leaves RHS nil.
 func (w *walker) assignment(n *gotreesitter.Node) *Assign {
 	a := &Assign{Pos: w.pos(n)}
 	var valueNode *gotreesitter.Node
@@ -882,9 +997,7 @@ func (w *walker) assignment(n *gotreesitter.Node) *Assign {
 		ch := n.Child(i)
 		switch ch.Type(w.lang) {
 		case "left_assignment_expression":
-			for _, v := range findAll(ch, "variable", w.lang) {
-				a.Targets = append(a.Targets, w.word(v))
-			}
+			w.assignTargets(a, ch)
 		case "assignement_operator":
 			a.Op = ch.Text(w.src)
 			opSeen = true
@@ -899,7 +1012,7 @@ func (w *walker) assignment(n *gotreesitter.Node) *Assign {
 	if len(a.Targets) > 0 {
 		a.TargetWord = a.Targets[0]
 	}
-	if a.TargetWord == nil {
+	if a.TargetWord == nil && len(a.Invalidate) == 0 {
 		return nil
 	}
 	if valueNode != nil {
@@ -910,21 +1023,67 @@ func (w *walker) assignment(n *gotreesitter.Node) *Assign {
 			a.Hash = ht
 		}
 	}
-	a.Drive, a.Name = classifyVar(a.TargetWord.Text)
+	if a.TargetWord != nil {
+		a.Drive, a.Name = classifyVar(a.TargetWord.Text)
+	}
 	return a
 }
 
-// findAll returns every descendant of n whose type is typ, in source order.
-func findAll(n *gotreesitter.Node, typ string, lang *gotreesitter.Language) []*gotreesitter.Node {
+// assignTargets classifies one left_assignment_expression: a plain variable is
+// an assignment target, while a member/index expression has no target of its
+// own — its base variable is recorded for invalidation ("$o.Prop = v" does not
+// make $o equal to v) and any variable inside the subscript is not a target at
+// all ("$a[$i] = v" writes $a, never $i).
+func (w *walker) assignTargets(a *Assign, n *gotreesitter.Node) {
+	leaf := exprLeaf(n, w.lang)
+	if leaf == nil {
+		return
+	}
+	elems := []*gotreesitter.Node{leaf}
+	if leaf.Type(w.lang) == "array_literal_expression" {
+		elems = namedChildren(leaf)
+	}
+	for _, e := range elems {
+		got := exprLeaf(e, w.lang)
+		if got == nil {
+			continue
+		}
+		switch got.Type(w.lang) {
+		case "variable":
+			a.Targets = append(a.Targets, w.word(got))
+		case "member_access", "element_access":
+			if base := findType(got, "variable", w.lang); base != nil {
+				a.Invalidate = append(a.Invalidate, w.word(base))
+			}
+		}
+	}
+}
+
+// exprLeaf unwraps an expression node's single-named-child chain down to the
+// node that carries the expression's shape: `$a` → the variable node,
+// `$o.Prop` → the member_access node, `$a, $b` → the array_literal_expression
+// (whose two named children are the elements).
+func exprLeaf(n *gotreesitter.Node, lang *gotreesitter.Language) *gotreesitter.Node {
+	for n != nil {
+		named := namedChildren(n)
+		if len(named) != 1 {
+			return n
+		}
+		n = named[0]
+	}
+	return nil
+}
+
+// namedChildren returns n's immediate named children.
+func namedChildren(n *gotreesitter.Node) []*gotreesitter.Node {
 	if n == nil {
 		return nil
 	}
 	var out []*gotreesitter.Node
-	if n.Type(lang) == typ {
-		out = append(out, n)
-	}
 	for i := 0; i < n.ChildCount(); i++ {
-		out = append(out, findAll(n.Child(i), typ, lang)...)
+		if ch := n.Child(i); ch != nil && ch.IsNamed() {
+			out = append(out, ch)
+		}
 	}
 	return out
 }
@@ -937,7 +1096,9 @@ func (w *walker) condWord(n *gotreesitter.Node) *Word {
 
 // ifStatement builds an if/elseif…/else statement. The if arm's condition is
 // the statement's own pipeline; each elseif_clause contributes another arm;
-// the else_clause's block becomes Else.
+// the else_clause's block becomes Else. Each arm carries the statements of its
+// condition pipeline (Head), because PowerShell evaluates the condition — an
+// `if (Remove-Item -Force C:\x) { }` deletes the file.
 func (w *walker) ifStatement(n *gotreesitter.Node) *Stmt {
 	is := &IfStmt{Pos: w.pos(n)}
 	armIdx := -1 // index of the arm awaiting its body
@@ -951,14 +1112,14 @@ func (w *walker) ifStatement(n *gotreesitter.Node) *Stmt {
 		ch := n.Child(i)
 		switch ch.Type(w.lang) {
 		case "pipeline":
-			is.Arms = append(is.Arms, Branch{Pos: w.pos(ch), Cond: w.condWord(ch)})
+			is.Arms = append(is.Arms, Branch{Pos: w.pos(ch), Cond: w.condWord(ch), Head: w.headerStmts(ch)})
 			armIdx = len(is.Arms) - 1
 		case "statement_block":
 			closeArm(ch)
 		case "elseif_clauses":
 			for _, ec := range directChildren(ch, "elseif_clause", w.lang) {
 				for _, c := range directChildren(ec, "pipeline", w.lang) {
-					is.Arms = append(is.Arms, Branch{Pos: w.pos(c), Cond: w.condWord(c)})
+					is.Arms = append(is.Arms, Branch{Pos: w.pos(c), Cond: w.condWord(c), Head: w.headerStmts(c)})
 					armIdx = len(is.Arms) - 1
 				}
 				for _, b := range directChildren(ec, "statement_block", w.lang) {
@@ -977,7 +1138,10 @@ func (w *walker) ifStatement(n *gotreesitter.Node) *Stmt {
 	return &Stmt{Kind: KindIf, Pos: is.Pos, If: is}
 }
 
-// loopStatement builds a foreach/for/while/do statement.
+// loopStatement builds a foreach/for/while/do statement. The header clauses
+// (the foreach iterable, the while/do condition, the for initializer, condition
+// and iterator) are walked into Head, so the commands they contain are lowered
+// in place.
 func (w *walker) loopStatement(n *gotreesitter.Node) *Stmt {
 	lp := &LoopStmt{Pos: w.pos(n)}
 	switch n.Type(w.lang) {
@@ -990,28 +1154,39 @@ func (w *walker) loopStatement(n *gotreesitter.Node) *Stmt {
 		for _, ch := range directChildren(n, "pipeline", w.lang) {
 			text := ch.Text(w.src)
 			lp.Iter = &Word{Pos: w.pos(ch), Text: text, Literal: !strings.ContainsAny(text, "$`")}
+			lp.Head = w.headerStmts(ch)
 			break
 		}
 	case "while_statement":
 		lp.Text = "while"
 		for _, ch := range directChildren(n, "while_condition", w.lang) {
 			lp.Cond = w.condWord(ch)
+			lp.Head = w.headerStmts(ch)
 			break
 		}
 	case "do_statement":
 		lp.Text = "do"
 		for _, ch := range directChildren(n, "while_condition", w.lang) {
 			lp.Cond = w.condWord(ch)
+			lp.Head = w.headerStmts(ch)
 			break
 		}
 	case "for_statement":
 		lp.Text = "for"
+		// The initializer runs once, then the condition and the iterator on
+		// every iteration: all three are header expressions whose commands are
+		// evaluated, in source order.
+		for _, typ := range []string{"for_initializer", "for_condition", "for_iterator"} {
+			for _, ch := range directChildren(n, typ, w.lang) {
+				lp.Head = append(lp.Head, w.headerStmts(ch)...)
+			}
+		}
 	}
 	for _, b := range directChildren(n, "statement_block", w.lang) {
 		lp.Body = w.walkInto(b)
 		break
 	}
-	if len(lp.Body) == 0 && lp.Var == nil && lp.Cond == nil {
+	if len(lp.Body) == 0 && lp.Var == nil && lp.Cond == nil && len(lp.Head) == 0 {
 		return nil
 	}
 	return &Stmt{Kind: KindLoop, Pos: lp.Pos, Loop: lp}
@@ -1160,6 +1335,19 @@ func findType(n *gotreesitter.Node, typ string, lang *gotreesitter.Language) *go
 	for i := 0; i < n.ChildCount(); i++ {
 		if got := findType(n.Child(i), typ, lang); got != nil {
 			return got
+		}
+	}
+	return nil
+}
+
+// findDirect returns the first immediate child of n whose type is typ.
+func findDirect(n *gotreesitter.Node, typ string, lang *gotreesitter.Language) *gotreesitter.Node {
+	if n == nil {
+		return nil
+	}
+	for i := 0; i < n.ChildCount(); i++ {
+		if ch := n.Child(i); ch != nil && ch.Type(lang) == typ {
+			return ch
 		}
 	}
 	return nil

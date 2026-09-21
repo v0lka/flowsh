@@ -62,11 +62,29 @@ func TestForeachLiteralIteratesExactly(t *testing.T) {
 
 func TestForeachUnknownSingleIteration(t *testing.T) {
 	r := lowerOK(t, "foreach ($i in (Get-Content list.txt)) { Get-Content $i.log }")
-	if !targetHas(r, engine.KindFSRead, "list.txt") {
-		t.Fatalf("the iterable command must be lowered; effects=%+v", r.Effects)
+	// The iterable command must be lowered. Its concrete read merges with the
+	// body's ⊤ read (FSRead{list.txt} ⊔ FSRead{⊤} = ⊤), so an effect-level
+	// Contains is satisfied by the ⊤ scope alone — the vacuity finding #22
+	// reports. The per-command notes pin the iterable's own read instead, and
+	// they cannot be satisfied by a ⊤ effect.
+	if !notesContain(r, `read "list.txt" → FSRead`) {
+		t.Fatalf("the iterable command must be lowered; notes=%v", r.Notes)
+	}
+	if hasKind(r, engine.KindFSWrite) {
+		t.Fatalf("this program writes nothing; effects=%+v", r.Effects)
 	}
 	if !hasTopTarget(t, r, engine.KindFSRead) {
 		t.Fatalf("an unknown loop variable must degrade the body's target; effects=%+v", r.Effects)
+	}
+
+	// With the body writing instead of reading, the iterable's concrete read
+	// survives the merge and is asserted on the effect directly.
+	r2 := lowerOK(t, `foreach ($i in (Get-Content list.txt)) { Remove-Item "$i.txt" }`)
+	if !targetHasExact(r2, engine.KindFSRead, "list.txt") {
+		t.Fatalf("the iterable command must be lowered concretely; effects=%+v notes=%v", r2.Effects, r2.Notes)
+	}
+	if !hasTopTarget(t, r2, engine.KindFSWrite) {
+		t.Fatalf("an unknown loop variable must degrade the body's target; effects=%+v", r2.Effects)
 	}
 }
 

@@ -438,22 +438,27 @@ func (it *interp) markTopEffectFlow(reason string, flow engine.FlowRole) engine.
 	return e
 }
 
-// taintIsNetwork reports whether a value's provenance marks it as
-// attacker-influenced network content: untrusted (a command substitution, a
-// network response), user input, or the network class itself, or the top
-// (unknown) taint.
+// taintIsNetwork reports whether a value's provenance marks it as content that
+// arrived over the network: it carries the network label, or its provenance is
+// unknown (⊤), which conservatively includes network content.
+//
+// "Untrusted" is deliberately not network content. Every command substitution
+// is untrusted — it is the output of code the analysis did not itself run —
+// whether it fetched a URL or read a local file, so treating untrusted as
+// network content asserted a download cradle for `sh -c "$(cat local.txt)"`
+// (see code review #4). The network label is attached where the analysis
+// actually established the flow: the pipeline's value flow (stdinNet) and a
+// substitution whose body performed a network effect (substInfo.net).
 func taintIsNetwork(t engine.Taint) bool {
-	return t.IsTop() ||
-		t.Contains(engine.TaintUntrusted) ||
-		t.Contains(engine.TaintUserInput) ||
-		t.Contains(engine.TaintNetwork)
+	return t.IsTop() || t.Contains(engine.TaintNetwork)
 }
 
 // sinkFlowRole returns the network-flow role of a code-execution sink fed by
 // the current value flow: FlowCradle when the sink consumes network content
-// (the pipeline's upstream stage is a network egress, or the value flowing in
-// — via standard input or a command substitution argument — carries network
-// provenance), and FlowNone otherwise.
+// (the pipeline's upstream stages contain a network egress, or the value
+// flowing in — via standard input or a command-substitution argument — carries
+// the network provenance label), and FlowNone otherwise. A sink fed only
+// untrusted-but-local data (a local file read, stdin) is not a cradle.
 func (it *interp) sinkFlowRole(cmd *Command) engine.FlowRole {
 	if it.stdinNet || taintIsNetwork(it.stdinTaint) {
 		return engine.FlowCradle
@@ -822,9 +827,13 @@ func (it *interp) execPipeline(b *syntax.BinaryCmd) {
 		it.ctl = savedCtl
 		in, inKnown, inTaint = out, ok, outTaint
 		// The value flowing to the next stage came from a network egress when
-		// this stage contributed a NetEgress effect: the downstream sink is then
-		// fed by network content (the download-cradle flow).
-		inNet = stageHasNetEgress(it.effs[effStart:])
+		// this stage — or any earlier one of the pipeline — contributed a
+		// NetEgress effect: the downstream sink is then fed by network content
+		// (the download-cradle flow). It is OR-ed rather than assigned, so a
+		// stage that adds no egress of its own but only passes the bytes on
+		// (tee, cat, tr, grep, base64 -d, …) cannot reset a flow already
+		// established upstream: `curl … | base64 -d | sh` is a cradle too.
+		inNet = inNet || stageHasNetEgress(it.effs[effStart:])
 	}
 	it.stdin, it.stdinKnown, it.stdinTaint, it.stdinNet = savedIn, savedKnown, savedTaint, savedNet
 	it.status, it.statusKnown = 0, false
@@ -1596,10 +1605,13 @@ func (it *interp) dispatch(name string, nameOK bool, argv []string, cmd *Command
 		return nil
 	}
 
-	// code-execution sinks: data flowing in is data executed
-	if isSink(name) {
-		e := it.markTopEffectFlow("code-execution sink "+strconv.Quote(name), it.sinkFlowRole(cmd))
-		it.derive(e, engine.Atom{Kind: engine.AtomCommand, Text: name, Loc: sourceLoc(cmd.Pos, it.prog.File)})
+	// code-execution sinks: data flowing in is data executed. The invoked
+	// program is resolved to the sink it runs — by basename (`/bin/sh`) and
+	// through `env` (`/usr/bin/env bash`) — so a path-qualified invocation is
+	// recognised like the bare spelling.
+	if sink := sinkName(name, argv); sink != "" {
+		e := it.markTopEffectFlow("code-execution sink "+strconv.Quote(sink), it.sinkFlowRole(cmd))
+		it.derive(e, engine.Atom{Kind: engine.AtomCommand, Text: sink, Loc: sourceLoc(cmd.Pos, it.prog.File)})
 		it.setStatus(name)
 		return nil
 	}
@@ -2022,10 +2034,11 @@ func (it *interp) heredoc(w *syntax.Word) {
 
 // captureSubst executes a command-substitution body in a subshell and returns
 // the stdout it folded to, together with whether that stdout is statically
-// known and its provenance.
-func (it *interp) captureSubst(cs *syntax.CmdSubst) (string, bool, engine.Taint) {
+// known, its provenance, and whether the body itself performed a network effect
+// (the substitution's output is then content that arrived over the network).
+func (it *interp) captureSubst(cs *syntax.CmdSubst) (string, bool, engine.Taint, bool) {
 	if cs == nil {
-		return "", true, engine.TaintBottom()
+		return "", true, engine.TaintBottom(), false
 	}
 	savedState := it.state
 	savedOut, savedKnown := it.stdout, it.stdoutKnown
@@ -2035,7 +2048,10 @@ func (it *interp) captureSubst(cs *syntax.CmdSubst) (string, bool, engine.Taint)
 	it.ctl = ctlNone
 
 	// A command substitution's stdout is the concatenation of every inner
-	// statement's output, so fold them all rather than only the last.
+	// statement's output, so fold them all rather than only the last. Effects
+	// recorded from here on belong to the substitution's body: a NetEgress among
+	// them is the evidence that its output came off the network.
+	effStart := len(it.effs)
 	var sb strings.Builder
 	known := len(cs.Stmts) > 0
 	taint := engine.TaintBottom()
@@ -2052,24 +2068,32 @@ func (it *interp) captureSubst(cs *syntax.CmdSubst) (string, bool, engine.Taint)
 		taint = taint.Join(it.stdoutTaint)
 	}
 	out := sb.String()
+	net := stageHasNetEgress(it.effs[effStart:])
 
 	it.state = savedState
 	it.stdout, it.stdoutKnown, it.stdoutTaint = savedOut, savedKnown, savedTaint
 	it.ctl = savedCtl
-	return out, known, taint
+	return out, known, taint, net
 }
 
-func (it *interp) execProcSubst(ps *syntax.ProcSubst) {
+// execProcSubst executes a process-substitution body in a subshell. It reports
+// whether the body performed a network effect, so the substitution's provenance
+// can record that its content (the /dev/fd the body writes to) came off the
+// network rather than merely being untrusted.
+func (it *interp) execProcSubst(ps *syntax.ProcSubst) bool {
 	if ps == nil {
-		return
+		return false
 	}
 	savedState := it.state
 	savedCtl := it.ctl
 	it.state = it.state.Clone()
 	it.ctl = ctlNone
+	effStart := len(it.effs)
 	it.execStmts(ps.Stmts)
+	net := stageHasNetEgress(it.effs[effStart:])
 	it.state = savedState
 	it.ctl = savedCtl
+	return net
 }
 
 // expandSubstsIn walks a syntax subtree and expands every word it contains, so
