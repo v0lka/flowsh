@@ -11,6 +11,41 @@ the two *frozen* wire-contract tags that the analyser emits — `effect-ir/v2`
 frozen contract is called out in the entry that makes it; the contract tags move
 only on a breaking shape change, not on every module release.
 
+## [v0.4.0] - 2026-09-21
+
+A knowledge-base and binding release. It rolls up the changes made since
+`v0.3.2`, whose full detail is recorded in the `v0.3.3` and `v0.3.4` entries
+below.
+
+### Added
+
+- **Expanded ecosystem coverage in the knowledge base.** `kb/data/toolchain.yaml`
+  and `kb/data/linting.yaml` gain 114 commands across the Go, Node.js, Python,
+  JVM, Rust and Zig toolchains — with eleven class-C removals in
+  `kb/data/destructive.yaml` and dedicated `go` subcommand specs in
+  `kb/data/pkgmgr.yaml` — so their everyday build, test and lint loops bind
+  deterministically instead of degrading to ⊤. The common-binary inventory gate
+  grows to 116 entries and the conformance corpus gains eighteen cross-ecosystem
+  benign cases.
+- **Package-runner and project-local bin-path resolution.** The binder resolves
+  `npx`/`bunx` and the `./node_modules/.bin/<bin>` path forms to the bare binary
+  and binds the resolved binary's own knowledge-base signature, so the everyday
+  JS-stack verification loop (`npx vitest run …`, `npx tsc -b`,
+  `./node_modules/.bin/vitest run`) binds deterministically instead of degrading
+  to ⊤. The fail-closed shapes — an operand outside the knowledge base, a
+  dynamic operand, a runner that names no operand, `-c`/`--call` and a
+  code-execution interpreter operand — are unchanged. The comparable form
+  (`commandCalls[].resolved`) reports the knowledge-base command the binder
+  resolved to, so every spelling of one binary shares one identity (`npx mvnw`,
+  `./mvnw` and `mvnw` all report `resolved: "mvn"`).
+
+### Changed
+
+- **Documentation.** The command→dialect map in
+  `specs/domains/knowledge-base.md` now lists the complete inventory of every
+  command in the knowledge base, and the `toolchain.yaml` / `linting.yaml`
+  descriptions name the expanded ecosystems.
+
 ## [v0.3.4] - 2026-09-21
 
 ### Added
@@ -315,6 +350,7 @@ only on a breaking shape change, not on every module release.
   too coarse to observe the deadline, and widened the repeated-statement source
   so the timeout-to-⊤ path stays covered everywhere (ADR-0013).
 
+[v0.4.0]: https://github.com/v0lka/flowsh/compare/v0.3.2...v0.4.0
 [v0.3.2]: https://github.com/v0lka/flowsh/compare/v0.3.1...v0.3.2
 [v0.3.1]: https://github.com/v0lka/flowsh/compare/v0.3.0...v0.3.1
 [v0.3.0]: https://github.com/v0lka/flowsh/compare/v0.2.1...v0.3.0
