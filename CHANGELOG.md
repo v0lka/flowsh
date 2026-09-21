@@ -11,6 +11,46 @@ the two *frozen* wire-contract tags that the analyser emits — `effect-ir/v2`
 frozen contract is called out in the entry that makes it; the contract tags move
 only on a breaking shape change, not on every module release.
 
+## [v0.3.2] - 2026-09-21
+
+### Fixed
+
+- **Knowledge-base corrections.** A service or operation selector is now
+  `valueFrom: env` rather than `args`, so a subcommand word (`kubectl get pods`,
+  `aws s3 ls`) can no longer become a phantom egress target while an address
+  written on the command line still lowers concretely; output and selector
+  parameters (`--json`, `-o`, `--output`) become `Stdio` instead of a fabricated
+  file read; and the incorrect effect directions of the `redis-cli` and `psql`
+  flags are fixed.
+- **Binder download handling.** The binder synthesises wget's implicit download
+  sink once per URL operand, folds `-P`/`--directory-prefix` into the written
+  path, treats a `-` output value as standard output rather than a file named
+  `-`, and names curl `-O`'s local file after the URL.
+- **Flow-evidence isolation.** `Report.Normalize` merges on
+  (kind, mode, netFlow), so the flow evidence of one effect cannot bleed onto
+  another's targets; the flow detectors now document their deliberate
+  many-to-one over-approximation.
+- **bash frontend.** Matches a code-execution sink by basename and through
+  `env`, and treats only network-labelled provenance as network content rather
+  than every command substitution.
+- **PowerShell frontend.** Lowers control-flow headers, fixes condition
+  truthiness and splat/member/index targets, expands literal `foreach` ranges,
+  and closes the rest of the round-two code-review findings.
+
+### Changed
+
+- Aligned the SECURITY.md threat model, the README report-field table (effects
+  merge by kind, mode and network-flow role) and the CONTRIBUTING corpus and
+  knowledge-base inventories (170 cases across seven documents; 23 reviewed
+  `kb/data/*.yaml` documents) with the code, and added
+  [ADR-0015](specs/decisions/0015-per-host-latency-reference.md) (per-host
+  latency reference).
+- Raised the knowledge-base load-latency budget to 150 ms after the tagged-commit
+  release runner (the same `ubuntu-latest` that passes in CI) measured a worst
+  average of 52.3 ms — above the earlier 50 ms ceiling — and recorded the
+  decision in
+  [ADR-0016](specs/decisions/0016-kb-load-budget-release-headroom.md).
+
 ## [v0.3.1] - 2026-09-20
 
 ### Fixed
@@ -195,6 +235,9 @@ only on a breaking shape change, not on every module release.
   too coarse to observe the deadline, and widened the repeated-statement source
   so the timeout-to-⊤ path stays covered everywhere (ADR-0013).
 
+[v0.3.2]: https://github.com/v0lka/flowsh/compare/v0.3.1...v0.3.2
+[v0.3.1]: https://github.com/v0lka/flowsh/compare/v0.3.0...v0.3.1
+[v0.3.0]: https://github.com/v0lka/flowsh/compare/v0.2.1...v0.3.0
 [v0.2.1]: https://github.com/v0lka/flowsh/compare/v0.2.0...v0.2.1
 [v0.2.0]: https://github.com/v0lka/flowsh/compare/v0.1.0...v0.2.0
 [v0.1.0]: https://github.com/v0lka/flowsh/releases/tag/v0.1.0

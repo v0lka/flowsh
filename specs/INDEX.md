@@ -24,10 +24,11 @@ For formats and update rules, see [META.md](META.md). For how to use the system,
 | Embed the analyser in another Go program | [Analysis Facade](domains/analysis-report.md), [ADR-0010](decisions/0010-public-embedding-api.md) |
 | Add or change a corpus case | [Analysis Facade](domains/analysis-report.md) |
 | Change the CI latency/recall gate or its baseline | [Engine](domains/engine/README.md), [ADR-0015](decisions/0015-per-host-latency-reference.md) |
+| Change the knowledge-base load-budget gate | [Knowledge Base](domains/knowledge-base.md), [ADR-0016](decisions/0016-kb-load-budget-release-headroom.md) |
 | Understand the end-to-end pipeline | [Data Flow](architecture/data-flow.md) |
 | Understand the layering / import rules | [Layer Architecture](architecture/layers.md) |
 | Understand degrade-to-⊤ semantics | [Conservatism](architecture/conservatism.md) |
-| Understand why the IR is frozen / the KB is embedded / ⊤ is used / one module / the tool is named `flowsh` / a public embedding API exists | [Decisions](decisions/_template.md) (ADR-0001 … ADR-0015) |
+| Understand why the IR is frozen / the KB is embedded / ⊤ is used / one module / the tool is named `flowsh` / a public embedding API exists | [Decisions](decisions/_template.md) (ADR-0001 … ADR-0016) |
 | Add a new spec document | [META.md](META.md), [WORKFLOW.md](WORKFLOW.md) |
 
 ## Dependency Graph
@@ -70,7 +71,7 @@ Spec-level view of the layered system (arrows point from a layer to what it depe
               0007 lattice-model 0008 single-module 0009 rename-identity
               0010 public-api 0011 ci-load-budget 0012 race-parse-budget
               0013 windows-clock-tick 0014 ps-abstract-state
-              0015 per-host-latency
+              0015 per-host-latency 0016 kb-load-budget
 ```
 
 ## Directory Listing
@@ -124,7 +125,8 @@ specs/
     ├── 0012-race-advisory-parse-budget.md
     ├── 0013-windows-clock-tick-parse-budget.md
     ├── 0014-ps-abstract-state.md
-    └── 0015-per-host-latency-reference.md
+    ├── 0015-per-host-latency-reference.md
+    └── 0016-kb-load-budget-release-headroom.md
 ```
 
 ## Full File List
@@ -157,6 +159,7 @@ Every spec file, by path relative to `specs/`:
 - `decisions/0013-windows-clock-tick-parse-budget.md`
 - `decisions/0014-ps-abstract-state.md`
 - `decisions/0015-per-host-latency-reference.md`
+- `decisions/0016-kb-load-budget-release-headroom.md`
 - `domains/analysis-report.md`
 - `domains/bash-frontend/README.md`
 - `domains/bash-frontend/abstract-exec.md`

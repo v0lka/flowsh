@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [0016](0016-kb-load-budget-release-headroom.md) for the load-latency budget value only; the CI-tolerant-constant decision stands.
 
 ## Context
 

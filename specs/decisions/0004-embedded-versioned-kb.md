@@ -2,7 +2,7 @@
 
 ## Status
 
-Superseded by [0011](./0011-ci-tolerant-load-budget.md) for the load-latency acceptance threshold only; the embed-and-version decision stands.
+Superseded by [0011](./0011-ci-tolerant-load-budget.md), then [0016](./0016-kb-load-budget-release-headroom.md), for the load-latency acceptance threshold only; the embed-and-version decision stands.
 
 ## Context
 
