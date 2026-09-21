@@ -48,6 +48,36 @@ var commonBinaries = []string{
 	"ansible", "ansible-playbook", "ansible-vault", "ansible-galaxy",
 	// Cloud provider clients.
 	"aws", "gcloud", "az",
+	// Extended language-ecosystem tooling: Go, Node.js and Python runtimes,
+	// package managers, bundlers, framework CLIs and code generators (the
+	// extended toolchain.yaml surface). Keeping them here is the maintained
+	// bind probe: each must resolve and bind without ⊤.
+	"gopls", "dlv", "goreleaser", "air", "mockgen", "swag", "wire", "stringer",
+	"corepack", "deno", "tsx", "ts-node", "nodemon", "vite", "webpack", "rollup",
+	"esbuild", "swc", "parcel", "next", "nuxt", "react-scripts", "turbo", "nx",
+	"lerna", "gulp", "grunt", "pm2", "node-gyp",
+	"uvx", "pipenv", "pdm", "hatch", "tox", "nox", "conda", "mamba",
+	"virtualenv", "pipx", "ipython", "jupyter", "twine", "pyinstaller",
+	// Extended language-ecosystem build/test/lint drivers (the extended
+	// linting.yaml surface).
+	"goimports", "gofumpt", "govulncheck", "gotestsum", "errcheck", "revive",
+	"ineffassign", "gosec", "benchstat", "go-junit-report", "ginkgo",
+	"mocha", "ava", "playwright", "cypress", "biome", "oxlint", "tsd",
+	"typedoc", "uvu", "rimraf", "concurrently", "cross-env", "serve",
+	"pytest", "flake8", "isort", "pylint", "pyright", "bandit", "coverage",
+	"sphinx", "autopep8", "pydocstyle",
+	// Extended language-ecosystem tooling: the JVM (Java/Scala/Kotlin), Rust
+	// and Zig toolchains, package managers and build drivers (the extended
+	// toolchain.yaml surface) plus the Rust formatter (linting.yaml).  Keeping
+	// them here is the maintained bind probe: every name — including the mvnw
+	// and cargo-fmt aliases — must resolve and bind without ⊤.
+	"javac", "javadoc", "jar", "jshell", "keytool", "scala", "scalac", "sbt",
+	"scala-cli", "mill", "kotlin", "kotlinc", "kotlinc-jvm", "kscript", "ant",
+	"jbang", "coursier", "groovy", "clojure", "lein", "mvnd", "mvnw",
+	"rustup", "rustdoc", "rust-analyzer", "nextest", "cargo-audit", "cargo-deny",
+	"cargo-watch", "cargo-expand", "cargo-tarpaulin", "wasm-pack", "trunk",
+	"cross", "bacon", "zig", "zls",
+	"rustfmt", "cargo-fmt",
 }
 
 // acceptanceBinaries are the binaries named by the task's acceptance clause:
@@ -90,6 +120,30 @@ var familyProbes = []struct {
 	{"build-test-lint", "prettier --write ."},
 	{"build-test-lint", "vitest run"},
 	{"build-test-lint", "jest"},
+	// The runner and project-local bin-path spellings of the same binaries
+	// (bind/runner.go): the everyday JS-stack verification loop the silent-mode
+	// audit recorded as C6 false denies — they must bound, never ⊤.
+	{"build-test-lint", "npx vitest run src/lib/x.test.tsx --reporter=basic"},
+	{"build-test-lint", "npx tsc -b"},
+	{"build-test-lint", "bunx eslint ."},
+	{"build-test-lint", "./node_modules/.bin/vitest run"},
+	// The package-runner spellings now also bind the NEW Node binaries from
+	// toolchain.yaml: npx/bunx resolve their first non-flag operand through the
+	// knowledge base, so the runner forms of vite/tsx/esbuild/next/turbo stay
+	// bounded (no ⊤) and share one canonical identity with the bare forms.
+	{"build-test-lint", "npx vite build"},
+	{"build-test-lint", "npx tsx src/app.ts"},
+	{"build-test-lint", "bunx esbuild app.ts"},
+	{"build-test-lint", "npx next build"},
+	{"toolchain", "npx turbo run build"},
+	// The new tooling families and drivers must bound too: a runner/runtime, a
+	// dependency manager, the test runners, a doc generator and a formatter.
+	{"toolchain", "deno run app.ts"},
+	{"toolchain", "pipenv install"},
+	{"build-test-lint", "pytest -q"},
+	{"build-test-lint", "playwright test"},
+	{"build-test-lint", "coverage html"},
+	{"build-test-lint", "gofumpt -w ."},
 	{"build-test-lint", "gofmt -l ."},
 	{"build-test-lint", "staticcheck ./..."},
 	{"build-test-lint", "ruff check ."},
@@ -97,6 +151,16 @@ var familyProbes = []struct {
 	{"build-test-lint", "mypy ."},
 	{"build-test-lint", "cargo-clippy"},
 	{"build-test-lint", "shellcheck a.sh"},
+	// The JVM, Rust and Zig toolchains (the extended toolchain.yaml surface):
+	// a compiler, a script runner, a build driver, a toolchain manager and the
+	// Zig compiler/build system, plus the Rust formatter (linting.yaml).
+	{"toolchain", "javac Foo.java"},
+	{"toolchain", "scala app.scala"},
+	{"toolchain", "sbt compile"},
+	{"toolchain", "kotlinc app.kt"},
+	{"toolchain", "rustup show"},
+	{"toolchain", "zig build"},
+	{"build-test-lint", "rustfmt src/main.rs"},
 	{"data-query", "jq . f.json"},
 	{"data-query", "yq . f.yaml"},
 	{"data-query", "sqlite3 db.sqlite"},

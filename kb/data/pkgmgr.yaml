@@ -672,3 +672,21 @@ commands:
       - spec: "-C"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: work
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: tool
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: fmt
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: doc
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: list
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: fix
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}

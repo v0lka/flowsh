@@ -533,6 +533,55 @@ destructive:
     spec: remove
     class: C
     reason: removes the package from the workspace and the manifest
+  # New language-ecosystem tooling (the extended toolchain.yaml surface): the
+  # package/dependency/toolchain removals and the local-store cleans the added
+  # commands expose. A removal discards an installed artifact (recoverable only
+  # by a reinstall/re-download), so it carries the same class C as the existing
+  # gem/cargo/snap/flatpak removals above.
+  - command: conda
+    spec: remove
+    class: C
+    reason: uninstalls the named packages, removing their files and environment data
+  - command: mamba
+    spec: remove
+    class: C
+    reason: uninstalls the named packages, removing their files and environment data
+  - command: pdm
+    spec: remove
+    class: C
+    reason: removes the dependency from the project and uninstalls it from the environment
+  - command: pipenv
+    spec: uninstall
+    class: C
+    reason: uninstalls the package from the virtualenv and removes it from the Pipfile
+  - command: pipx
+    spec: uninstall
+    class: C
+    reason: uninstalls the application and removes its isolated virtualenv
+  - command: coursier
+    spec: uninstall
+    class: C
+    reason: removes the coursier-managed installation and its launchers
+  - command: rustup
+    spec: uninstall
+    class: C
+    reason: removes the installed toolchain (or the whole rustup installation) from disk
+  - command: conda
+    spec: clean
+    class: C
+    reason: removes the downloaded package tarballs and the index cache from the local store
+  - command: mamba
+    spec: clean
+    class: C
+    reason: removes the downloaded package tarballs and the index cache from the local store
+  - command: lerna
+    spec: clean
+    class: C
+    reason: removes the node_modules directory from every package in the workspace
+  - command: pipenv
+    spec: clean
+    class: C
+    reason: uninstalls every package installed in the virtualenv that is absent from the Pipfile
   - command: passwd
     spec: "-d"
     class: C

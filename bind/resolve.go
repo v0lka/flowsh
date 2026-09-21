@@ -127,6 +127,42 @@ func (b *Binder) resolve(c *Call) resolved {
 		}
 	}
 
+	// 4a. project-local binary path — ./node_modules/.bin/tsc,
+	// node_modules/.bin/tsc, /abs/node_modules/.bin/tsc: the seam the package
+	// manager manages exposes the same binaries a package runner resolves, so
+	// the path form resolves to the bare binary name exactly like the runner
+	// form (one KB command, one canonical identity — the audited 963134/963140
+	// retry pair stays unified, now deterministically bounded instead of ⊤).
+	if base := StripBinaryPath(c.Name); base != c.Name {
+		if cmd, ok := b.k.Command(base); ok {
+			return resolved{
+				res:     Resolution{Kind: ResolveCommand, Name: cmd.Name, Invoked: c.Name},
+				command: cmd,
+				args:    c.Args,
+			}
+		}
+	}
+
+	// 4b. package runner — npx vitest …, bunx tsc …: the first non-flag literal
+	// operand names the binary that actually executes, so it is looked up in
+	// the knowledge base and bound with the runner's own words consumed. The
+	// fail-closed shapes degrade to ⊤ in runnerBinaryArgs and below: a runner
+	// that names no literal operand, an operand outside the knowledge base (a
+	// registry fetch whose code the analysis cannot see), and -c/--call (an
+	// arbitrary shell string — never boundable by name resolution).
+	if packageRunners[c.Name] {
+		if operand, rest, ok := runnerBinaryArgs(c.Args); ok {
+			if cmd, ok := b.k.Command(StripBinaryPath(operand.Value)); ok {
+				return resolved{
+					res:     Resolution{Kind: ResolveCommand, Name: cmd.Name, Invoked: c.Name},
+					command: cmd,
+					args:    rest,
+				}
+			}
+		}
+		return resolved{res: Resolution{Kind: ResolveUnknown, Name: c.Name, Invoked: c.Name}}
+	}
+
 	// 5. ⊤
 	return resolved{res: Resolution{Kind: ResolveUnknown, Name: c.Name, Invoked: c.Name}}
 }

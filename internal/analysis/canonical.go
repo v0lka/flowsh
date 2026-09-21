@@ -83,27 +83,6 @@ type Canonical struct {
 	Key string `json:"key"`
 }
 
-// packageRunners are the package runners whose first non-flag operand names the
-// binary that actually executes. Their invocation form differs from the direct
-// binary path while the executed binary — and its effect — is the same, so the
-// canonical resolution consumes the runner.
-var packageRunners = map[string]bool{
-	"npx":  true,
-	"bunx": true,
-}
-
-// runnerValueFlags are the package-runner flags that take a separate value
-// operand, so the word after one is that flag's value, not the executed binary
-// (npx -p foo bar runs bar, not foo).
-var runnerValueFlags = map[string]bool{
-	"-p": true, "--package": true, "-c": true, "--call": true,
-}
-
-// nodeModulesBin is the directory segment every JavaScript project exposes its
-// local tool binaries under; stripping it maps a project-local binary path onto
-// the bare binary name.
-const nodeModulesBin = "node_modules/.bin"
-
 // commandCallOf builds the per-command view of one resolved invocation: cmd is
 // the frontend's normalized command (name, argument words, statement
 // redirections), res the binder's name resolution for it.
@@ -113,6 +92,14 @@ func commandCallOf(cmd *bash.Command, res bind.Resolution) CommandCall {
 	}
 	name := res.Name
 	if name == "" {
+		name = cmd.Name
+	}
+	// The package runner and the project-local bin path are INVOCATION-FORM
+	// normalizations: the comparable binary comes from the word as written at
+	// the call site (npx …, ./node_modules/.bin/tsc …), not from the resolved
+	// knowledge-base name the binder reports for them — otherwise the runner's
+	// operand would survive in Args (npx tsc -b would carry ["tsc","-b"]).
+	if bind.IsPackageRunner(cmd.Name) || bind.StripBinaryPath(cmd.Name) != cmd.Name {
 		name = cmd.Name
 	}
 	args := make([]string, 0, len(cmd.Args))
@@ -142,46 +129,13 @@ func commandCallOf(cmd *bash.Command, res bind.Resolution) CommandCall {
 // for a package runner — the runner's first non-flag operand with the runner's
 // own words consumed (npx --yes tsc -b → (tsc, [-b])). A runner that names no
 // operand keeps the basename rule, so bare npx still reports itself.
+//
+// The implementation lives in bind (bind.NormalizeBinaryName) so the
+// comparable form and the binder's resolution share one runner/path
+// vocabulary; the binder additionally refuses to BIND the -c/--call shape,
+// which this form-level normalization keeps as an ordinary value flag.
 func normalizeBinary(name string, args []string) (string, []string) {
-	if name == "" {
-		return "", args
-	}
-	if packageRunners[name] {
-		for i := 0; i < len(args); i++ {
-			a := args[i]
-			if a == "--" {
-				// The binary follows the option terminator.
-				if i+1 < len(args) {
-					r, _ := normalizeBinary(args[i+1], nil)
-					return r, args[i+2:]
-				}
-				continue
-			}
-			if strings.HasPrefix(a, "-") {
-				// Skip a value-taking runner flag together with its value, so
-				// -p foo does not mistake the package name for the binary.
-				if runnerValueFlags[a] {
-					i++
-				}
-				continue
-			}
-			r, _ := normalizeBinary(a, nil)
-			return r, args[i+1:]
-		}
-	}
-	if i := strings.LastIndex(name, nodeModulesBin); i >= 0 {
-		end := i + len(nodeModulesBin)
-		// Strip only a whole path segment (node_modules/.bin/…), never a
-		// directory that merely contains the substring (./node_modules/.binx/…).
-		if (i == 0 || name[i-1] == '/' || name[i-1] == '\\') &&
-			(end == len(name) || name[end] == '/' || name[end] == '\\') {
-			name = name[end:]
-		}
-	}
-	if j := strings.LastIndexAny(name, `/\`); j >= 0 {
-		name = name[j+1:]
-	}
-	return name, args
+	return bind.NormalizeBinaryName(name, args)
 }
 
 // identity is a comparable key for a call: two abstract executions of the same

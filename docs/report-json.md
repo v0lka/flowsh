@@ -194,8 +194,15 @@ consumer must read the JSON (see the [CLI guide](cli.md#human-summary)).
 | --- | ---- | ------- |
 | `kind` | string | How the invoked name resolved: `empty` \| `assignment` \| `builtin` \| `function` \| `alias` \| `command` \| `unknown`. |
 | `invoked` | string | The name as written at the call site. |
-| `name` | string | The resolved target name (differs from `invoked` for aliases/functions). |
+| `name` | string | The resolved target name (differs from `invoked` for aliases/functions, package runners and `node_modules/.bin/…` paths). |
 | `aliasChain` | array of string | The alias-expansion chain, when the name resolved through aliases. |
+
+A package runner (`npx`, `bunx`) and a project-local `node_modules/.bin/…` path
+resolve to the executed binary's own knowledge-base command: `npx vitest run`
+resolves as `kind: "command"`, `invoked: "npx"`, `name: "vitest"`. The shapes
+the analysis cannot bound stay `unknown` (⊤): an operand outside the knowledge
+base, a dynamic (`$PKG`) operand, a runner that names no operand, and
+`-c`/`--call` (an arbitrary shell string).
 
 The object always carries the *most informative* resolution observed across the
 program's calls. It is the zero value `{ "kind": "" }` whenever no call reached

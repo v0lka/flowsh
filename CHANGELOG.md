@@ -11,6 +11,72 @@ the two *frozen* wire-contract tags that the analyser emits — `effect-ir/v2`
 frozen contract is called out in the entry that makes it; the contract tags move
 only on a breaking shape change, not on every module release.
 
+## [v0.3.4] - 2026-09-21
+
+### Added
+
+- **Expanded ecosystem coverage in the knowledge base.** `kb/data/toolchain.yaml`
+  (dialect `pkgmgr`) and `kb/data/linting.yaml` (dialect `build`) grow by 114
+  commands across six toolchains, so the everyday Go, Node.js, Python, JVM, Rust
+  and Zig build/test/lint loops bind deterministically instead of degrading to ⊤:
+  - **Go** — developer tooling (`gopls`, `dlv`, `goreleaser`, `air`, `mockgen`,
+    `swag`, `wire`, `stringer`) and linters/formatters/reporters (`goimports`,
+    `gofumpt`, `govulncheck`, `gotestsum`, `errcheck`, `revive`, `ineffassign`,
+    `gosec`, `benchstat`, `go-junit-report`, `ginkgo`).
+  - **Node.js** — package managers/runtimes (`corepack`, `deno`), bundlers
+    (`vite`, `webpack`, `rollup`, `esbuild`, `swc`, `parcel`), meta-frameworks
+    (`next`, `nuxt`, `react-scripts`), task runners (`turbo`, `nx`, `lerna`,
+    `gulp`, `grunt`), process/runtime helpers (`pm2`, `node-gyp`, `tsx`,
+    `ts-node`, `nodemon`) and test/build drivers (`mocha`, `ava`, `playwright`,
+    `cypress`, `biome`, `oxlint`, `tsd`, `typedoc`, `uvu`, `rimraf`,
+    `concurrently`, `cross-env`, `serve`).
+  - **Python** — packaging and env tooling (`uvx`, `pipenv`, `pdm`, `hatch`,
+    `tox`, `nox`, `conda`, `mamba`, `virtualenv`, `pipx`, `ipython`, `jupyter`,
+    `twine`, `pyinstaller`) and checkers (`pytest`, `flake8`, `isort`, `pylint`,
+    `pyright`, `bandit`, `coverage`, `sphinx`, `autopep8`, `pydocstyle`).
+  - **JVM** — JDK/build tooling (`javac`, `javadoc`, `jar`, `jshell`, `keytool`,
+    `mvnd`, `scala`/`scalac`/`sbt`/`scala-cli`/`mill`,
+    `kotlin`/`kotlinc`/`kotlinc-jvm`/`kscript`, `ant`, `jbang`, `coursier`,
+    `groovy`, `clojure`, `lein`).
+  - **Rust/Zig** — `rustup`, `rustdoc`, `rust-analyzer`, `nextest`, the `cargo-*`
+    family (`cargo-audit`, `cargo-deny`, `cargo-watch`, `cargo-expand`,
+    `cargo-tarpaulin`), `wasm-pack`, `trunk`, `cross`, `bacon`, `rustfmt`, `zig`,
+    `zls`.
+
+  `kb/data/destructive.yaml` gains eleven class-C entries for the new commands
+  whose subcommand discards installed or downloaded content, mirroring the
+  existing `gem`/`cargo`/`snap`/`flatpak` removal precedent (`conda`/`mamba`
+  `remove` and `clean`, `pdm remove`, `pipenv uninstall` and `clean`,
+  `pipx uninstall`, `coursier uninstall`, `rustup uninstall`, `lerna clean`).
+  The common-binary inventory gate (`kb/coverage_test.go`) grows by the 114 names
+  (with a representative family probe per ecosystem), the conformance corpus
+  gains eighteen benign cases (three per ecosystem) pinning that the new surface
+  stays non-⊤, and the latency baseline follows the enlarged corpus.
+- **Documentation.** The command→dialect map in `specs/domains/knowledge-base.md`
+  now lists the complete inventory of every command in the knowledge base, and the
+  `toolchain.yaml` / `linting.yaml` descriptions name the expanded ecosystems.
+
+## [v0.3.3] - 2026-09-21
+
+### Added
+
+- **Package-runner and project-local bin-path resolution (bind).** The binder
+  resolves `npx`/`bunx` to their first non-flag literal operand and the
+  `./node_modules/.bin/<bin>` path forms to the bare binary, then binds the
+  resolved binary's own knowledge-base signature: `npx vitest run …`,
+  `npx tsc -b` and `./node_modules/.bin/vitest run` now bound deterministically
+  instead of degrading to ⊤ — the everyday JS-stack verification loop the
+  silent-mode audit recorded as C6 false denies (events 959718, 961162, 961231,
+  962610, 963134, 964220, 968408). The fail-closed shapes are unchanged: an
+  operand outside the knowledge base (a registry fetch whose code the analysis
+  cannot see), a dynamic operand, a runner that names no operand, and
+  `-c`/`--call` (an arbitrary shell string) all stay ⊤. The conditional
+  registry fetch is deliberately not modelled, matching the `npm run`/`exec`
+  and `bun` entries. `NormalizeBinaryName` moves to `bind` as the single
+  runner/path vocabulary shared with the canonical form (comparable form
+  unchanged: the audited 963134/963140 retry pair keeps one canonical key).
+  The coverage gate grows the runner/path family probes.
+
 ## [v0.3.2] - 2026-09-21
 
 ### Fixed

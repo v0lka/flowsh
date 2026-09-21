@@ -197,6 +197,132 @@
       "lang": "bash",
       "input": "git log --oneline --all -- code-review.md | head",
       "note": "audit track A: dotted pathspec is a filename, not a dotted DNS name"
+    },
+    {
+      "id": "ben-new-go-imports",
+      "group": "benign",
+      "lang": "bash",
+      "input": "goimports -w .",
+      "note": "new Go ecosystem: the goimports driver rewrites imports in place"
+    },
+    {
+      "id": "ben-new-go-gofumpt",
+      "group": "benign",
+      "lang": "bash",
+      "input": "gofumpt -w .",
+      "note": "new Go ecosystem: the gofumpt formatter rewrites sources in place"
+    },
+    {
+      "id": "ben-new-go-vulncheck",
+      "group": "benign",
+      "lang": "bash",
+      "input": "govulncheck ./...",
+      "note": "new Go ecosystem: the vulnerability scanner reads the module"
+    },
+    {
+      "id": "ben-new-node-vite",
+      "group": "benign",
+      "lang": "bash",
+      "input": "npx vite build",
+      "note": "new Node ecosystem: the npx runner resolves vite through the KB and builds"
+    },
+    {
+      "id": "ben-new-node-esbuild",
+      "group": "benign",
+      "lang": "bash",
+      "input": "bunx esbuild app.ts",
+      "note": "new Node ecosystem: the bunx runner resolves esbuild through the KB"
+    },
+    {
+      "id": "ben-new-node-turbo",
+      "group": "benign",
+      "lang": "bash",
+      "input": "npx turbo run build",
+      "note": "new Node ecosystem: the npx runner resolves turbo through the KB"
+    },
+    {
+      "id": "ben-new-py-pipenv",
+      "group": "benign",
+      "lang": "bash",
+      "input": "pipenv install",
+      "note": "new Python ecosystem: the pipenv dependency manager"
+    },
+    {
+      "id": "ben-new-py-pytest",
+      "group": "benign",
+      "lang": "bash",
+      "input": "pytest -q",
+      "note": "new Python ecosystem: the pytest test runner"
+    },
+    {
+      "id": "ben-new-py-conda",
+      "group": "benign",
+      "lang": "bash",
+      "input": "conda env list",
+      "note": "new Python ecosystem: the conda environment manager (read-only listing)"
+    },
+    {
+      "id": "ben-new-jvm-javac",
+      "group": "benign",
+      "lang": "bash",
+      "input": "javac Foo.java",
+      "note": "new JVM ecosystem: the javac compiler"
+    },
+    {
+      "id": "ben-new-jvm-sbt",
+      "group": "benign",
+      "lang": "bash",
+      "input": "sbt compile",
+      "note": "new JVM ecosystem: the sbt build driver"
+    },
+    {
+      "id": "ben-new-jvm-kotlinc",
+      "group": "benign",
+      "lang": "bash",
+      "input": "kotlinc app.kt",
+      "note": "new JVM ecosystem: the Kotlin compiler"
+    },
+    {
+      "id": "ben-new-rust-rustup",
+      "group": "benign",
+      "lang": "bash",
+      "input": "rustup show",
+      "note": "new Rust ecosystem: the rustup toolchain manager (read-only)"
+    },
+    {
+      "id": "ben-new-rust-rustfmt",
+      "group": "benign",
+      "lang": "bash",
+      "input": "rustfmt src/main.rs",
+      "note": "new Rust ecosystem: the rustfmt formatter"
+    },
+    {
+      "id": "ben-new-rust-nextest",
+      "group": "benign",
+      "lang": "bash",
+      "input": "cargo nextest run",
+      "note": "new Rust ecosystem: the cargo nextest runner"
+    },
+    {
+      "id": "ben-new-rust-wasm-pack",
+      "group": "benign",
+      "lang": "bash",
+      "input": "wasm-pack build",
+      "note": "new Rust ecosystem: the wasm-pack build driver"
+    },
+    {
+      "id": "ben-new-zig-build",
+      "group": "benign",
+      "lang": "bash",
+      "input": "zig build",
+      "note": "new Zig ecosystem: the zig build system"
+    },
+    {
+      "id": "ben-new-zig-zls",
+      "group": "benign",
+      "lang": "bash",
+      "input": "zls version",
+      "note": "new Zig ecosystem: the zls language server"
     }
   ]
 }
