@@ -184,7 +184,7 @@ After updating, verify:
 <!-- Correct -->
 - The engine package imports only the standard library or other engine packages.
 - A frontend emits the top element ⊤ instead of failing when it cannot bound the input.
-- The binder resolves a name through builtin, function, alias, then PATH, in that order.
+- The binder resolves a name through alias, function, builtin, then PATH, in that order.
 
 <!-- Incorrect -->
 - The engine should not import a frontend.

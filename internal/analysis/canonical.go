@@ -30,10 +30,16 @@ type CommandCall struct {
 	// Invoked is the name exactly as written at the call site (the alias or
 	// path form, before normalization).
 	Invoked string `json:"invoked,omitempty"`
-	// Resolved is the normalized binary the invocation resolves to: the
-	// basename of the resolved name with any node_modules/.bin directory
-	// segment stripped, and for a package runner (npx) the first non-flag
-	// operand. npx tsc -b and ./node_modules/.bin/tsc -b both resolve to tsc.
+	// Resolved is the normalized binary the invocation resolves to: when the
+	// binder resolved the invocation to a knowledge-base command, that command's
+	// name; otherwise the basename of the resolved name (the alias target,
+	// function name, or the invoked word) with any node_modules/.bin directory
+	// segment stripped (and, for a package runner, of its first non-flag
+	// operand).
+	// npx tsc -b and ./node_modules/.bin/tsc -b both resolve to tsc, and npx
+	// mvnw package, ./mvnw package and mvnw package all resolve to mvn (the
+	// wrapper alias), so every spelling of one binary reports one resolved
+	// identity.
 	Resolved string `json:"resolved,omitempty"`
 	// Args are the invocation's argument values after normalization: for a
 	// package runner the runner's own words (flags and the binary operand) are
@@ -94,14 +100,6 @@ func commandCallOf(cmd *bash.Command, res bind.Resolution) CommandCall {
 	if name == "" {
 		name = cmd.Name
 	}
-	// The package runner and the project-local bin path are INVOCATION-FORM
-	// normalizations: the comparable binary comes from the word as written at
-	// the call site (npx …, ./node_modules/.bin/tsc …), not from the resolved
-	// knowledge-base name the binder reports for them — otherwise the runner's
-	// operand would survive in Args (npx tsc -b would carry ["tsc","-b"]).
-	if bind.IsPackageRunner(cmd.Name) || bind.StripBinaryPath(cmd.Name) != cmd.Name {
-		name = cmd.Name
-	}
 	args := make([]string, 0, len(cmd.Args))
 	for _, a := range cmd.Args {
 		if a == nil || a.Value == "" {
@@ -109,7 +107,29 @@ func commandCallOf(cmd *bash.Command, res bind.Resolution) CommandCall {
 		}
 		args = append(args, a.Value)
 	}
-	resolved, rest := normalizeBinary(name, args)
+	// The package runner is the one INVOCATION-FORM normalization: its operand
+	// names the executed binary, so the runner's own words must be consumed
+	// from the word as written at the call site (npx tsc -b → tsc [-b]).
+	// It applies only when the word really is the runner: a program alias or
+	// function shadowing npx/bunx resolves through the binder instead — the
+	// binder's resolved name stands and the call's own words are kept — and a
+	// runner word the binder bound to a knowledge-base command of its own uses
+	// that command's argv unchanged. (The bash frontend dispatches declared
+	// functions itself, so the function case reaches the binder only through a
+	// direct caller.)
+	shadowed := res.Kind == bind.ResolveAlias || res.Kind == bind.ResolveFunction
+	runnerBound := res.Kind == bind.ResolveCommand && res.Name == cmd.Name
+	resolved, rest := bind.StripBinaryPath(name), args
+	if !shadowed && !runnerBound && bind.IsPackageRunner(cmd.Name) {
+		resolved, rest = normalizeBinary(cmd.Name, args)
+	}
+	// Whenever the binder resolved the invocation to a knowledge-base command,
+	// that command's name is the one resolved identity every spelling of the
+	// binary shares: ./mvnw, mvnw and npx mvnw all report mvn — the literal
+	// form-level rule cannot see the alias.
+	if res.Kind == bind.ResolveCommand && res.Name != "" {
+		resolved = res.Name
+	}
 	redirs := make([]CallRedirect, 0, len(cmd.Redirs))
 	for _, r := range cmd.Redirs {
 		redirs = append(redirs, CallRedirect{Op: r.Op, Target: r.Target, Known: r.Known})
@@ -132,8 +152,11 @@ func commandCallOf(cmd *bash.Command, res bind.Resolution) CommandCall {
 //
 // The implementation lives in bind (bind.NormalizeBinaryName) so the
 // comparable form and the binder's resolution share one runner/path
-// vocabulary; the binder additionally refuses to BIND the -c/--call shape,
-// which this form-level normalization keeps as an ordinary value flag.
+// vocabulary. Both refuse the -c/--call shape: the binder declines to BIND it
+// (⊤), and this form-level normalization likewise consumes no operand for it,
+// so a runner that carries -c/--call keeps its own basename as the resolved
+// binary (npx -c 'X' Y → resolved "npx") rather than reporting the shell
+// string's word.
 func normalizeBinary(name string, args []string) (string, []string) {
 	return bind.NormalizeBinaryName(name, args)
 }

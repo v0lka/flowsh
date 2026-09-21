@@ -1,4 +1,4 @@
-// Package-runner and project-local binary-path resolution.
+// Runner (npx, bunx) and project-local binary-path resolution.
 //
 // A JavaScript project invokes the same binary under three spellings — the
 // package runner (npx vitest …), the project-local bin path
@@ -24,6 +24,7 @@
 // locally is deliberately not modelled, matching the sibling entries the KB
 // already ships: npm run/exec and bun execute package scripts without a
 // NetEgress effect. The executed binary's own signature is the bound surface.
+
 package bind
 
 import "strings"
@@ -82,48 +83,61 @@ func StripBinaryPath(name string) string {
 	return name
 }
 
-// runnerBinary consumes the runner's own words from a plain-string argv and
-// returns the executed binary operand plus the argv that survives for it.
-// It is the string-level twin of runnerBinaryArgs for callers without
-// literalness information (the canonical form).
-func runnerBinary(args []string) (bin string, rest []string, ok bool) {
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if a == "--" {
-			// The binary follows the option terminator.
-			if i+1 < len(args) {
-				return args[i+1], args[i+2:], true
-			}
-			continue
-		}
-		if strings.HasPrefix(a, "-") {
-			// -c/--call executes an arbitrary shell string: unresolvable.
-			if runnerShellExecFlags[a] {
-				return "", nil, false
-			}
-			// Skip a value-taking runner flag together with its value, so
-			// -p foo does not mistake the package name for the binary.
-			if runnerValueFlags[a] {
-				i++
-			}
-			continue
-		}
-		return a, args[i+1:], true
+// runnerFlag splits a runner flag word into its flag name and whether its value
+// is attached to the same word. --call=X and -cX bind the same flag as
+// --call X and -c X, so the fail-closed check must see through the attachment.
+func runnerFlag(word string) (name string, attached bool) {
+	if !strings.HasPrefix(word, "-") || word == "-" || word == "--" {
+		return word, false
 	}
-	return "", nil, false
+	if eq := strings.IndexByte(word, '='); eq >= 0 {
+		return word[:eq], true
+	}
+	if !strings.HasPrefix(word, "--") && len(word) > 2 {
+		return word[:2], true
+	}
+	return word, false
+}
+
+// runnerBinary consumes the runner's own words from a plain-string argv and
+// returns the executed binary operand plus the argv that survives for it. It is
+// the string-level twin of runnerBinaryArgs, kept for the comparable form (the
+// canonical view), which carries no literalness information: every word is
+// literal, so it delegates to runnerBinaryArgs rather than duplicating the
+// consumption rule — the two cannot drift.
+func runnerBinary(args []string) (bin string, rest []string, ok bool) {
+	argv := make([]Arg, len(args))
+	for i, a := range args {
+		argv[i] = Arg{Value: a, Literal: true}
+	}
+	operand, tail, ok := runnerBinaryArgs(argv)
+	if !ok {
+		return "", nil, false
+	}
+	rest = make([]string, len(tail))
+	for i, a := range tail {
+		rest[i] = a.Value
+	}
+	return operand.Value, rest, true
 }
 
 // runnerBinaryArgs is the Arg-level runner consumption used by resolution: the
 // runner's own words (flags and value operands, the terminator) are consumed
-// and the first non-flag LITERAL operand is the executed binary. A non-literal
-// word met before the operand (npx $PKG) makes the binary unknowable — the
-// call stays ⊤.
+// and the first non-flag LITERAL operand — before or after the -- terminator —
+// is the executed binary. A non-literal word met before the operand (npx $PKG)
+// or as the -- operand (npx -- $PKG) makes the binary unknowable — the call
+// stays ⊤.
 func runnerBinaryArgs(args []Arg) (operand Arg, rest []Arg, ok bool) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a.Value == "--" && a.Literal {
 			// The binary follows the option terminator.
 			if i+1 < len(args) {
+				if !args[i+1].Literal {
+					// A dynamic operand is not statically known: refuse it
+					// exactly as the sibling branches below do.
+					return Arg{}, nil, false
+				}
 				return args[i+1], args[i+2:], true
 			}
 			continue
@@ -134,13 +148,16 @@ func runnerBinaryArgs(args []Arg) (operand Arg, rest []Arg, ok bool) {
 				// known to be a flag value or the binary.
 				return Arg{}, nil, false
 			}
-			// -c/--call executes an arbitrary shell string: unresolvable.
-			if runnerShellExecFlags[a.Value] {
+			flag, attached := runnerFlag(a.Value)
+			// -c/--call executes an arbitrary shell string: unresolvable,
+			// whether written -c X, --call X, --call=X or -cX.
+			if runnerShellExecFlags[flag] {
 				return Arg{}, nil, false
 			}
-			// Skip a value-taking runner flag together with its value, so
-			// -p foo does not mistake the package name for the binary.
-			if runnerValueFlags[a.Value] {
+			// Skip a value-taking runner flag together with its value
+			// (-p foo); a value attached to the flag (--package=foo) has no
+			// separate word to skip.
+			if runnerValueFlags[flag] && !attached {
 				i++
 			}
 			continue
@@ -163,9 +180,13 @@ func runnerBinaryArgs(args []Arg) (operand Arg, rest []Arg, ok bool) {
 // bare npx still reports itself.
 //
 // This is the comparable-FORM normalization the report's CommandCall view is
-// built on; it carries no literalness information and (unlike resolution)
-// treats -c/--call as an ordinary value flag — the binding layer is what
-// refuses to bound those.
+// built on. It carries no literalness information, but it applies the same
+// fail-closed rule the binding layer does: a runner invocation carrying
+// -c/--call consumes no operand, so the runner keeps its own basename
+// (npx -c 'X' Y normalizes to (npx, [-c X Y]), not (Y, [])) rather than
+// reporting the arbitrary shell string's word as the executed binary. That
+// tightening is the only comparable-form change from the pre-bind npx
+// handling; the audited runner/path retry pair is unaffected.
 func NormalizeBinaryName(name string, args []string) (string, []string) {
 	if name == "" {
 		return "", args

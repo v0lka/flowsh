@@ -194,15 +194,23 @@ consumer must read the JSON (see the [CLI guide](cli.md#human-summary)).
 | --- | ---- | ------- |
 | `kind` | string | How the invoked name resolved: `empty` \| `assignment` \| `builtin` \| `function` \| `alias` \| `command` \| `unknown`. |
 | `invoked` | string | The name as written at the call site. |
-| `name` | string | The resolved target name (differs from `invoked` for aliases/functions, package runners and `node_modules/.bin/…` paths). |
+| `name` | string | The resolved target name (differs from `invoked` for aliases/functions and for the invocation forms that map onto a knowledge-base command: a package runner, a `node_modules/.bin/…` path, or a project-local wrapper script such as `./mvnw`). |
 | `aliasChain` | array of string | The alias-expansion chain, when the name resolved through aliases. |
 
-A package runner (`npx`, `bunx`) and a project-local `node_modules/.bin/…` path
-resolve to the executed binary's own knowledge-base command: `npx vitest run`
-resolves as `kind: "command"`, `invoked: "npx"`, `name: "vitest"`. The shapes
-the analysis cannot bound stay `unknown` (⊤): an operand outside the knowledge
-base, a dynamic (`$PKG`) operand, a runner that names no operand, and
-`-c`/`--call` (an arbitrary shell string).
+A package runner (`npx`, `bunx`) and any path-qualified name — the
+`node_modules/.bin/…` seam and a project-local wrapper script (`./mvnw`,
+`./gradlew`) are its motivating forms, though the rule is the general basename
+one — resolve to the executed binary's own knowledge-base command:
+`npx vitest run` resolves as
+`kind: "command"`, `invoked: "npx"`, `name: "vitest"`, and `npx mvnw package`
+and `./mvnw package` both resolve as `name: "mvn"` (the wrapper alias). The
+shapes the analysis cannot bound stay `unknown` (⊤): an operand outside the
+knowledge base, a dynamic (`$PKG`) operand, a runner that names no operand,
+`-c`/`--call` (an arbitrary shell string), a code-execution interpreter operand
+(`npx node -e …`, which the frontend already forces to ⊤ for the bare
+`node -e …` spelling), and a path-qualified runner spelling
+(`./node_modules/.bin/npx …`, whose basename is not itself a knowledge-base
+command).
 
 The object always carries the *most informative* resolution observed across the
 program's calls. It is the zero value `{ "kind": "" }` whenever no call reached
@@ -223,7 +231,7 @@ omitted when no call reached the binder (the same condition as a zero-value
 | Key | Type | Meaning |
 | --- | ---- | ------- |
 | `invoked` | string | The name exactly as written at the call site. |
-| `resolved` | string | The normalized binary: the basename of the resolved name with a `node_modules/.bin` segment stripped, and for a package runner (`npx`, `bunx`) the first non-flag operand. |
+| `resolved` | string | The normalized binary the invocation resolved to: the knowledge-base command's name (one identity shared by every spelling of the binary — bare, path-qualified, wrapper alias or package-runner operand), or, when it resolved to no knowledge-base command, the basename of the resolved name (the alias target, function name, or the invoked word) with any `node_modules/.bin` segment stripped (for a package runner, of its first non-flag operand). A dynamic operand the frontend could not resolve carries no value and is dropped, so the comparable form then takes the next non-flag word; read `resolution.kind`/`conservative` to tell whether a call was actually bounded. |
 | `args` | array of string | The invocation's argument values after normalization (the runner's own words consumed; empty values dropped). |
 | `redirs` | array of redirect | The statement's resolved redirections (`{ "op": string, "target": string, "known": bool }`), the ordering witness the canonical staging fold reads. |
 

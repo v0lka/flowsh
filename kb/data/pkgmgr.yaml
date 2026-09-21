@@ -586,6 +586,9 @@ commands:
       - spec: test
         kind: positional
         effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      - spec: nextest
+        kind: positional
+        effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
       - spec: publish
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}

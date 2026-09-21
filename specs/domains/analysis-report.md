@@ -93,8 +93,8 @@ The JSON field contract (a flowsh report is an engine report plus CLI metadata):
 | `top` | bool | Analysis degraded to ⊤ (unknown/unbounded). |
 | `reason` | string | Present (`omitempty`) only when `top`/`conservative`; explains the degradation. |
 | `commands` | int | Number of commands/statements analysed. |
-| `resolution` | `bind.Resolution` | Aggregated name-resolution outcome across the calls (`kind` `builtin`/`function`/`alias`/`command`/…); the zero value (`kind: ""`) on the PowerShell path. |
-| `commandCalls` | array of `CommandCall` | Per-command resolution view: every distinct call the binder saw (a repeated call site, such as a loop body, contributes one entry) with its `invoked` name (as written), its `resolved` binary (basename, `node_modules/.bin` segment stripped, package runners such as `npx` consumed — `npx tsc -b` and `./node_modules/.bin/tsc -b` both resolve to `tsc`), its non-empty argument values and its statement's resolved `redirs` (`omitempty`; absent on the PowerShell path and when no call reached the binder). |
+| `resolution` | `bind.Resolution` | Aggregated name-resolution outcome across the calls (`kind` `alias`/`function`/`builtin`/`command`/…); `name` is the resolved target name and differs from `invoked` for aliases/functions and for the package-runner / path-linked forms that map onto a knowledge-base command. The zero value (`kind: ""`) on the PowerShell path. |
+| `commandCalls` | array of `CommandCall` | Per-command resolution view: every distinct call the binder saw (a repeated call site, such as a loop body, contributes one entry) with its `invoked` name (as written), its `resolved` binary — the knowledge-base command the invocation resolved to, so every spelling of one binary shares one identity (`npx tsc -b` and `./node_modules/.bin/tsc -b` both resolve to `tsc`; a wrapper alias resolves to its target, so `npx mvnw` and `./mvnw` report `mvn`), or, when it resolved to no knowledge-base command, the basename of the resolved name with any `node_modules/.bin` segment stripped, its non-empty argument values and its statement's resolved `redirs` (`omitempty`; absent on the PowerShell path and when no call reached the binder). |
 | `canonical` | `Canonical` | The effect-based canonical form for signature comparison: the report's effects normalized (a staged temp write folded onto the destination of the trailing `mv` — `sed … > tmp && mv tmp file` ≡ `sed -i … file`; non-path operand targets such as a sed script or a grep pattern dropped) plus the deterministic `key` (sorted `Effect.Key()` values joined by `;`). Present whenever the report has effects. |
 | `destructive` | array of `DestructiveFinding` | Matched knowledge-base destructive-flags entries (`command`, `spec`, `class` `A`–`E`, `reason`), de-duplicated and sorted (`omitempty`). |
 | `notes` | array of string | Frontend diagnostics (`omitempty`). |
@@ -170,7 +170,7 @@ Group constants and semantics:
 | `GroupDestructive` | `"destructive"` | Canonical destructive commands (recall). | true |
 | `GroupBenign` | `"benign"` | Ordinary commands (precision control). | false |
 | `GroupPS` | `"ps"` | PowerShell-specific adversarial/recall cases. | true |
-| `GroupResolution` | `"resolution"` | Recall cases for the A2 name-resolution chain: every case's report must expose the command its invocation actually named (builtin/function/alias/external/unknown). | true |
+| `GroupResolution` | `"resolution"` | Recall cases for the A2 name-resolution chain: every case's report must expose the command its invocation actually named (alias/function/builtin/external/unknown). | true |
 
 `Case.RequiresCoverage()` is `Group != GroupBenign`: benign commands may legitimately yield no effect, so they are excluded from the "effect present or ⊤" invariant.
 

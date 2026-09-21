@@ -43,15 +43,21 @@ only on a breaking shape change, not on every module release.
     `cargo-tarpaulin`), `wasm-pack`, `trunk`, `cross`, `bacon`, `rustfmt`, `zig`,
     `zls`.
 
-  `kb/data/destructive.yaml` gains eleven class-C entries for the new commands
-  whose subcommand discards installed or downloaded content, mirroring the
-  existing `gem`/`cargo`/`snap`/`flatpak` removal precedent (`conda`/`mamba`
-  `remove` and `clean`, `pdm remove`, `pipenv uninstall` and `clean`,
-  `pipx uninstall`, `coursier uninstall`, `rustup uninstall`, `lerna clean`).
-  The common-binary inventory gate (`kb/coverage_test.go`) grows by the 114 names
-  (with a representative family probe per ecosystem), the conformance corpus
-  gains eighteen benign cases (three per ecosystem) pinning that the new surface
-  stays non-⊤, and the latency baseline follows the enlarged corpus.
+  `kb/data/destructive.yaml` gains eleven class-C entries covering content-
+  discarding removals among the new commands, mirroring the existing
+  `gem`/`cargo`/`snap`/`flatpak` removal precedent (`conda`/`mamba` `remove`
+  and `clean`, `pdm remove`, `pipenv uninstall` and `clean`, `pipx uninstall`,
+  `coursier uninstall`, `rustup uninstall`, `lerna clean`).
+  `kb/data/pkgmgr.yaml` gives the remaining `go` subcommands their own specs
+  (`work`, `tool`, `fmt`, `doc`, `list`, `fix`), so those invocations carry a
+  specific effect (`go fmt` writes, `go doc`/`go list` read) instead of the
+  generic positional fallback.
+  The common-binary inventory gate (`kb/coverage_test.go`) grows by the 114
+  command names plus the `mvnw`/`cargo-fmt` wrapper aliases (116 entries, with
+  representative family probes across the new ecosystems), the conformance
+  corpus gains eighteen benign cases spanning the six ecosystems (Go, Node.js,
+  Python, JVM, Rust, Zig) pinning that the new surface stays non-⊤, and the
+  latency baseline follows the enlarged corpus.
 - **Documentation.** The command→dialect map in `specs/domains/knowledge-base.md`
   now lists the complete inventory of every command in the knowledge base, and the
   `toolchain.yaml` / `linting.yaml` descriptions name the expanded ecosystems.
@@ -69,13 +75,21 @@ only on a breaking shape change, not on every module release.
   silent-mode audit recorded as C6 false denies (events 959718, 961162, 961231,
   962610, 963134, 964220, 968408). The fail-closed shapes are unchanged: an
   operand outside the knowledge base (a registry fetch whose code the analysis
-  cannot see), a dynamic operand, a runner that names no operand, and
-  `-c`/`--call` (an arbitrary shell string) all stay ⊤. The conditional
+  cannot see), a dynamic operand, a runner that names no operand,
+  `-c`/`--call` (an arbitrary shell string), and a code-execution interpreter
+  operand (`npx node -e …`, ⊤ like the bare `node -e …`) all stay ⊤. The
+  conditional
   registry fetch is deliberately not modelled, matching the `npm run`/`exec`
   and `bun` entries. `NormalizeBinaryName` moves to `bind` as the single
-  runner/path vocabulary shared with the canonical form (comparable form
-  unchanged: the audited 963134/963140 retry pair keeps one canonical key).
-  The coverage gate grows the runner/path family probes.
+  runner/path vocabulary shared with the canonical form (the audited
+  963134/963140 retry pair keeps one canonical key). The comparable form now
+  also fails closed on a runner's `-c`/`--call` flag, exactly as the binder
+  does, so `npx -c 'X' Y` reports `commandCalls[].resolved` as the runner's own
+  name (`npx`) instead of the shell string's word (`Y`); and it reports the
+  binder's resolved identity for every spelling, so `npx mvnw`, `./mvnw` and
+  `mvnw` all report `resolved: "mvn"` (the wrapper alias). Together these are
+  the comparable-form changes from the pre-change `npx` handling. The coverage
+  gate grows the runner/path family probes.
 
 ## [v0.3.2] - 2026-09-21
 

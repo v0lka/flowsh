@@ -1,6 +1,6 @@
 {
   "name": "resolution-bash",
-  "description": "A2 name-resolution recall: each case exercises one link of the resolution chain (builtin → function → alias → external command → unknown). Every case must be classified as 'effect present or top', and the report must expose the decisive Resolution.Kind (which command the invocation actually named), with alias cases carrying a non-empty AliasChain. Both the bash and the POSIX (front/bash in the POSIX variant) dialects are covered (A6).",
+  "description": "A2 name-resolution recall: each case exercises one link of the resolution chain (alias → function → builtin → external command → unknown). Every case must be classified as 'effect present or top', and the report must expose the decisive Resolution.Kind (which command the invocation actually named), with alias cases carrying a non-empty AliasChain. Both the bash and the POSIX (front/bash in the POSIX variant) dialects are covered (A6).",
   "cases": [
     { "id": "res-alias-ls",    "group": "resolution", "lang": "bash",  "input": "alias ll='ls -l'\nll /tmp",  "note": "an in-program alias: ll expands to ls -l, so resolution kind is alias with chain [ll]" },
     { "id": "res-alias-chain", "group": "resolution", "lang": "bash",  "input": "alias a='ls'\nalias b='a -l'\nb", "note": "a chained alias b → a → ls; the alias chain must list both links (b, a)" },

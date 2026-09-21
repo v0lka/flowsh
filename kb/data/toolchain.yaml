@@ -2,7 +2,10 @@ version: effect-kb/v2
 # ---------------------------------------------------------------------------
 # Language runtimes and their ecosystem tooling: Node (node/npx/bun), Python
 # (python/uv/poetry), Ruby (ruby/bundle), Java (java/mvn/gradle), .NET
-# (dotnet), PHP (php/composer) and Elixir (elixir/mix).
+# (dotnet), PHP (php/composer) and Elixir (elixir/mix), plus the extended
+# toolchains documented below — Go, the wider Node.js bundler/framework/
+# task-runner surface, Python env/checker tooling, the JVM (Scala/Kotlin/JDK)
+# toolchain and Rust/Zig.
 #
 # Sources: node(1)/npx(1)/bun(1), python(1)/uv(1)/poetry(1), ruby(1)/bundle(1),
 # java(1)/mvn(1)/gradle(1), dotnet(1), php(1)/composer(1) and elixir(1)/mix(1).
@@ -81,20 +84,27 @@ commands:
 
   # NOTE: `npx` is deliberately NOT modelled here — and does not need to be.
   # A package runner (`npx <bin>`) executes its first non-flag operand, so the
-  # BINDER resolves the runner (and the equivalent ./node_modules/.bin/<bin>
-  # path form, bind/runner.go) onto the operand's own knowledge-base command:
+  # BINDER resolves the runner (and any path-qualified spelling whose basename
+  # is a modelled binary — the ./node_modules/.bin/<bin> bin-dir seam and the
+  # project-local wrapper script ./mvnw, bind/resolve.go step 4a) onto the
+  # operand's own knowledge-base command:
   # `npx vitest run` binds vitest's signature, `npx tsc -b` binds tsc's, and
   # both retry-pair spellings carry one canonical identity
   # (internal/analysis/canonical_test.go
   # TestCanonicalNpxTscVsLocalBinaryIsNotSplit). The fail-closed shapes stay ⊤:
   # an operand outside the knowledge base (a registry fetch whose code the
   # analysis cannot see), a dynamic operand, a runner that names no operand,
-  # and -c/--call (an arbitrary shell string). A KB signature for `npx` itself
+  # -c/--call (an arbitrary shell string), and a code-execution interpreter
+  # operand (npx node -e … — ⊤ like the bare node -e …, matching the
+  # frontend's own sink rule). A KB signature for `npx` itself
   # would UNDER-approximate — bounding `npx <unmodelled-pkg>` as a known
   # quantity — which is exactly what the binder-level resolution avoids.
   # The conditional registry fetch is deliberately not modelled, matching the
   # npm run/exec and bun entries: the executed binary's signature is the bound
-  # surface.
+  # surface. Accepted precision/recall trade-off: the path rule is the general
+  # basename one, so a path whose basename names a modelled binary (e.g.
+  # /opt/tools/tsc) binds to that binary's signature rather than degrading to
+  # ⊤ — the same trust PATH already grants the bare name.
 
   - name: bun
     dialect: pkgmgr
@@ -984,8 +994,8 @@ commands:
   # contributes CodeExec; a generator that writes files is FSWrite; a
   # release/publish step reaches a registry (NetEgress — the pkgmgr dialect is
   # the strict egress tier); read-only inspection is FSRead; version/help output
-  # is Stdio/FSRead.  Every entry declares at least one operand so a bare
-  # invocation still yields a bounded, non-⊤ report.
+  # is Stdio/FSRead.  Every entry either declares an operand or carries a
+  # `self` parameter, so a bare invocation still yields a bounded, non-⊤ report.
   - name: gopls
     dialect: pkgmgr
     params:

@@ -32,6 +32,14 @@ var sinkSet = map[string]bool{
 // `python3`.
 func isSink(name string) bool { return sinkSet[commandBase(name)] }
 
+// IsCodeExecutionSink reports whether an invocation of name runs a program whose
+// executed code the analysis cannot bound — a shell, an interpreter, a container
+// runtime — matched by basename like isSink. It is the exported companion the
+// binder uses so that a package runner's operand stays consistent with the
+// frontend's own sink rule: the operand of `npx node -e …` runs exactly what the
+// bare `node -e …` runs, so the runner spelling must stay ⊤ too.
+func IsCodeExecutionSink(name string) bool { return isSink(name) }
+
 // commandBase returns the name an invocation actually runs: the basename of a
 // path-qualified name ("/bin/sh" → "sh"), and the name itself when it carries no
 // path separator. A path with no final component ("/", "/x/..") is returned

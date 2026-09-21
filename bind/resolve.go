@@ -8,8 +8,9 @@ import (
 )
 
 // ResolveKind classifies where a command name resolves. The chain followed is
-// alias → function → builtin → PATH, plus the two degenerate cases of a call
-// that names no command at all.
+// alias → function → builtin → PATH, then the two invocation-form links (a
+// path-qualified basename and a package runner's operand), plus the two
+// degenerate cases of a call that names no command at all.
 type ResolveKind string
 
 const (
@@ -19,14 +20,18 @@ const (
 	// ResolveAssignment is a statement that is a bare environment assignment
 	// (FOO=1) with no command word.
 	ResolveAssignment ResolveKind = "assignment"
-	// ResolveBuiltin is a shell builtin — the first link of the chain.
+	// ResolveBuiltin is a shell builtin with a knowledge-base signature (a
+	// declared alias or function of the same name shadows it).
 	ResolveBuiltin ResolveKind = "builtin"
 	// ResolveFunction is a shell function declared by the analysed program.
 	ResolveFunction ResolveKind = "function"
 	// ResolveAlias is a shell alias declared by the analysed program.
 	ResolveAlias ResolveKind = "alias"
 	// ResolveCommand is an external command for which the knowledge base has a
-	// signature — the PATH link of the chain.
+	// signature — the PATH link of the chain, and also the outcome of the two
+	// resolution links that map an invocation form onto such a command: the
+	// path-qualified basename (./node_modules/.bin/tsc, ./mvnw) and the package
+	// runner's operand (npx tsc, bunx tsc).
 	ResolveCommand ResolveKind = "command"
 	// ResolveUnknown is the top: nothing named the command, so the analysis
 	// must assume ⊤.
@@ -66,9 +71,15 @@ type resolved struct {
 // → command (PATH), matching the shell's own precedence (a declared alias or
 // function shadows a builtin of the same name). Aliases are expanded (bounded by
 // maxAliasDepth) to the effective command and argv, while Kind records that the
-// name resolved through an alias. A name that matches nothing resolves to
-// ResolveUnknown, and a call with no statically-known name resolves to
-// ResolveUnknown as well.
+// name resolved through an alias. After the PATH miss the chain adds two
+// invocation-form links that map a spelling onto a knowledge-base command (both
+// reported as ResolveCommand): 4a reduces a path-qualified name to its basename
+// (./node_modules/.bin/tsc, ./mvnw), and 4b consumes a package runner's own
+// words to take its first non-flag literal operand as the executed binary
+// (npx tsc, bunx tsc) — unless that operand is itself a code-execution sink
+// (npx node -e …), which stays ⊤ like the bare spelling. A name that matches
+// nothing resolves to ResolveUnknown, and a call with no statically-known name
+// resolves to ResolveUnknown as well.
 func (b *Binder) resolve(c *Call) resolved {
 	if !c.NameOK || c.Name == "" {
 		return resolved{res: Resolution{Kind: ResolveUnknown, Invoked: c.Name}}
@@ -127,12 +138,21 @@ func (b *Binder) resolve(c *Call) resolved {
 		}
 	}
 
-	// 4a. project-local binary path — ./node_modules/.bin/tsc,
-	// node_modules/.bin/tsc, /abs/node_modules/.bin/tsc: the seam the package
-	// manager manages exposes the same binaries a package runner resolves, so
-	// the path form resolves to the bare binary name exactly like the runner
-	// form (one KB command, one canonical identity — the audited 963134/963140
-	// retry pair stays unified, now deterministically bounded instead of ⊤).
+	// 4a. path-qualified binary — a name carrying a directory component whose
+	// basename is a knowledge-base command resolves to that command, so the
+	// path spelling and the bare spelling share one identity (one KB command,
+	// one canonical identity — the audited 963134/963140 retry pair stays
+	// unified, now deterministically bounded instead of ⊤). The motivating
+	// seams are the project-local bin directory the package manager manages
+	// (./node_modules/.bin/tsc, node_modules/.bin/tsc, /abs/node_modules/.bin/
+	// tsc) and the project-local wrapper script (./mvnw → mvn, ./gradlew →
+	// gradle), but the rule is deliberately the general basename one: any
+	// path-qualified name reduces via StripBinaryPath to its basename and is
+	// looked up in the knowledge base. Accepted precision/recall trade-off: a
+	// path whose basename names a modelled binary (e.g. /opt/tools/tsc) binds
+	// to that binary's signature rather than degrading to ⊤ — the same trust
+	// PATH already grants the bare name, recorded here so the widened scope is
+	// documented, not incidental.
 	if base := StripBinaryPath(c.Name); base != c.Name {
 		if cmd, ok := b.k.Command(base); ok {
 			return resolved{
@@ -148,10 +168,13 @@ func (b *Binder) resolve(c *Call) resolved {
 	// the knowledge base and bound with the runner's own words consumed. The
 	// fail-closed shapes degrade to ⊤ in runnerBinaryArgs and below: a runner
 	// that names no literal operand, an operand outside the knowledge base (a
-	// registry fetch whose code the analysis cannot see), and -c/--call (an
-	// arbitrary shell string — never boundable by name resolution).
-	if packageRunners[c.Name] {
-		if operand, rest, ok := runnerBinaryArgs(c.Args); ok {
+	// registry fetch whose code the analysis cannot see), -c/--call (an
+	// arbitrary shell string — never boundable by name resolution), and an
+	// operand that is itself a code-execution sink (npx node -e … — the
+	// frontend already forces the bare node -e … to ⊤, so the runner spelling
+	// must stay ⊤ rather than bind the interpreter's bounded signature).
+	if IsPackageRunner(c.Name) {
+		if operand, rest, ok := runnerBinaryArgs(c.Args); ok && !bash.IsCodeExecutionSink(operand.Value) {
 			if cmd, ok := b.k.Command(StripBinaryPath(operand.Value)); ok {
 				return resolved{
 					res:     Resolution{Kind: ResolveCommand, Name: cmd.Name, Invoked: c.Name},

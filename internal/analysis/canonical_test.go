@@ -152,6 +152,18 @@ func TestNormalizeBinary(t *testing.T) {
 		{name: "npx", args: []string{"-p", "foo", "bar"}, wantResolved: "bar", wantArgs: []string{}},
 		{name: "npx", args: []string{"--yes", "-p", "foo", "tsc", "-b"}, wantResolved: "tsc", wantArgs: []string{"-b"}},
 		{name: "npx", args: []string{"--", "tsc"}, wantResolved: "tsc", wantArgs: []string{}},
+		// -c/--call executes an arbitrary shell string, so the comparable form
+		// consumes no operand and keeps the runner's own name (the documented
+		// fail-closed shape; a value-flag refactor must not silently change it).
+		{name: "npx", args: []string{"-c", "X", "Y"}, wantResolved: "npx", wantArgs: []string{"-c", "X", "Y"}},
+		{name: "npx", args: []string{"--call", "make target", "tsc"}, wantResolved: "npx", wantArgs: []string{"--call", "make target", "tsc"}},
+		// The same flags with the value attached (`=` or a short flag) must be
+		// seen through, not skipped as value-less flags.
+		{name: "npx", args: []string{"--call=X", "tsc"}, wantResolved: "npx", wantArgs: []string{"--call=X", "tsc"}},
+		{name: "npx", args: []string{"-cX", "tsc"}, wantResolved: "npx", wantArgs: []string{"-cX", "tsc"}},
+		// An attached value flag carries no separate word to skip, so the next
+		// word is the binary.
+		{name: "npx", args: []string{"--package=foo", "bar"}, wantResolved: "bar", wantArgs: []string{}},
 		{name: "bunx", args: []string{"tsc", "-b"}, wantResolved: "tsc", wantArgs: []string{"-b"}},
 		{name: "npx", wantResolved: "npx"},
 		{name: "", args: []string{"x"}, wantResolved: "", wantArgs: []string{"x"}},
@@ -162,6 +174,46 @@ func TestNormalizeBinary(t *testing.T) {
 			t.Errorf("normalizeBinary(%q, %v) = (%q, %v), want (%q, %v)",
 				tc.name, tc.args, got, args, tc.wantResolved, tc.wantArgs)
 		}
+	}
+}
+
+// TestCommandCallResolvedAliasIdentity pins the resolved identity for the
+// wrapper/alias forms: the path spelling, the runner spelling and the bare
+// spelling of one binary must report the SAME resolved binary — the
+// knowledge-base command the binder resolves to, not the invoked word. The
+// Maven Wrapper aliases mvnw → mvn, so even the runner operand (npx mvnw) must
+// report mvn rather than the wrapper word.
+func TestCommandCallResolvedAliasIdentity(t *testing.T) {
+	viaPath := AnalyzeOrDie(t, LangBash, "./mvnw package")
+	bare := AnalyzeOrDie(t, LangBash, "mvnw package")
+	viaRunner := AnalyzeOrDie(t, LangBash, "npx mvnw package")
+
+	cp := callWithResolved(t, viaPath, "mvn")
+	cb := callWithResolved(t, bare, "mvn")
+	cr := callWithResolved(t, viaRunner, "mvn")
+	if cp.Invoked != "./mvnw" || cb.Invoked != "mvnw" || cr.Invoked != "npx" {
+		t.Fatalf("invoked names not preserved: %q / %q / %q", cp.Invoked, cb.Invoked, cr.Invoked)
+	}
+	want := []string{"package"}
+	if !slices.Equal(cp.Args, want) || !slices.Equal(cb.Args, want) || !slices.Equal(cr.Args, want) {
+		t.Fatalf("mvn args = %v / %v / %v, want %v for all (the spellings must agree)",
+			cp.Args, cb.Args, cr.Args, want)
+	}
+}
+
+// TestCommandCallRunnerShadowedByAlias pins that a program alias shadowing the
+// runner word is reported through the alias, not consumed as a package runner:
+// `alias npx='echo'` makes `npx tsc -b` an echo call, so the per-command view
+// keeps the binder's resolved name and does not claim the executed binary is
+// tsc.
+func TestCommandCallRunnerShadowedByAlias(t *testing.T) {
+	r := AnalyzeOrDie(t, LangBash, "alias npx='echo'\nnpx tsc -b")
+	c := callWithResolved(t, r, "echo")
+	if c.Invoked != "npx" {
+		t.Fatalf("invoked = %q, want npx", c.Invoked)
+	}
+	if want := []string{"tsc", "-b"}; !slices.Equal(c.Args, want) {
+		t.Fatalf("args = %v, want %v (a shadowed runner word consumes nothing)", c.Args, want)
 	}
 }
 

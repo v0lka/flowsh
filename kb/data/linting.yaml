@@ -1,10 +1,12 @@
 version: effect-kb/v2
 # ---------------------------------------------------------------------------
-# Front-end build, test and lint drivers: the TypeScript compiler (tsc), the
-# JavaScript linters/formatters (eslint, prettier), the JS test runners
-# (vitest, jest), the Go tooling (gofmt, staticcheck), the
-# Python tooling (ruff, black, mypy), the Rust linter (clippy) and the shell
-# linter (shellcheck).
+# Build, test and lint drivers across the JS/TS, Go, Python, Rust and shell
+# toolchains: the TypeScript compiler (tsc), the JavaScript linters/formatters
+# (eslint, prettier, biome, oxlint), the JS test runners (vitest, jest, mocha,
+# ava, playwright, cypress), the Go tooling (gofmt, goimports, gofumpt,
+# govulncheck, gosec, revive, staticcheck), the Python tooling (ruff, black,
+# mypy, pytest, flake8, pylint, pyright, coverage, sphinx), the Rust linter/
+# formatter (clippy, rustfmt) and the shell linter (shellcheck).
 #
 # Sources: tsc(1) (the TypeScript compiler), eslint(1), prettier(1), vitest
 # and jest docs, golangci-lint(1), gofmt(1), staticcheck(1), ruff(1), black(1),

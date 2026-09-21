@@ -119,15 +119,19 @@ effects already carry `Mode`/`Certainty` chosen through `effectOf` /
 call name?" by walking a fixed chain, stopping at the first match:
 
 ```
- builtin → function → alias → command (PATH) → ⊤ (ResolveUnknown)
+ alias → function → builtin → command (PATH) → path basename (4a) → runner operand (4b) → ⊤ (ResolveUnknown)
 ```
 
-- **builtin**: `kb.Command(name).Dialect == DialectBuiltin`.
-- **function**: name present in the call's `Funcs` (body opaque to binding ⇒ ⊤).
 - **alias**: expanded textually via `expandAliases` (bounded by
   `maxAliasDepth = 32`); the effective command may itself be shadowed by a
   function.
+- **function**: name present in the call's `Funcs` (body opaque to binding ⇒ ⊤).
+- **builtin**: `kb.Command(name).Dialect == DialectBuiltin`.
 - **command**: a signature in the knowledge base for the name.
+- **4a path basename / 4b runner operand**: after the PATH miss, a
+  path-qualified name resolves through its `StripBinaryPath` basename and a
+  package runner (`npx`, `bunx`) through its first non-flag literal operand
+  (both reported as `ResolveCommand`).
 - **⊤**: nothing matched, or the name is not statically known.
 
 Once a knowledge-base command is found, `bindCommand` (`bind/bind.go`) splits
@@ -227,8 +231,9 @@ read, or was empty).
 - The bash path reaches command effects only through the injected `Resolver`
   seam; the PowerShell path reaches them only through its own alias/cmdlet
   tables.
-- The resolution chain is ordered `builtin → function → alias → command →
-  ⊤` and stops at the first match.
+- The resolution chain is ordered `alias → function → builtin → command`, then
+  the path-basename and package-runner links, then `⊤`, and stops at the first
+  match.
 - Every stage output is normalised by `engine.Report.Normalize` before it is
   serialised, so equal effect sets yield byte-identical JSON.
 - `Report.Score` is always the result of `engine.ScoreEffects` over the report's

@@ -2,12 +2,13 @@
 
 ## Purpose
 
-`bind` turns a normalized command invocation into the set of effects it implies. It resolves the invoked name (builtin → function → alias → PATH) and binds that command's flags, options and operands against the effect knowledge base. It is the join of the two lower layers — a frontend's normalized call on one side, the KB's command/flag signatures on the other — producing `[]engine.Effect`. Where the analysis cannot see (a dynamically-named command, or a name matching nothing), it degrades to the top element ⊤ (`CodeExec` over the any-target scope) rather than to "no effect".
+`bind` turns a normalized command invocation into the set of effects it implies. It resolves the invoked name (alias → function → builtin → PATH, then two invocation-form links that map a spelling onto a knowledge-base command: a path-qualified basename and a package runner's operand) and binds that command's flags, options and operands against the effect knowledge base. It is the join of the two lower layers — a frontend's normalized call on one side, the KB's command/flag signatures on the other — producing `[]engine.Effect`. Where the analysis cannot see (a dynamically-named command, or a name matching nothing), it degrades to the top element ⊤ (`CodeExec` over the any-target scope) rather than to "no effect".
 
 ## Key Files
 
 - `bind/bind.go` — the binder: `Bind`, `BindBash`, `bindCommand`, `parseArgs` (flag/operand binding), `lowerParam` and `fileRefPath` (the `@file` convention), `taintFor`, `argsTaint`, `taintEgress`.
-- `bind/resolve.go` — name resolution: `ResolveKind`, `Resolution`, `resolved`, the `resolve` chain (builtin → function → alias → PATH), `expandAliases` and `tokenizeAlias`.
+- `bind/resolve.go` — name resolution: `ResolveKind`, `Resolution`, `resolved`, the `resolve` chain (alias → function → builtin → PATH, then the path-basename and package-runner links), `expandAliases` and `tokenizeAlias`.
+- `bind/runner.go` — package-runner and project-local bin-path resolution: `IsPackageRunner`, `StripBinaryPath`, `NormalizeBinaryName` (the runner/path vocabulary the binder and the canonical form share) and the runner consumption (`runnerBinaryArgs`, `runnerBinary`).
 - `bind/bind_test.go` — binder tests.
 
 ## Core Types
@@ -93,7 +94,7 @@ const (
 	ResolveBuiltin    ResolveKind = "builtin"
 	ResolveFunction   ResolveKind = "function"
 	ResolveAlias      ResolveKind = "alias"
-	ResolveCommand    ResolveKind = "command"    // external command with a KB signature (PATH)
+	ResolveCommand    ResolveKind = "command"    // external command with a KB signature (PATH), the path-basename link or the package-runner link
 	ResolveUnknown    ResolveKind = "unknown"    // ⊤
 )
 
@@ -120,10 +121,12 @@ type Resolution struct {
    NamePresent == false │  bare assignment → ResolveAssignment;  else ResolveEmpty
                         │
                         ▼  resolve(c)   (bind/resolve.go)
-         1. builtin   kb.Command(name).Dialect == "builtin"   ──▶ ResolveBuiltin
+         1. alias     c.Aliases[name] → expandAliases (≤32)    ──▶ ResolveAlias (may reach a command)
          2. function  c.Funcs[name]                            ──▶ ResolveFunction → ⊤ Transitive
-         3. alias     c.Aliases[name] → expandAliases (≤32)    ──▶ ResolveAlias (may reach a command)
+         3. builtin   kb.Command(name).Dialect == "builtin"   ──▶ ResolveBuiltin
          4. command   kb.Command(name)                        ──▶ ResolveCommand
+         4a. path     StripBinaryPath(name) → kb.Command      ──▶ ResolveCommand (./node_modules/.bin/tsc, ./mvnw)
+         4b. runner   packageRunners[name] → kb.Command(operand) ──▶ ResolveCommand (npx tsc, bunx tsc)
          5. otherwise                                          ──▶ ResolveUnknown → ⊤ Direct
                         │
                         ▼ (command resolved)
@@ -178,6 +181,7 @@ The same gate applies at the two frontend-side egress creation points: the bash 
 - `Bind` is total and deterministic: it never returns nil and never panics on a well-formed `Call`.
 - A name that is not statically known (`NameOK == false`) resolves to `ResolveUnknown` → `⊤`.
 - A name matching neither a builtin, a function, an alias, nor a KB command degrades to ⊤ (`CodeExec`), never to "no effect".
+- The two invocation-form links run only after the PATH link misses, and each maps a spelling onto a knowledge-base command: `4a` reduces a path-qualified name to its `StripBinaryPath` basename, so `./node_modules/.bin/tsc` and `./mvnw` bind the bare binary's signature; `4b` consumes a package runner's own words and binds its first non-flag literal operand (`npx tsc`). Both fail closed to ⊤ for a dynamic operand, an operand outside the KB, a runner that names no operand, a runner `-c`/`--call`, and a code-execution interpreter operand (`npx node -e …`, which matches the frontend's own sink rule so the runner spelling stays ⊤ like the bare `node -e …`); a path-qualified runner spelling (`./node_modules/.bin/npx …`) names no KB command and so also stays ⊤ — the runner link keys off the bare runner name, not the path basename.
 - A shell function resolves to ⊤ with `ModeTransitive` (its body is opaque to command binding).
 - Alias expansion is bounded by `maxAliasDepth`; a cyclic or unparseable alias chain degrades to ⊤.
 - `Result.Conservative` is true exactly when the outcome includes a ⊤ (`CodeExec`) effect.
@@ -194,7 +198,7 @@ The same gate applies at the two frontend-side egress creation points: the bash 
 
 ## Extension Points
 
-- **Add a resolution link**: extend `resolve` in `bind/resolve.go` (e.g. a new shell-symbol source) — keep the builtin → function → alias → PATH order and the ⊤ fallback.
+- **Add a resolution link**: extend `resolve` in `bind/resolve.go` (e.g. a new shell-symbol source) — keep the alias → function → builtin → PATH order and the ⊤ fallback, and add any new invocation-form link after the PATH miss.
 - **Teach the binder a new wrapper**: wrappers are peeled by the frontend's normalizer (`front/bash/normalize.go` `wrapperSpecs`) and surfaced on `Call.Wrappers`; the binder then binds what remains.
 - **Add KB-driven parameter behaviour**: extend `lowerParam`/`parseArgs` when a new `ParamKind`/`ValueSource` is introduced in the KB (bump the KB schema version).
 - **New style**: add a `Style` constant; frontends emit it on the `Call`.
