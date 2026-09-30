@@ -11,6 +11,35 @@ the two *frozen* wire-contract tags that the analyser emits — `effect-ir/v2`
 frozen contract is called out in the entry that makes it; the contract tags move
 only on a breaking shape change, not on every module release.
 
+## [v0.5.0] - 2026-09-30
+
+A corpus-and-recall release. An external balanced sample joins the conformance
+corpus, and the four recall gaps it surfaced while screening the pool are
+closed so the sample passes with zero silent misses.
+
+### Added
+
+- **External balanced corpus sample.** A balanced sample (26+26 bash, 54+54
+  PowerShell) drawn from public labeled datasets under permissive licenses
+  joins `testdata/corpus/` (`external_bash.json`, `external_posh.json`), with
+  the new `external_malicious`/`external_benign` groups gated by the same
+  invariants as the rest of the corpus: no silent misses on the malicious side
+  and no ⊤ on the benign side. A PowerShell case may now set `"windows": true`
+  to run under the Windows-native provider profile, since registry effects are
+  host-gated by design. The latency baseline is re-pinned at 348 cases and the
+  domain specs are updated accordingly.
+
+### Fixed
+
+- **Four recall gaps closed** so the external sample passes with zero misses:
+  - `Write-Output` — and a top-level string-literal statement, which the parser
+    now normalizes to `Write-Output` — carries `Stdio` when the pipeline is
+    unconsumed; a redirection suppresses it.
+  - `Get-Command <name>` and `Get-Module -ListAvailable` lower to `FSRead`
+    probes of the command path / module directories.
+  - bash `jobs` is no longer a shell-only builtin; the KB now describes its
+    stdout job-table output as `Stdio`.
+
 ## [v0.4.0] - 2026-09-21
 
 A knowledge-base and binding release. It rolls up the changes made since
@@ -350,6 +379,7 @@ below.
   too coarse to observe the deadline, and widened the repeated-statement source
   so the timeout-to-⊤ path stays covered everywhere (ADR-0013).
 
+[v0.5.0]: https://github.com/v0lka/flowsh/compare/v0.4.0...v0.5.0
 [v0.4.0]: https://github.com/v0lka/flowsh/compare/v0.3.2...v0.4.0
 [v0.3.2]: https://github.com/v0lka/flowsh/compare/v0.3.1...v0.3.2
 [v0.3.1]: https://github.com/v0lka/flowsh/compare/v0.3.0...v0.3.1
