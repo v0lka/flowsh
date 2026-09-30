@@ -55,6 +55,31 @@ commands:
         kind: positional
         effect: {kind: Stdio, mode: Direct, valueFrom: args}
 
+  # jobs prints the shell's job table to standard output, so it is an
+  # observable Stdio builtin (like echo), not a pure shell-state builtin: its
+  # flags select which jobs are listed, and a job-spec operand names the jobs.
+  - name: jobs
+    dialect: builtin
+    params:
+      - spec: "-l"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-p"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-n"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: "-s"
+        kind: flag
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      - spec: ARGS
+        kind: positional
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
+
   - name: export
     dialect: builtin
     params:

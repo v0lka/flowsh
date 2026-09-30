@@ -994,3 +994,71 @@ func TestB13SwitchBeforeOperandKeepsTarget(t *testing.T) {
 		t.Fatalf("expected FSRead app.log; effects=%+v", r.Effects)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Output-pipeline cmdlets and argument-dependent probes. Write-Output (and its
+// alias echo) writes an unconsumed top-level pipeline to the host's stdout;
+// Get-Command <name> probes the command search path; Get-Module -ListAvailable
+// scans the module directories. The argument-less forms are in-session queries
+// with no external effect.
+// ---------------------------------------------------------------------------
+
+func TestWriteOutputCarriesStdio(t *testing.T) {
+	r := lowerOK(t, `echo hi`)
+	if !hasKind(r, engine.KindStdio) {
+		t.Fatalf("echo must carry Stdio: %+v", r.Effects)
+	}
+	r2 := lowerOK(t, `Write-Output 'deploying'`)
+	if !hasKind(r2, engine.KindStdio) {
+		t.Fatalf("Write-Output must carry Stdio: %+v", r2.Effects)
+	}
+}
+
+func TestRedirectedWriteOutputCarriesNoStdio(t *testing.T) {
+	// The redirection captures the pipeline: the text lands in the file
+	// (FSWrite), not on stdout.
+	r := lowerOK(t, `echo hi >> log.txt`)
+	onlyKinds(t, r, engine.KindFSWrite)
+}
+
+func TestTopLevelStringLiteralIsOutput(t *testing.T) {
+	// A top-level expression statement whose value is a plain string literal
+	// is written to the output pipeline: normalize it to its semantic
+	// equivalent, Write-Output.
+	r := lowerOK(t, `"Installation is not implemented as Edge is a part of windows"`)
+	if !hasKind(r, engine.KindStdio) {
+		t.Fatalf("a top-level string literal prints to stdout: %+v", r.Effects)
+	}
+	if len(effectsOfKind(r, engine.KindStdio)) != 1 {
+		t.Fatalf("the literal must contribute exactly one Stdio effect: %+v", r.Effects)
+	}
+	// An assignment's right-hand side is bound, never printed.
+	r2 := lowerOK(t, `$y = 'a b'`)
+	if hasKind(r2, engine.KindStdio) {
+		t.Fatalf("an assignment RHS must not print: %+v", r2.Effects)
+	}
+}
+
+func TestGetCommandWithNameProbesPath(t *testing.T) {
+	r := lowerOK(t, `Get-Command mitmdump -ErrorAction SilentlyContinue`)
+	if !targetHas(r, engine.KindFSRead, "mitmdump") {
+		t.Fatalf("Get-Command <name> must probe the command path (FSRead): %+v", r.Effects)
+	}
+	// A bare Get-Command lists the session's callables: in-memory only.
+	r2 := lowerOK(t, `Get-Command`)
+	if len(r2.Effects) != 0 {
+		t.Fatalf("a bare Get-Command has no external effect: %+v", r2.Effects)
+	}
+}
+
+func TestGetModuleListAvailableScansModuleDirs(t *testing.T) {
+	r := lowerOK(t, `Get-Module -ListAvailable -Name AudioDeviceCmdlets`)
+	if !targetHas(r, engine.KindFSRead, "AudioDeviceCmdlets") {
+		t.Fatalf("-ListAvailable must scan the module directories (FSRead): %+v", r.Effects)
+	}
+	// Without -ListAvailable a Get-Module query is in-session: no external effect.
+	r2 := lowerOK(t, `Get-Module AADInternals`)
+	if len(r2.Effects) != 0 {
+		t.Fatalf("an in-session Get-Module has no external effect: %+v", r2.Effects)
+	}
+}

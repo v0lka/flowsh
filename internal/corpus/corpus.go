@@ -20,7 +20,9 @@ import (
 
 // Group names the role a corpus case plays. The GuardFall groups are the
 // adversarial, guard-evading inputs; destructive and ps are the canonical
-// recall cases; benign is the precision control.
+// recall cases; benign is the precision control; the external groups are a
+// balanced sample drawn from public labeled datasets (malicious must be
+// covered, benign must not raise ⊤).
 const (
 	// GroupGuardFall holds the guarded-evasion classes A–E.
 	GroupGuardFall = "guardfall"
@@ -35,6 +37,15 @@ const (
 	// (builtin / function / alias / external command / unknown), so that
 	// resolution is regression-covered and not merely computed and dropped.
 	GroupResolution = "resolution"
+	// GroupExternalMalicious holds malicious/destructive commands sampled from
+	// public labeled datasets (see testdata/corpus/README.md). The gate is the
+	// GuardFall invariant: every case must be covered — an effect present, or a
+	// sound degradation to ⊤.
+	GroupExternalMalicious = "external_malicious"
+	// GroupExternalBenign holds benign commands sampled from the same public
+	// labeled datasets as GroupExternalMalicious. The gate is the benign
+	// precision invariant: no case may raise ⊤/conservative.
+	GroupExternalBenign = "external_benign"
 )
 
 // GuardFallClasses are the guarded-evasion categories A–E, in order. They name
@@ -62,6 +73,13 @@ type Case struct {
 	Lang string `json:"lang"`
 	// Input is the command source text.
 	Input string `json:"input"`
+	// Windows forces the Windows-native provider semantics (the PowerShell
+	// Registry provider) for this case, matching the CLI --windows flag and
+	// the facade Options.Windows. It exists because provider effects are
+	// host-gated by design: on a non-Windows host a registry write is skipped
+	// with a note (and is therefore not covered), while a Windows-targeted
+	// script persists state. Only a posh case may set it.
+	Windows bool `json:"windows,omitempty"`
 	// Note is free-form documentation of the case's intent.
 	Note string `json:"note,omitempty"`
 }
@@ -141,7 +159,8 @@ func (c Case) validate() error {
 		return fmt.Errorf("empty lang")
 	}
 	switch c.Group {
-	case GroupGuardFall, GroupDestructive, GroupBenign, GroupPS, GroupResolution:
+	case GroupGuardFall, GroupDestructive, GroupBenign, GroupPS, GroupResolution,
+		GroupExternalMalicious, GroupExternalBenign:
 	default:
 		return fmt.Errorf("unknown group %q", c.Group)
 	}
@@ -151,6 +170,9 @@ func (c Case) validate() error {
 		}
 	} else if c.Category != "" {
 		return fmt.Errorf("non-guardfall case %q carries a category", c.ID)
+	}
+	if c.Windows && c.Lang != "posh" {
+		return fmt.Errorf("case %q sets windows, which only a posh case may", c.ID)
 	}
 	return nil
 }

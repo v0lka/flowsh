@@ -119,6 +119,14 @@ var Cmdlets = map[string][]Spec{ /* … */ }
 
 The table covers the default PowerShell 7 modules (Management, Utility, Security, Archive, Diagnostics, Host, ScheduledTasks, CimCmdlets, NetTCPIP, Storage, PackageManagement/PowerShellGet, PSSession, Modules, LocalAccounts, WSMan); the built-in `Aliases` map mirrors the default PowerShell 7 alias set. Read-only and in-memory cmdlets are registered with an empty spec list so they lower to "no external effect" rather than ⊤. The only default aliases left out are the PowerShell 5 snap-in aliases (`asnp`/`gsnp`/`rsnp`) and `md` → `mkdir` (a snap-in cmdlet and a session function respectively, neither boundable); `ise` resolves to an executable and is registered as a `ProcSpawn`.
 
+Three entries deviate from the flat table because their effect depends on their arguments or on redirection, and are handled by dedicated lowering paths:
+
+- **`Write-Output`** (alias `echo`) carries `Stdio`: an unconsumed top-level pipeline is written to the host's stdout — the PowerShell counterpart of the bash builtin `echo` (`Stdio Direct` over args, `kb/data/builtins.yaml`). The `Stdio` effect is suppressed when the command carries a redirection (`echo hi >> log.txt` writes the file, not stdout). The stream cmdlets (`Write-Verbose`/`-Debug`/`-Warning`/`-Information`/`-Error`) stay effect-free: their streams are not the process's standard output.
+- **`Get-Command`** with a name (`Get-Command mitmdump`, `Get-Command -Name x`) probes the command search path for it — the counterpart of `which(1)`, which the bash KB models as `FSRead` (`kb/data/plumbing.yaml`) — and lowers through `probeCmdlet` to `FSRead Direct` over the named command. A bare `Get-Command` lists the session's callables and keeps its empty (in-session) table entry.
+- **`Get-Module -ListAvailable`** scans the module directories of `$env:PSModulePath` on disk and lowers to `FSRead Direct` over the named modules (an unnamed scan reads an unknown, ⊤ set of directories). Without `-ListAvailable` a `Get-Module` query is in-session and stays effect-free.
+
+For the same reason the parser normalizes a top-level expression statement whose value is a plain string literal (no embedded `$(…)`, no command) to its semantic equivalent `Write-Output <literal>` (`walker.literalOutput`): PowerShell writes such a statement's value to the output pipeline, and unconsumed output is the host's stdout. Inside an assignment's right-hand side, a control-flow header or an argument the value is consumed, never printed, so the normalization applies to top-level pipelines only.
+
 ### Parameter recognition (`aliases.go`)
 
 Because a parameter that is not a *switch* binds the token that follows it, the four predicates decide both what a target is and whether a cmdlet keeps a target at all:
@@ -198,6 +206,7 @@ Parse(name, src) / ParseTimeout(name, src, micros)
         ┆                                   dot-source ".", call operator & with computed
         ┆                                   name, splatting, computed name)
         program Funcs[canonical]? ──▶ ⊤ CodeExec(Transitive) (opaque body)
+        probeCmdlet? ──▶ FSRead(Direct)     (Get-Command <name>; Get-Module -ListAvailable)
         Cmdlets[canonical] absent? ──▶ ⊤ CodeExec(Direct) (unknown command)
         specs == [] ?              ──▶ note "no external effect"
         else                       ──▶ emitSpec for each spec

@@ -128,12 +128,13 @@ func trapHasAction(argv []string) bool {
 // shellOnlyBuiltins are builtins that only manipulate the shell's own state and
 // have no external effect. The knowledge base does not describe them, so asking
 // it about them would produce a spurious ⊤; they are instead handled entirely
-// here.
+// here. jobs is deliberately absent: it prints the job table to stdout, which
+// is an observable Stdio effect the knowledge base describes (like echo).
 var shellOnlyBuiltins = map[string]bool{
 	":": true, "true": true, "false": true,
 	"break": true, "continue": true, "return": true, "exit": true,
 	"alias": true, "unalias": true, "shift": true, "getopts": true,
-	"shopt": true, "jobs": true, "bg": true, "fg": true, "times": true,
+	"shopt": true, "bg": true, "fg": true, "times": true,
 	"dirs": true, "pushd": true, "popd": true, "let": true,
 	"builtin": true, "command": true, "logout": true, "disown": true,
 	"suspend": true, "[": true,

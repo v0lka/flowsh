@@ -8,7 +8,7 @@
 
 - `internal/analysis/analyze.go` — the facade: `Lang`, `ParseLang`, `Report`, `DestructiveFinding`, `Analyzer`, `NewAnalyzer`, `defaultAnalyzer`, `Options` (incl. `Root`, `Windows`, `Vars`), `Bool`, `RootArgument`/`RootStdin`, `Analyze`, `AnalyzeWith`.
 - `internal/corpus/corpus.go` — the test-only corpus harness: `Case`, group constants, `GuardFallClasses`, `LoadCorpus`, `Filter`, `CorpusDir`, `CorpusDirFrom` (language resolution stays in `internal/analysis`).
-- `internal/analysis/corpus_test.go` — conformance tests over the corpus (GuardFall coverage, destructive recall, PowerShell recall, benign precision, why-trace coverage).
+- `internal/analysis/corpus_test.go` — conformance tests over the corpus (GuardFall coverage, destructive recall, PowerShell recall, benign precision, why-trace coverage, external-sample malicious coverage + benign precision).
 - `internal/analysis/exfil_test.go` — exfiltration regression tests.
 - `internal/analysis/destructive_test.go` — knowledge-base destructive-class raising (a class-E entry raises to Critical; a KB class never lowers the effect-derived severity).
 - `internal/analysis/loc_test.go` — why-trace source locations and `Options.Root` → `Report.Root`.
@@ -18,7 +18,7 @@
 - `internal/analysis/canonical_test.go` — the retry-splitting repros (npx vs `node_modules/.bin` binary path; staged write + `mv` vs `sed -i`), the normalization table, the staging-fold boundary rules and the ⊤-survival invariant.
 - `cmd/flowsh/main.go` — the CLI front-end that consumes this facade (see [CLI](cli.md)).
 - `api/api.go` — the public embedding surface: a thin type-alias re-export of this facade for external Go modules (see [Public Embedding Surface](#public-embedding-surface-api)).
-- `testdata/corpus/*.json` — the corpus documents loaded by `LoadCorpus` (`benign_bash.json`, `destructive_bash.json`, `guardfall_bash.json`, `guardfall_posix.json`, `guardfall_posh.json`, `resolution_bash.json`, `ps_cases.json`).
+- `testdata/corpus/*.json` — the corpus documents loaded by `LoadCorpus` (`benign_bash.json`, `destructive_bash.json`, `guardfall_bash.json`, `guardfall_posix.json`, `guardfall_posh.json`, `resolution_bash.json`, `ps_cases.json`, `external_bash.json`, `external_posh.json`); `testdata/corpus/README.md` documents the external balanced sample's provenance, licenses, methodology and the per-case `windows` provider-profile flag.
 - `engine/effect.go`, `engine/score.go`, `engine/report.go` — the frozen core types embedded in `Report`.
 
 ## Core Types
@@ -171,6 +171,8 @@ Group constants and semantics:
 | `GroupBenign` | `"benign"` | Ordinary commands (precision control). | false |
 | `GroupPS` | `"ps"` | PowerShell-specific adversarial/recall cases. | true |
 | `GroupResolution` | `"resolution"` | Recall cases for the A2 name-resolution chain: every case's report must expose the command its invocation actually named (alias/function/builtin/external/unknown). | true |
+| `GroupExternalMalicious` | `"external_malicious"` | Malicious/destructive commands sampled from public labeled datasets (see `testdata/corpus/README.md`). | true |
+| `GroupExternalBenign` | `"external_benign"` | Benign commands sampled from the same public labeled datasets; precision control over externally sourced data. | true |
 
 `Case.RequiresCoverage()` is `Group != GroupBenign`: benign commands may legitimately yield no effect, so they are excluded from the "effect present or ⊤" invariant.
 
@@ -268,7 +270,7 @@ The corpus harness is deliberately **not** re-exported: `Case`, `LoadCorpus`, `C
 
 - **Add a dialect**: add a `Lang` constant (and to `Langs`), extend `ParseLang`'s switch with its canonical name + aliases, add a `case` in `(*Analyzer).AnalyzeWith`, and implement `<lang>Analyze` producing a normalized report.
 - **Add a corpus group**: add a `Group*` constant, accept it in `Case.validate`'s group switch, and add the matching conformance test using `Filter`.
-- **Add corpus cases**: drop a new `*.json` document (`{name, description, cases[]}`) into `testdata/corpus`; `LoadCorpus` picks it up automatically. GuardFall cases must carry a valid `Category` (`A`–`E`); non-GuardFall cases must not.
+- **Add corpus cases**: drop a new `*.json` document (`{name, description, cases[]}`) into `testdata/corpus`; `LoadCorpus` picks it up automatically. GuardFall cases must carry a valid `Category` (`A`–`E`); non-GuardFall cases must not. A posh case may set `"windows": true` to be analysed under the Windows-native provider profile (registry `Persist` effects; validated to posh-only) — see `corpus.Case.Windows`.
 - **Add a report field**: extend `Report` with a JSON tag and, if it affects validity, `Report.Validate`. Consumers pin to `schemaVersion`, so additive fields are the safe path — but a new `Report` field is a change to the CLI envelope, so bump `ToolVersion` (v1 carried `why`, `resolution` and `destructive`; v2 added `commandCalls` and `canonical`) and update [Report Contract](../contracts/report-json.md).
 - **Rebind the knowledge base**: swap `NewAnalyzer`'s `bind.NewDefault()` for another binder; the rest of the pipeline is unchanged.
 

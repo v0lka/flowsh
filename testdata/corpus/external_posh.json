@@ -1,0 +1,782 @@
+{
+  "name": "external-posh",
+  "description": "External balanced sample for PowerShell (54 malicious + 54 benign), drawn from public labeled datasets (Atomic Red Team and RealPowShellScripts/ MIT, tldr-pages MIT). Gate semantics: external_malicious cases must be covered (effect present or sound ⊤); external_benign cases must be covered without raising ⊤/conservative. See README.md for provenance.",
+  "cases": [
+    {
+      "id": "ext-posh-b-001",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Set-ExecutionPolicy Unrestricted",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-002",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Install-Module PSWindowsUpdate",
+      "note": "tldr-pages/tldr [MIT]; Install the module using `Install-Module`:"
+    },
+    {
+      "id": "ext-posh-b-003",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Copy-Item -Path 'C:\\Users\\Public\\Documents\\Excel Workbooks\\*' -Destination 'C:\\Backup\\Documents' -Recurse -Force -ErrorAction SilentlyContinue",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-004",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Clear-RecycleBin",
+      "note": "tldr-pages/tldr [MIT]; Clear and delete all items inside the Recycle Bin:"
+    },
+    {
+      "id": "ext-posh-b-005",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Copy-Item C:\\Windows\\System32\\drivers\\*.sys C:\\Backup -Recurse",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-006",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Invoke-Item",
+      "note": "tldr-pages/tldr [MIT]"
+    },
+    {
+      "id": "ext-posh-b-007",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Start-Transcript -Path 'C:\\Logs\\Session.txt' -Append",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-008",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Out-GridView",
+      "note": "tldr-pages/tldr [MIT]"
+    },
+    {
+      "id": "ext-posh-b-009",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Copy-Item C:\\Logs\\*.log C:\\Backup\\Logs -Recurse -Force",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-010",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Set-Location ..",
+      "note": "tldr-pages/tldr [MIT]; Go up to the parent of the current directory:"
+    },
+    {
+      "id": "ext-posh-b-011",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Get-ChildItem C:\\ -Recurse | Out-File C:\\ScriptLog.txt",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-012",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Get-ChildItem | Sort-Object",
+      "note": "tldr-pages/tldr [MIT]; Sort the current directory by name:"
+    },
+    {
+      "id": "ext-posh-b-013",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Copy-Item -Path 'C:\\Source\\*' -Destination 'C:\\Destination\\' -Recurse -ErrorAction SilentlyContinue",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-014",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Get-ChildItem -Hidden",
+      "note": "tldr-pages/tldr [MIT]; List items in the current directory, including hidden items:"
+    },
+    {
+      "id": "ext-posh-b-015",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Test-Connection -ComputerName 'server01' -Count 1 -ErrorAction SilentlyContinue",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-016",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "New-Item",
+      "note": "tldr-pages/tldr [MIT]"
+    },
+    {
+      "id": "ext-posh-b-017",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Copy-Item -Path 'C:\\Users\\John\\Documents' -Destination 'E:\\Backup\\Documents' -Recurse",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-018",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Set-Location \\",
+      "note": "tldr-pages/tldr [MIT]; Go to root of current drive:"
+    },
+    {
+      "id": "ext-posh-b-019",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Test-Path -Path 'C:\\Windows\\System32\\System32\\WindowsPowerShell\\v1.0\\Modules\\' -PathType Container",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-020",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Start-Process",
+      "note": "tldr-pages/tldr [MIT]"
+    },
+    {
+      "id": "ext-posh-b-021",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "New-Item -ItemType Directory -Path 'C:\\ProgramData\\AppData' -Force -ErrorAction SilentlyContinue",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-022",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Get-ChildItem | Sort-Object -Property Length",
+      "note": "tldr-pages/tldr [MIT]; Sort the current directory by file length:"
+    },
+    {
+      "id": "ext-posh-b-023",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Set-ExecutionPolicy Bypass -Scope Process -Force",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-024",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Remove-Item",
+      "note": "tldr-pages/tldr [MIT]"
+    },
+    {
+      "id": "ext-posh-b-025",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Remove-Item -Path C:\\Windows\\Temp -Recurse -Force -ErrorAction SilentlyContinue",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-026",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Get-ItemProperty -Path HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System -Name DisableTaskMgr -ErrorAction SilentlyContinue | ForEach-Object { if ($_.DisableTaskMgr -eq 1) { Write-Output 'Task Manager can be disabled.' } else { Write-Output 'Task Manager cannot be disabled.' } }",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-b-027",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "$env:USERPROFILE | ForEach-Object { Write-Output $_.FullName }",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-028",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Get-Module -ListAvailable | Where-Object { $_.Name -NotLike \"Microsoft*\" -And $_.Name -NotLike \"PS*\" }",
+      "note": "tldr-pages/tldr [MIT]; Use multiple conditions:"
+    },
+    {
+      "id": "ext-posh-b-029",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Get-Alias | Out-String",
+      "note": "tldr-pages/tldr [MIT]; Print host information as string:"
+    },
+    {
+      "id": "ext-posh-b-030",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Get-Alias | Out-String -Stream",
+      "note": "tldr-pages/tldr [MIT]; Convert each object to a string rather than concatenating all the objects into a single string:"
+    },
+    {
+      "id": "ext-posh-b-031",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Get-ChildItem",
+      "note": "tldr-pages/tldr [MIT]; List all non-hidden items in the current directory:"
+    },
+    {
+      "id": "ext-posh-b-032",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Get-ChildItem -Directory",
+      "note": "tldr-pages/tldr [MIT]; List only directories in the current directory:"
+    },
+    {
+      "id": "ext-posh-b-033",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Get-ChildItem -File",
+      "note": "tldr-pages/tldr [MIT]; List only files in the current directory:"
+    },
+    {
+      "id": "ext-posh-b-034",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Get-ChildItem | Measure-Object",
+      "note": "tldr-pages/tldr [MIT]; Count the files and folders in a directory:"
+    },
+    {
+      "id": "ext-posh-b-035",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Get-ChildItem | Sort-Object -Descending",
+      "note": "tldr-pages/tldr [MIT]; Sort the current directory by name descending:"
+    },
+    {
+      "id": "ext-posh-b-036",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Get-Content",
+      "note": "tldr-pages/tldr [MIT]"
+    },
+    {
+      "id": "ext-posh-b-037",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Out-Host",
+      "note": "tldr-pages/tldr [MIT]"
+    },
+    {
+      "id": "ext-posh-b-038",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Rename-Item",
+      "note": "tldr-pages/tldr [MIT]"
+    },
+    {
+      "id": "ext-posh-b-039",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Select-String",
+      "note": "tldr-pages/tldr [MIT]"
+    },
+    {
+      "id": "ext-posh-b-040",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Set-Location",
+      "note": "tldr-pages/tldr [MIT]"
+    },
+    {
+      "id": "ext-posh-b-041",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Set-Location ~",
+      "note": "tldr-pages/tldr [MIT]; Go to the home directory of the current user:"
+    },
+    {
+      "id": "ext-posh-b-042",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Test-Path -Path 'C:\\Windows\\System32\\drivers\\etc\\hosts'",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-043",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Test-Path C:\\Logs\\ -PathType Container",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-044",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Test-Path C:\\Windows",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-045",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Invoke-WebRequest",
+      "note": "tldr-pages/tldr [MIT]"
+    },
+    {
+      "id": "ext-posh-b-046",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Test-Connection -ComputerName '192.168.1.1' -Count 3 -Quiet",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-047",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Test-NetConnection -InformationLevel Detailed",
+      "note": "tldr-pages/tldr [MIT]; Test a connection and display detailed results:"
+    },
+    {
+      "id": "ext-posh-b-048",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Copy-Item",
+      "note": "tldr-pages/tldr [MIT]"
+    },
+    {
+      "id": "ext-posh-b-049",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Copy-Item -Path 'C:\\Windows\\System32\\LogFiles\\*' -Destination 'C:\\Backup\\System32' -Recurse -Force -ErrorAction SilentlyContinue",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-050",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Copy-Item C:\\Windows\\System32\\*.* C:\\Backup -Recurse -Force -ErrorAction SilentlyContinue",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-051",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Get-ChildItem 'C:\\Windows\\System32' -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName -Unique | Out-File 'C:\\BenignScripts.txt'",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-052",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Get-EventLog -LogName Application | Where-Object {$_.EntryType -eq 'Error' -and $_.Message -like '*Service failed to start*'} | Out-File C:\\ServiceErrors.log",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-b-053",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "Move-Item",
+      "note": "tldr-pages/tldr [MIT]"
+    },
+    {
+      "id": "ext-posh-b-054",
+      "group": "external_benign",
+      "lang": "posh",
+      "input": "New-Item C:\\temp\\benign_script.ps1 -Type File -Force",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-m-001",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope LocalMachine",
+      "note": "atomic-red-team:T1112 technique T1112 [MIT]; T1112"
+    },
+    {
+      "id": "ext-posh-m-002",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Get-WmiObject Win32_BIOS -ComputerName $env:COMPUTERNAME -Credential (Get-Credential)",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-m-003",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "if(Get-WindowsCapability -Online -Name Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0 | Where-Object { $_.State -eq 'Installed' }){ exit 0 } else { exit 1 }",
+      "note": "atomic-red-team:T1615 technique T1615 [MIT]; T1615"
+    },
+    {
+      "id": "ext-posh-m-004",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Start-Process -Verb RunAs -FilePath 'C:\\Windows\\System32\\cmd.exe'",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-m-005",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "if ((Get-WmiObject -Class Win32_ComputerSystem).PartofDomain) {exit 0} else {exit 1}",
+      "note": "atomic-red-team:T1135 technique T1135 [MIT]; T1135"
+    },
+    {
+      "id": "ext-posh-m-006",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "$scriptPath = 'C:\\Windows\\System32\\malware.ps1'; $shell = New-Object -ComObject WScript.Shell; $shell.Run($scriptPath)",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-m-007",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "cmd /c sysmon -i -accepteula",
+      "note": "atomic-red-team:T1685 technique T1685 [MIT]; T1685"
+    },
+    {
+      "id": "ext-posh-m-008",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "(Get-WmiObject -Class Win32_OperatingSystem).Version -replace '(\\d+)\\.(\\d+)\\.(\\d+)','$1.0.0' -replace 'Win32_OperatingSystem', 'Computer' -replace 'OperatingSystem', 'Version' -replace 'Ver,' ,''| Out-File C:\\windows_version.txt -Append",
+      "note": "infinite-dataset-hub/RealPowShellScripts [MIT]; synthetic (infinite-dataset-hub)"
+    },
+    {
+      "id": "ext-posh-m-009",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "if(sc.exe query sysmon | findstr sysmon) { exit 0 } else { exit 1 }",
+      "note": "atomic-red-team:T1685 technique T1685 [MIT]; T1685"
+    },
+    {
+      "id": "ext-posh-m-010",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Remove-Item -Path \"HKCU:\\Software\\Microsoft\\Windows Script\\Settings\" -Recurse -Force 2> $null",
+      "note": "atomic-red-team:T1685 technique T1685 [MIT]; T1685"
+    },
+    {
+      "id": "ext-posh-m-011",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "taskkill /f /im notepad.exe",
+      "note": "atomic-red-team:T1134.001 technique T1134.001 [MIT]; T1134.001"
+    },
+    {
+      "id": "ext-posh-m-012",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Set-PSReadLineOption -HistorySaveStyle SaveIncrementally",
+      "note": "atomic-red-team:T1070.003 technique T1070.003 [MIT]; T1070.003"
+    },
+    {
+      "id": "ext-posh-m-013",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "if ((Test-Path \"$env:LOCALAPPDATA\\Google\\Chrome\\User Data\\Default\\Login Data\") -and (Test-Path \"$env:LOCALAPPDATA\\Google\\Chrome\\User Data\\Default\\Login Data For Account\")) {exit 0} else {exit 1}",
+      "note": "atomic-red-team:T1555.003 technique T1555.003 [MIT]; T1555.003"
+    },
+    {
+      "id": "ext-posh-m-014",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Install-Module -Name VMware.PowerCLI",
+      "note": "atomic-red-team:T1021.004 technique T1021.004 [MIT]; T1021.004"
+    },
+    {
+      "id": "ext-posh-m-015",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Install-Module -Name DSInternals -Scope CurrentUser -Force",
+      "note": "atomic-red-team:T1003.006 technique T1003.006 [MIT]; T1003.006"
+    },
+    {
+      "id": "ext-posh-m-016",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Write-Host \"Destination c2 server domain name or IP address must be set and reachable for HTTP service\"",
+      "note": "atomic-red-team:T1204.002 technique T1204.002 [MIT]; T1204.002"
+    },
+    {
+      "id": "ext-posh-m-017",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Remove-Item -Path (Join-Path \"$Env:SystemRoot\\prefetch\\\" (Get-ChildItem -Path \"$Env:SystemRoot\\prefetch\\*.pf\" -Name)[0])",
+      "note": "atomic-red-team:T1070.004 technique T1070.004 [MIT]; T1070.004"
+    },
+    {
+      "id": "ext-posh-m-018",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Remove-Item -Path  $outputZip\\data.zip -Force",
+      "note": "atomic-red-team:T1005 technique T1005 [MIT]; T1005"
+    },
+    {
+      "id": "ext-posh-m-019",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Write-Host \"You will need to install Microsoft Excel manually to meet this requirement\"",
+      "note": "atomic-red-team:T1021.003 technique T1021.003 [MIT]; T1021.003"
+    },
+    {
+      "id": "ext-posh-m-020",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "$file = New-Item $env:windir\\registration\\04e53197-72be-4dd8-88b1-533fe6eed577.04e53197-72be-4dd8-88b1-533fe6eed577.crmlog; $file.Attributes = 'Hidden', 'System', 'Archive'; Write-Host \"File created: $($file.FullName)\"",
+      "note": "atomic-red-team:T1027 technique T1027 [MIT]; T1027"
+    },
+    {
+      "id": "ext-posh-m-021",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Get-Process -Name Notepad -ErrorAction SilentlyContinue | Stop-Process -Force",
+      "note": "atomic-red-team:T1055 technique T1055 [MIT]; T1055"
+    },
+    {
+      "id": "ext-posh-m-022",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Get-Process -Name \"*calc\" | Stop-Process",
+      "note": "atomic-red-team:T1546.015 technique T1546.015 [MIT]; T1546.015"
+    },
+    {
+      "id": "ext-posh-m-023",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Get-WmiObject win32_process | Where-Object {$_.CommandLine -like \"*mshta*\"}  | % { \"$(Stop-Process $_.ProcessID)\" } | Out-Null",
+      "note": "atomic-red-team:T1059.005 technique T1059.005 [MIT]; T1059.005"
+    },
+    {
+      "id": "ext-posh-m-024",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Remove-Item $env:TEMP\\T1120_collection.txt -ErrorAction Ignore",
+      "note": "atomic-red-team:T1120 technique T1120 [MIT]; T1120"
+    },
+    {
+      "id": "ext-posh-m-025",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Write-Host Joining this computer to a domain must be done manually",
+      "note": "atomic-red-team:T1558.001 technique T1558.001 [MIT]; T1558.001"
+    },
+    {
+      "id": "ext-posh-m-026",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Remove-ItemProperty -Path \"HKCU:\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\\" -Name \"Shell\" -Force -ErrorAction Ignore",
+      "note": "atomic-red-team:T1547.004 technique T1547.004 [MIT]; T1547.004",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-m-027",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "echo \"use the following to install the Azure CLI manually https://aka.ms/installazurecliwindows\"",
+      "note": "atomic-red-team:T1136.003 technique T1136.003 [MIT]; T1136.003"
+    },
+    {
+      "id": "ext-posh-m-028",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Remove-ItemProperty -Path HKCU:\\Environment -Name COMPlus_ETWEnabled",
+      "note": "atomic-red-team:T1685 technique T1685 [MIT]; T1685",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-m-029",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "if ((Get-Command \"Get-ADDomain\" -ErrorAction Ignore) -And (Get-Command \"Get-ADGroupMember\" -ErrorAction Ignore)) { exit 0 } else { exit 1 }",
+      "note": "atomic-red-team:T1482 technique T1482 [MIT]; T1482"
+    },
+    {
+      "id": "ext-posh-m-030",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Remove-ItemProperty -Path \"HKCU:\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\\" -Name \"Userinit\" -Force -ErrorAction Ignore",
+      "note": "atomic-red-team:T1547.004 technique T1547.004 [MIT]; T1547.004",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-m-031",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "New-ItemProperty -Path \"HKLM:Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System\\Audit\" -Name \"ProcessCreationIncludeCmdLine_Enabled\" -Value 0 -PropertyType DWORD -Force -ErrorAction Ignore",
+      "note": "atomic-red-team:T1690 technique T1690 [MIT]; T1690",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-m-032",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Remove-Item \"HKCU:\\software\\classes\\mscfile\" -force -Recurse -ErrorAction Ignore",
+      "note": "atomic-red-team:T1548.002 technique T1548.002 [MIT]; T1548.002",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-m-033",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "New-ItemProperty -Path \"HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment\" -Name COMPlus_ETWEnabled -Value 0 -PropertyType \"String\" -Force",
+      "note": "atomic-red-team:T1685 technique T1685 [MIT]; T1685",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-m-034",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Remove-ItemProperty \"HKCU:\\Software\\Policies\\Microsoft\\Windows\\OOBE\" -Name DisablePrivacyExperience -Force -ErrorAction Ignore",
+      "note": "atomic-red-team:T1685 technique T1685 [MIT]; T1685",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-m-035",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Remove-ItemProperty -Path \"HKLM:\\Software\\Microsoft\\Command Processor\" -Name \"AutoRun\" -ErrorAction Ignore",
+      "note": "atomic-red-team:T1546 technique T1546 [MIT]; T1546",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-m-036",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Set-ItemProperty \"HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows Defender\" -Name DisableAntiSpyware -Value 1",
+      "note": "atomic-red-team:T1685 technique T1685 [MIT]; T1685",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-m-037",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "New-ItemProperty \"HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings\" -Name T1112 -Value \"<script>\"",
+      "note": "atomic-red-team:T1112 technique T1112 [MIT]; T1112",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-m-038",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "if (Get-Module -ListAvailable -Name AudioDeviceCmdlets) { exit 0 } else { exit 1 }",
+      "note": "atomic-red-team:T1123 technique T1123 [MIT]; T1123"
+    },
+    {
+      "id": "ext-posh-m-039",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Remove-ItemProperty -Path \"HKCU:\\Software\\Microsoft\\Command Processor\" -Name \"AutoRun\" -ErrorAction Ignore",
+      "note": "atomic-red-team:T1546 technique T1546 [MIT]; T1546",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-m-040",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "\"Installation is not implemented as Edge is a part of windows\"",
+      "note": "atomic-red-team:T1555.003 technique T1555.003 [MIT]; T1555.003"
+    },
+    {
+      "id": "ext-posh-m-041",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Remove-Item \"HKCU:\\software\\classes\\ms-settings\" -force -Recurse -ErrorAction Ignore",
+      "note": "atomic-red-team:T1548.002 technique T1548.002 [MIT]; T1548.002",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-m-042",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "New-ItemProperty \"HKCU:\\Software\\Policies\\Microsoft\\Windows\\OOBE\" -Name DisablePrivacyExperience -PropertyType DWord -Value 1 -Force",
+      "note": "atomic-red-team:T1685 technique T1685 [MIT]; T1685",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-m-043",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "New-ItemProperty -Path \"HKLM:Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System\\Audit\" -Name \"ProcessCreationIncludeCmdLine_Enabled\" -Value 1 -PropertyType DWORD -Force -ErrorAction Ignore",
+      "note": "atomic-red-team:T1690 technique T1690 [MIT]; T1690",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-m-044",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "if (Get-Command mitmdump -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }",
+      "note": "atomic-red-team:T1659 technique T1659 [MIT]; T1659"
+    },
+    {
+      "id": "ext-posh-m-045",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Remove-Item \"HKCU:\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\Notify\" -Force -ErrorAction Ignore",
+      "note": "atomic-red-team:T1547.004 technique T1547.004 [MIT]; T1547.004",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-m-046",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "if ($(Get-Module AADInternals) -or $(Get-Module -ListAvailable -Name ActiveDirectory)) {echo 0} else {echo 1}",
+      "note": "atomic-red-team:T1552.004 technique T1552.004 [MIT]; T1552.004"
+    },
+    {
+      "id": "ext-posh-m-047",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "if (Get-Command New-NetQosPolicy -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }",
+      "note": "atomic-red-team:T1685 technique T1685 [MIT]; T1685"
+    },
+    {
+      "id": "ext-posh-m-048",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Remove-ItemProperty -Path \"HKCU:\\Software\\Policies\\Microsoft\\Windows\\System\" -Name DisableCMD -ErrorAction Ignore",
+      "note": "atomic-red-team:T1112 technique T1112 [MIT]; T1112",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-m-049",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "echo Configure your Azure account using: az login.",
+      "note": "atomic-red-team:T1685.002 technique T1685.002 [MIT]; T1685.002"
+    },
+    {
+      "id": "ext-posh-m-050",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Set-ItemProperty -Force -Path  'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\SecurityProviders\\WDigest' -Name  'UseLogonCredential' -Value '1' -ErrorAction Ignore",
+      "note": "atomic-red-team:T1112 technique T1112 [MIT]; T1112",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-m-051",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "Remove-Item -Path \"HKLM:\\SOFTWARE\\Microsoft\\AMSI\\Providers\\{2781761E-28E0-4109-99FE-B9D127C57AFE}\" -Recurse",
+      "note": "atomic-red-team:T1685 technique T1685 [MIT]; T1685",
+      "windows": true
+    },
+    {
+      "id": "ext-posh-m-052",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "echo Please install the terraform.",
+      "note": "atomic-red-team:T1685.002 technique T1685.002 [MIT]; T1685.002"
+    },
+    {
+      "id": "ext-posh-m-053",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "echo \"Please install terraform via https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli (URL accurate as of Nov. 15, 2024).\"",
+      "note": "atomic-red-team:T1078.004 technique T1078.004 [MIT]; T1078.004"
+    },
+    {
+      "id": "ext-posh-m-054",
+      "group": "external_malicious",
+      "lang": "posh",
+      "input": "New-ItemProperty \"HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\WINEVT\\Channels\\Microsoft-Windows-Windows Defender/Operational\" -Name Enabled  -PropertyType DWord -Value 0 -Force",
+      "note": "atomic-red-team:T1685 technique T1685 [MIT]; T1685",
+      "windows": true
+    }
+  ]
+}

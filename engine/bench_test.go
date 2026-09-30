@@ -141,6 +141,12 @@ func analyze(tb testing.TB, a *analysis.Analyzer, c corpus.Case) *analysis.Repor
 	if err != nil {
 		tb.Fatalf("case %s: %v", c.ID, err)
 	}
+	// A Windows-flagged case is analysed under the Windows-native provider
+	// profile (see corpus.Case.Windows): the recall floor and the latency
+	// harness must see the same report the conformance gates see.
+	if c.Windows {
+		return a.AnalyzeWith(lang, c.Input, analysis.Options{Windows: analysis.Bool(true)})
+	}
 	return a.Analyze(lang, c.Input)
 }
 

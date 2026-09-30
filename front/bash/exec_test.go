@@ -662,3 +662,26 @@ func TestExecTestClauseSubstitutionRunsOnce(t *testing.T) {
 		}
 	}
 }
+
+// jobs prints the shell's job table to stdout, so it is a KB-described Stdio
+// builtin (like echo), not a pure shell-state builtin: `jobs -l` carries Stdio
+// and a bare `jobs` falls back to the binder's intrinsic "it ran" ProcSpawn —
+// both covered, neither ⊤.
+func TestExecJobsPrintsJobTable(t *testing.T) {
+	r := newResolver(t)
+	res := bash.ExecBash(`jobs -l`, r)
+	if res.Top || res.Conservative {
+		t.Fatalf("unexpected ⊤/conservative: %s %v", res.Reason, res.Notes)
+	}
+	if !hasEffect(res, engine.KindStdio) {
+		t.Fatalf("jobs -l must carry Stdio (job table to stdout): %v", effectKeys(res))
+	}
+
+	res2 := bash.ExecBash(`jobs`, r)
+	if res2.Top || res2.Conservative {
+		t.Fatalf("unexpected ⊤/conservative: %s %v", res2.Reason, res2.Notes)
+	}
+	if len(res2.Effects) == 0 {
+		t.Fatalf("bare jobs must stay covered (intrinsic ProcSpawn): %v", effectKeys(res2))
+	}
+}

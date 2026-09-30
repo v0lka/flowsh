@@ -486,6 +486,28 @@ func hasDescendantType(n *gotreesitter.Node, lang *gotreesitter.Language, typ st
 	return false
 }
 
+// findDescendantType returns the first node of the given type among n's
+// descendants (nil when there is none). It is the searching counterpart of
+// hasDescendantType.
+func findDescendantType(n *gotreesitter.Node, lang *gotreesitter.Language, typ string) *gotreesitter.Node {
+	if n == nil {
+		return nil
+	}
+	for i := 0; i < n.ChildCount(); i++ {
+		ch := n.Child(i)
+		if ch == nil {
+			continue
+		}
+		if ch.Type(lang) == typ {
+			return ch
+		}
+		if hit := findDescendantType(ch, lang, typ); hit != nil {
+			return hit
+		}
+	}
+	return nil
+}
+
 // topProgram builds the ⊤ program: no statements, Top set, and a reason.
 func topProgram(name, src string, errPos Pos, reason string) *Program {
 	p := &Program{File: name, Source: src, Top: true, Reason: reason, Stmts: []*Stmt{}}
@@ -656,6 +678,18 @@ func (w *walker) walk(n *gotreesitter.Node) {
 // no flow and is walked transparently.
 func (w *walker) pipelineNode(n *gotreesitter.Node) {
 	if len(directChildren(n, "command", w.lang)) < 2 {
+		// Only a top-level pipeline is an expression statement whose value is
+		// written to the output pipeline. Inside an assignment's right-hand
+		// side, a control-flow header or an argument the value is consumed
+		// (bound, iterated, passed) — never printed — and a string literal
+		// there is merely a nested token of a larger construct, so the
+		// transparent walk must stay.
+		if w.stmts == nil && !w.inArg {
+			if c := w.literalOutput(n); c != nil {
+				w.emit(&Stmt{Kind: KindCommand, Pos: c.Pos, Cmd: c})
+				return
+			}
+		}
 		for i := 0; i < n.ChildCount(); i++ {
 			w.walk(n.Child(i))
 		}
@@ -668,6 +702,39 @@ func (w *walker) pipelineNode(n *gotreesitter.Node) {
 		w.walk(n.Child(i))
 	}
 	w.pipeGroup, w.inArg = prevGroup, prevArg
+}
+
+// literalOutput recognises a pipeline whose only content is a string literal
+// with no embedded subexpression and no command ("Installation is not
+// implemented…"). PowerShell writes such a statement's value to the output
+// pipeline — unconsumed at the top level, that is the host's stdout — so the
+// statement is normalized to its semantic equivalent, Write-Output <literal>,
+// and the lowerer reports the same Stdio effect it reports for echo. A nil
+// return means the pipeline is not a pure literal (it carries a command, an
+// expression or an expandable string): the transparent walk then still finds
+// any statements nested inside it, so nothing is lost.
+func (w *walker) literalOutput(n *gotreesitter.Node) *Command {
+	if hasDescendantType(n, w.lang, "command") {
+		return nil
+	}
+	lit := findDescendantType(n, w.lang, "string_literal")
+	if lit == nil {
+		return nil
+	}
+	text := lit.Text(w.src)
+	if strings.Contains(text, "$(") {
+		// An expandable string may embed subexpressions; keep the transparent
+		// walk so their inner statements are still recognised.
+		return nil
+	}
+	pos := w.pos(lit)
+	return &Command{
+		Pos:      pos,
+		Text:     text,
+		Name:     "Write-Output",
+		NameWord: &Word{Pos: pos, Text: "Write-Output", Literal: true},
+		Args:     []*Word{{Pos: pos, Text: text, Literal: true}},
+	}
 }
 
 // isRangeExpr reports whether n is the grammar's encoding of a PowerShell range

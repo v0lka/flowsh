@@ -91,7 +91,7 @@ dispatch(name, nameOK, argv, cmd)
   8. else                        → it.res(cmd, prog)   [Resolver seam]
 ```
 
-`sinkSet` (closed) covers interpreters/shells (`sh`, `bash`, `zsh`, `python`, `node`, `perl`, `awk`, …) and container/orchestration tools (`docker`, `podman`); feeding data to any of them means that data is executed as code (⊤). `codeExecBuiltins = {eval, source, .}`. `shellOnlyBuiltins` covers pure shell-state builtins (`:`, `true`, `false`, `break`, `alias`, `shift`, `command`, `[`, …) that would otherwise produce a spurious ⊤ from the KB.
+`sinkSet` (closed) covers interpreters/shells (`sh`, `bash`, `zsh`, `python`, `node`, `perl`, `awk`, …) and container/orchestration tools (`docker`, `podman`); feeding data to any of them means that data is executed as code (⊤). `codeExecBuiltins = {eval, source, .}`. `shellOnlyBuiltins` covers pure shell-state builtins (`:`, `true`, `false`, `break`, `alias`, `shift`, `command`, `[`, …) that would otherwise produce a spurious ⊤ from the KB. `jobs` is deliberately not in the set: it prints the job table to stdout, an observable `Stdio` effect the KB describes (like `echo`), so it resolves through the binding layer like any KB builtin.
 
 ### Stdout folding and substitution (`stdoutOf`, `captureSubst`)
 

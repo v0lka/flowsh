@@ -360,6 +360,15 @@ var Cmdlets = map[string][]Spec{
 	"Out-Null":    {{engine.KindStdio, engine.ModeDirect, TargetNone, true, "stdio"}},
 	"Out-String":  {{engine.KindStdio, engine.ModeDirect, TargetNone, true, "stdio"}},
 	"Write-Host":  {{engine.KindStdio, engine.ModeDirect, TargetNone, true, "stdio"}},
+	// Write-Output feeds the success pipeline, and a pipeline PowerShell leaves
+	// unconsumed at the top level is written to the host's stdout — the printed
+	// text is observable. It therefore carries Stdio like its stream-writing
+	// siblings above and like the bash builtin echo (kb/data/builtins.yaml,
+	// Stdio Direct over args), which the alias `echo` resolves to here. The
+	// other Write-* cmdlets stay effect-free: -Verbose/-Debug/-Warning/
+	// -Information go to their named streams and -Error to the error stream,
+	// none of which is the process's standard output.
+	"Write-Output": {{engine.KindStdio, engine.ModeDirect, TargetNone, true, "stdio"}},
 
 	// ---- Microsoft.PowerShell.Management ----
 	// Service lifecycle mutates persisted system state (mirrors New-/Set-Service).
@@ -572,7 +581,6 @@ var Cmdlets = map[string][]Spec{
 	},
 
 	// ---- Known benign / control / formatting: explicitly no external effect ----
-	"Write-Output":      {},
 	"Write-Verbose":     {},
 	"Write-Debug":       {},
 	"Write-Warning":     {},

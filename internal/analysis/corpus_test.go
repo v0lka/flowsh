@@ -36,12 +36,17 @@ func mustAnalyzer(t *testing.T) *Analyzer {
 	return a
 }
 
-// analyzeCase analyses one corpus case.
+// analyzeCase analyses one corpus case. A case with Windows set is analysed
+// under the Windows-native provider profile (the corpus counterpart of the CLI
+// --windows flag): its registry effects are part of the conformance contract.
 func analyzeCase(t *testing.T, a *Analyzer, c corpus.Case) *Report {
 	t.Helper()
 	lang, err := ParseLang(c.Lang)
 	if err != nil {
 		t.Fatalf("case %s: %v", c.ID, err)
+	}
+	if c.Windows {
+		return a.AnalyzeWith(lang, c.Input, Options{Windows: Bool(true)})
 	}
 	rep := a.Analyze(lang, c.Input)
 	if rep == nil {
@@ -193,6 +198,8 @@ func TestCorpusShape(t *testing.T) {
 		{corpus.GroupBenign, 5},
 		{corpus.GroupPS, 5},
 		{corpus.GroupResolution, 5},
+		{corpus.GroupExternalMalicious, 10},
+		{corpus.GroupExternalBenign, 10},
 	} {
 		if byGroup[want.group] < want.min {
 			t.Errorf("corpus group %q has %d cases, want >= %d", want.group, byGroup[want.group], want.min)
@@ -261,6 +268,45 @@ func TestResolutionCoverage(t *testing.T) {
 		t.Errorf("resolution corpus has no alias chain longer than 1 (max %d)", longestChain)
 	}
 	t.Logf("resolution: %d cases, kinds %v, longest alias chain %d", len(cases), kinds, longestChain)
+}
+
+// TestExternalMaliciousCorpusCoverage checks the malicious half of the external
+// balanced sample (public labeled datasets, see testdata/corpus/README.md) is
+// all covered — the same "no silent miss" invariant as the GuardFall group. A
+// sound degradation to ⊤ counts as covered; a report with neither an effect nor
+// a degradation is a miss.
+func TestExternalMaliciousCorpusCoverage(t *testing.T) {
+	a := mustAnalyzer(t)
+	cases := corpus.Filter(mustCorpus(t), corpus.GroupExternalMalicious)
+	if len(cases) == 0 {
+		t.Fatal("no external_malicious cases in the corpus")
+	}
+	for _, c := range cases {
+		rep := analyzeCase(t, a, c)
+		if !rep.Covered() {
+			t.Errorf("external malicious MISS %s (%s): %q → neither an effect nor ⊤", c.ID, c.Lang, c.Input)
+		}
+	}
+	t.Logf("external malicious: %d cases, 0 misses", len(cases))
+}
+
+// TestExternalBenignCorpusPrecision is the precision control for the benign
+// half of the external balanced sample: real-world benign commands drawn from
+// public labeled datasets must not be escalated to ⊤/conservative (same
+// invariant as TestBenignPrecision, over externally sourced data).
+func TestExternalBenignCorpusPrecision(t *testing.T) {
+	a := mustAnalyzer(t)
+	cases := corpus.Filter(mustCorpus(t), corpus.GroupExternalBenign)
+	if len(cases) == 0 {
+		t.Fatal("no external_benign cases in the corpus")
+	}
+	for _, c := range cases {
+		rep := analyzeCase(t, a, c)
+		if rep.Top || rep.Conservative || rep.HasTop() {
+			t.Errorf("external benign %s raised ⊤/conservative: %q (reason %q)", c.ID, c.Input, rep.Reason)
+		}
+	}
+	t.Logf("external benign: %d cases, no false ⊤", len(cases))
 }
 
 // TestPOSIXVariantCoverage is acceptance criterion A6 over the corpus: every

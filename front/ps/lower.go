@@ -784,6 +784,10 @@ func (l *lowerer) command(s *Stmt) {
 		l.redirs(c)
 		return
 	}
+	if l.probeCmdlet(c, canonical) {
+		l.redirs(c)
+		return
+	}
 	specs, known := Cmdlets[canonical]
 	if !known {
 		l.emitEff(topEffect(engine.ModeDirect), atom(engine.AtomCommand, canonical, c.Pos))
@@ -804,6 +808,12 @@ func (l *lowerer) command(s *Stmt) {
 		return
 	}
 	for _, sp := range specs {
+		// A redirected Write-Output never reaches stdout: the redirection
+		// carries the pipeline into its file (l.redirs emits the FSWrite), so
+		// the table's Stdio effect describes only the unredirected form.
+		if sp.Kind == engine.KindStdio && strings.EqualFold(canonical, "write-output") && len(c.Redirs) > 0 {
+			continue
+		}
 		l.emitSpec(c, canonical, sp)
 	}
 	l.dataFiles(c, canonical)
@@ -830,6 +840,38 @@ func (l *lowerer) ensureGatedEgressFallback(c *Command, canonical string, before
 	e := effectOf(engine.KindProcSpawn, scopeOf(canonical), engine.ModeDirect, false)
 	l.emitEff(e, atom(engine.AtomCommand, canonical, c.Pos))
 	l.note("%s: egress target gated out → ProcSpawn", cmdLabel(c, canonical))
+}
+
+// probeCmdlet lowers the two cmdlets whose effect depends on their arguments.
+// A Get-Command invocation that names a command searches the command search
+// path (PATH, the App Paths registry keys, module exports) for it — the
+// PowerShell counterpart of which(1), which the bash knowledge base models as
+// FSRead over the named command (kb/data/plumbing.yaml) — so the named probe
+// carries FSRead. A Get-Module -ListAvailable invocation scans the module
+// directories listed in $env:PSModulePath on disk, so it carries FSRead over
+// the named modules (an unnames -ListAvailable scan reads an unknown, ⊤ set of
+// directories). Both cmdlets without those arguments are pure in-session
+// queries and stay effect-free via their Cmdlets entries. Reports whether the
+// probe effect was emitted (the caller then returns early).
+func (l *lowerer) probeCmdlet(c *Command, canonical string) bool {
+	switch strings.ToLower(canonical) {
+	case "get-command":
+		// A bare Get-Command lists the session's own callables: in-memory only.
+		if len(l.targetWords(c, TargetName)) == 0 {
+			return false
+		}
+		l.emitSpec(c, canonical, Spec{Kind: engine.KindFSRead, Mode: engine.ModeDirect,
+			Target: TargetName, Reversible: true, Op: "probe"})
+		return true
+	case "get-module":
+		if !c.HasParam("ListAvailable") {
+			return false
+		}
+		l.emitSpec(c, canonical, Spec{Kind: engine.KindFSRead, Mode: engine.ModeDirect,
+			Target: TargetName, Reversible: true, Op: "scan"})
+		return true
+	}
+	return false
 }
 
 // topReason reports whether a command must be lowered to ⊤ and why. It covers
