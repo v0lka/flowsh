@@ -27,11 +27,12 @@ a responsibility belongs to exactly one layer.
 | Binding | `bind/` | `engine`, `kb`, `front/bash` | Resolve an invoked name and bind its flags/operands against the knowledge base, producing `[]engine.Effect`. |
 | Composition | `internal/analysis/` | `engine`, `bind`, `front/bash`, `front/ps` | Wire the two frontends, the binder and the core into one deterministic `Report`; the single facade behind the CLI and the embedding API. |
 | Public API | `api/` | `internal/analysis` | Re-export the facade as an embeddable Go API — type aliases, copied constants and forwarding functions only; holds no behaviour of its own ([ADR-0010](../decisions/0010-public-embedding-api.md)). |
+| Policy | `policy/` | `api`, `engine` | Evaluate reports using caller-owned rules; return a decision without changing or executing the analysis. |
 | CLI | `cmd/flowsh/` | `api`, `engine` | Parse arguments, read the command, call the facade through `api`, and print a text summary or JSON report. |
 
 The import edges above are derived from the package imports in
 `engine/*.go`, `kb/*.go`, `front/bash/*.go`, `front/ps/*.go`, `bind/*.go`,
-`internal/analysis/*.go`, `api/api.go` and `cmd/flowsh/main.go`.
+`internal/analysis/*.go`, `api/api.go`, `policy/policy.go` and `cmd/flowsh/main.go`.
 
 ## The one-way import graph
 
@@ -73,6 +74,9 @@ Imports point strictly downward; there are no cycles and no upward edges.
 
 Key properties of the graph:
 
+- `policy` sits above `api`, as a separate report consumer. No analysis package
+  imports it; configuration cannot change parsing, effects, or scoring. See the
+  [policy domain](../domains/policy.md).
 - `engine` is a sink: it imports nothing from this module. Its package doc
   (`engine/effect.go`) states "Dependency direction is one-way: frontends
   (per-language parsers/lifters) import this package, never the other way

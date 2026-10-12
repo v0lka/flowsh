@@ -78,8 +78,9 @@ if err != nil {
 data, err := rep.Encode() // the same canonical JSON `flowsh --json` writes
 ```
 
-Only `api` is public. The composition facade `internal/analysis` and the rest of
-the module cannot be imported from outside `github.com/v0lka/flowsh`. See
+Use the optional `github.com/v0lka/flowsh/policy` package to evaluate reports
+with configurable allow/review/deny rules. The composition facade
+`internal/analysis` and other `internal/` packages remain private. See
 [Embedding the analyser (Go library)](docs/embedding.md) for the full guide: the
 import path, the `Analyze`/`AnalyzeWith` workflow, the exported surface, and the
 `schemaVersion`/`toolVersion` stability policy.

@@ -8,7 +8,8 @@ binary performs. The supported import path is:
 import "github.com/v0lka/flowsh/api"
 ```
 
-`api` is the **only** public embedding surface. Everything under `internal/`,
+`api` is the public analysis surface; the optional `policy` package evaluates
+its reports. Everything under `internal/`,
 including the composition facade `internal/analysis/` and the test-only corpus
 harness `internal/corpus/`, cannot be imported by a module outside
 `github.com/v0lka/flowsh`
@@ -157,11 +158,76 @@ encapsulation barrier. The contract is held by these two version constants and
 by review rather than by the type system; treat a bump of either tag as the
 signal that your integration must be re-checked.
 
+## Applying a policy
+
+Import `github.com/v0lka/flowsh/policy` to turn a report into an `allow`,
+`review`, or `deny` decision. Analysis and policy are separate calls: the
+policy does not change effects, scoring, or the CLI's JSON report.
+
+```go
+p, err := policy.New(policy.Config{
+	Unknown:      policy.Deny,
+	Conservative: policy.Review,
+	Exfiltration: policy.Deny,
+	Cradle:       policy.Deny,
+	Effects: map[engine.EffectKind]policy.Action{
+		engine.KindCredAccess: policy.Deny,
+		engine.KindPrivEsc:    policy.Deny,
+		engine.KindNetEgress:  policy.Review,
+	},
+})
+if err != nil {
+	return err
+}
+rep, err := api.Analyze(api.LangBash, source)
+if err != nil {
+	return err // Do not execute when analysis fails.
+}
+decision := p.Evaluate(rep)
+if !decision.Allowed() {
+	return fmt.Errorf("script requires %s", decision.Action)
+}
+```
+
+The example also imports `fmt` and `github.com/v0lka/flowsh/engine` for effect-kind
+constants. Reuse the constructed policy across calls; it copies its maps and
+is safe for concurrent evaluation of reports that callers leave unchanged.
+
+Configuration defaults are `Unknown: Deny`, `Conservative: Review`,
+`Exfiltration: Deny`, `Cradle: Review`, and `Ingest: Allow`. `Effects` and
+`Grades` default to empty maps. Grade entries match exact grades; to restrict
+High and Critical, list both. These defaults are a starting point, **not a
+complete security policy**: fully modelled operations with no restrictive
+match return Allow, including operations whose effects the caller has not
+configured. Choose rules for the caller's environment and threat model.
+
+All matching restrictions apply, with `deny > review > allow`. An Allow entry
+disables only that rule; it cannot override another restriction. Unknown and
+conservative analysis cannot be configured to Allow. Unknown includes both
+`Report.Top` and `Report.HasTop()`. Missing, incompatible, invalid, or uncovered
+reports always deny. A nil or zero policy also denies; a zero decision is never
+allowed. Flow rules use the report's `exfilPairs`, `cradleFlows`, and
+`ingestFlows`, not just co-occurring effect kinds.
+
+Decisions contain sorted reason codes and actions without copying script text,
+targets, or report reasons. Inspect the original report for evidence and treat
+it as sensitive. A report received from an untrusted party is not authenticated
+by validation; use the report from your own analysis call.
+
+Policy cannot recover behaviour absent from analysis, inspect referenced files,
+or establish runtime confinement. For example, a container command with an
+unbounded CodeExec effect still requires review or denial. Command semantics
+belong in the analyser; tenant permissions, approval, runtime isolation, and
+enforcement remain the embedding application's responsibilities. Keep policy
+configuration outside the analysed source and the agent being guarded.
+
+See the [policy specification](../specs/domains/policy.md) for the full contract.
+
 ## Limits
 
-- **Only `api` is public.** Do not import `internal/analysis` (or any other
-  `internal/...` path) from another module; the compiler will reject it, and it
-  is not a stable contract.
+- **Use `api` for analysis and `policy` for decisions.** Do not import
+  `internal/analysis` (or any other `internal/...` path) from another module;
+  the compiler will reject it, and it is not a stable contract.
 - **The corpus harness is not part of the embedding surface.** `Case`,
   `LoadCorpus`, `CorpusDir`, `Filter`, the `Group*` constants and
   `GuardFallClasses` live in the test-only `internal/corpus` package: they are a

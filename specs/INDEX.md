@@ -22,6 +22,7 @@ For formats and update rules, see [META.md](META.md). For how to use the system,
 | Add a CLI flag or change output | [CLI](domains/cli.md), [Report Contract](contracts/report-json.md) |
 | Bump the report/tool version tag (`flowsh/vN`) or add `--version` | [Report Contract](contracts/report-json.md), [CLI](domains/cli.md) |
 | Embed the analyser in another Go program | [Analysis Facade](domains/analysis-report.md), [ADR-0010](decisions/0010-public-embedding-api.md) |
+| Configure report decisions in an embedding application | [Report Policy](domains/policy.md) |
 | Add or change a corpus case | [Analysis Facade](domains/analysis-report.md) |
 | Change the CI latency/recall gate or its baseline | [Engine](domains/engine/README.md), [ADR-0015](decisions/0015-per-host-latency-reference.md) |
 | Change the knowledge-base load-budget gate | [Knowledge Base](domains/knowledge-base.md), [ADR-0016](decisions/0016-kb-load-budget-release-headroom.md) |
@@ -101,6 +102,7 @@ specs/
 │   │   └── abstract-exec.md                   abstract execution detail
 │   ├── powershell-frontend.md                 PowerShell parse (tree-sitter) + Σ lowering
 │   ├── analysis-report.md                     composition facade + report + corpus
+│   ├── policy.md                              configurable report decisions
 │   └── cli.md                                 CLI behavior
 │
 ├── contracts/
@@ -171,4 +173,5 @@ Every spec file, by path relative to `specs/`:
 - `domains/engine/lattices.md`
 - `domains/engine/scoring.md`
 - `domains/knowledge-base.md`
+- `domains/policy.md`
 - `domains/powershell-frontend.md`

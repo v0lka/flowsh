@@ -95,7 +95,7 @@ control** and the data it unavoidably touches.
 
 - **CLI argv** — `flowsh [--lang bash|posh] [--json] '<command>'`; the positional command, the `--lang` value, and flags ([cmd/flowsh/main.go](cmd/flowsh/main.go)).
 - **stdin** — the entire command text when no positional argument is given or `-` is passed ([cmd/flowsh/main.go](cmd/flowsh/main.go)).
-- **Library API** — the public embedding package `github.com/v0lka/flowsh/api` (`api.Analyze(lang, src)`, `api.AnalyzeWith`, and the re-exported `Report`/`Options` types), consumed by other Go programs that embed the analyser. Only `api` is importable outside the module; `internal/analysis` and every package beneath it stay internal ([api/api.go](api/api.go), [ADR-0010](specs/decisions/0010-public-embedding-api.md)).
+- **Library API** — the public embedding package `github.com/v0lka/flowsh/api` (`api.Analyze(lang, src)`, `api.AnalyzeWith`, and the re-exported `Report`/`Options` types), consumed by other Go programs that embed the analyser. The optional `policy` package evaluates its reports with trusted caller configuration; `internal/analysis` and other `internal/` packages remain private ([api/api.go](api/api.go), [ADR-0010](specs/decisions/0010-public-embedding-api.md), [policy specification](specs/domains/policy.md)).
 - **Bash parser** — `mvdan.cc/sh/v3` over untrusted source ([front/bash/parse.go](front/bash/parse.go)).
 - **PowerShell parser** — the pure-Go tree-sitter runtime over untrusted source ([front/ps/parse.go](front/ps/parse.go)).
 - **Embedded knowledge base** — `kb/data/*.yaml`, a build-time input reached through pull requests ([kb/loader.go](kb/loader.go)).
@@ -169,6 +169,14 @@ security domains its architecture involves and **what the policy requires** of
 each — framed as rules for contributors, not as an inventory of the code.
 
 ### Authentication & Authorization
+
+The optional `policy` library package is a pure report consumer above `api`.
+It accepts trusted, caller-owned Go configuration and returns Allow, Review, or
+Deny without executing input or changing analysis. It MUST preserve deny-or-
+inspect for unknown/conservative reports and deny missing, invalid, incompatible,
+or uncovered reports. It MUST NOT read configuration from analysed content or
+perform runtime I/O. Consumers retain responsibility for authorisation, review,
+and enforcement; Allow is not a proof of confinement or safety.
 
 **Not applicable as a runtime concern** — the tool exposes no service, endpoint,
 or session, and runs with the privileges of the invoking user, so there is no
