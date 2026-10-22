@@ -54,7 +54,8 @@ The leading letter groups the work by area:
 
 | ID | Item | Status |
 | -- | ---- | ------ |
-| J1 | **Dialect foundation.** The `js` dialect is registered end to end — the `LangJavaScript` value, CLI aliases (`js`/`javascript`/`node`/`nodejs`), facade routing, and the policy/embedding surface — and `front/js` lowers every input to a single conservative ⊤ effect without parsing, so the no-silent-miss invariant holds from day one (`specs/domains/javascript-frontend.md`). | Done |
+| J1 | **Dialect foundation.** The `js` dialect is registered end to end — the `LangJavaScript` value, CLI aliases (`js`/`javascript`/`node`/`nodejs`), facade routing, and the policy/embedding surface — and the initial conservative stub established the no-silent-miss invariant before semantic evaluation (`specs/domains/javascript-frontend.md`). | Done |
+| J2 | **Core statement/expression layer (#28).** Bounded parsing, typed values, lexical state, control flow, completion paths, explicit degradation, and source-located explanations. Function invocation (#34) and Node API effects remain separate. | Done |
 
 ## Future work
 

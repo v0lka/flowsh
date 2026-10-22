@@ -10,7 +10,7 @@ Specifications are the **source of truth** about the intended behavior of the sy
 
 - A discrepancy between a spec and the code = a bug (in the code or in the spec — determine by context).
 - Specs are optimized for **AI agents**: predictable structure, explicit cross-references, no filler prose.
-- Organized by **domains** (conceptual areas), NOT by repository file structure. flowsh's domains are `engine` (the frozen core), `knowledge-base`, `binding`, `bash-frontend`, `powershell-frontend` and `javascript-frontend` (the JS foundation is an opaque stub), `analysis-report`, and `cli`.
+- Organized by **domains** (conceptual areas), NOT by repository file structure. flowsh's domains are `engine` (the frozen core), `knowledge-base`, `binding`, `bash-frontend`, `powershell-frontend` and `javascript-frontend` (bounded JS values/control flow; Node API effects remain unmodelled), `analysis-report`, and `cli`.
 - **Contracts** are a separate first-class entity for describing boundaries between layers.
 
 ---

@@ -41,7 +41,7 @@ specs/
 │   │   ├── README.md               bash frontend overview
 │   │   ├── parse-normalize.md      parse + normalize detail
 │   │   └── abstract-exec.md        abstract execution detail
-│   ├── javascript-frontend.md      the conservative JavaScript stub (front/js)
+│   ├── javascript-frontend.md      bounded JavaScript values/control flow (front/js)
 │   ├── powershell-frontend.md      the PowerShell frontend (front/ps)
 │   ├── analysis-report.md          composition facade + report + corpus harness
 │   ├── policy.md                   configurable report decisions

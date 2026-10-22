@@ -7,7 +7,7 @@ import (
 )
 
 func TestJavaScriptWhyUsesOpaqueMarker(t *testing.T) {
-	rep := analyzeJS("const PRIVATE_JS_SOURCE = 1;", "source.js")
+	rep := analyzeJS("const PRIVATE_JS_SOURCE = '", "source.js")
 	if len(rep.Why) != 1 || len(rep.Why[0].Because) != 1 {
 		t.Fatalf("expected one opaque explanation, got %+v", rep.Why)
 	}

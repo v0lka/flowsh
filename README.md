@@ -1,8 +1,8 @@
 # flowsh
 
 `flowsh` is a static effect analyser for shell and PowerShell scripts, with a
-conservative JavaScript foundation: Node.js source is accepted and reported as
-⊤ until real analysis lands. Give it a command line, in bash/POSIX or
+bounded JavaScript value/control-flow frontend: Node API calls remain
+conservative until effect coverage lands. Give it a command line, in bash/POSIX or
 PowerShell, and it reports the observable effects
 that command implies without running it: filesystem access, environment changes,
 network traffic, process control, credential access, code execution, and more.
@@ -17,8 +17,8 @@ sandbox and agent guardrails, and security triage of untrusted command strings.
 - **Conservative.** Where the analysis cannot bound an input, it degrades to the
   top element (⊤) and says so, instead of guessing or missing it.
 - **Shell dialects.** bash/POSIX and PowerShell in one binary.
-- **JavaScript foundation.** Node.js source is accepted through a conservative
-  stub: every input reports ⊤ until parsing and evaluation are implemented.
+- **JavaScript values and control flow.** A bounded subset is evaluated statically;
+  function calls and Node API effects remain conservative.
 - **Two output formats.** A JSON report or a one-screen summary.
 
 The module is `github.com/v0lka/flowsh`; the public binary is `flowsh`.
@@ -99,7 +99,7 @@ The command may be passed as a positional argument or on stdin.
 
 | Flag | Meaning |
 | --- | --- |
-| `--lang bash\|posix\|posh\|js\|auto` | Dialect of the input. Default: `bash`. Canonical dialects: `bash`, `posix`, `posh`, `js`; aliases: `sh`/`shell`, `ps`/`pwsh`/`powershell`, `javascript`/`node`/`nodejs`; `auto` selects bash or PowerShell only. JS currently reports every input as ⊤. |
+| `--lang bash\|posix\|posh\|js\|auto` | Dialect of the input. Default: `bash`. Canonical dialects: `bash`, `posix`, `posh`, `js`; aliases: `sh`/`shell`, `ps`/`pwsh`/`powershell`, `javascript`/`node`/`nodejs`; `auto` selects bash or PowerShell only. JS evaluates a bounded subset; calls and unsupported execution report ⊤. Pure programs may produce uncovered empty-effect reports. |
 | `--json` | Emit the full JSON report instead of the human summary. |
 | `--file <path>` | Read the command from `path` (`-` means stdin). The report's `root` names the file. |
 | `--batch` | Read many commands, one per line, and write one compact JSON report per line (NDJSON). |

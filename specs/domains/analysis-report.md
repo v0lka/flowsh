@@ -12,7 +12,7 @@
 - `internal/analysis/exfil_test.go` — exfiltration regression tests.
 - `internal/analysis/destructive_test.go` — knowledge-base destructive-class raising (a class-E entry raises to Critical; a KB class never lowers the effect-derived severity).
 - `internal/analysis/loc_test.go` — why-trace source locations and `Options.Root` → `Report.Root`.
-- `front/js/analyze.go`, `api/api_test.go` — opaque JavaScript frontend and shared public report-contract checks.
+- `front/js/analyze.go`, `api/api_test.go` — bounded JavaScript frontend and shared public report-contract checks.
 - `internal/analysis/analyze_ps_test.go` — PowerShell provider options (`Options.Windows` toggles the Registry independently of the host OS).
 - `internal/analysis/vars_test.go` — host-table option (`Options.Vars`) end to end: seeded bindings resolve `$name`-derived targets, and the option never loosens the unseeded ⊤ default.
 - `internal/analysis/canonical.go` — the per-command resolution view (`CommandCall`, `CallRedirect`) with binary-name normalization (`normalizeBinary`), and the effect-based canonical form (`Canonical`, `buildCanonical`: staging fold + non-path target filter + deterministic key).
@@ -35,7 +35,7 @@ const (
 	LangBash       Lang = "bash"  // GNU bash argv with -flags and --options
 	LangPOSIX      Lang = "posix" // the POSIX shell (sh); the bash frontend in POSIX mode
 	LangPowerShell Lang = "posh"  // PowerShell cmdlet syntax; canonical name "posh"
-	LangJavaScript Lang = "js"    // Node.js source; currently an opaque top-only stub
+	LangJavaScript Lang = "js"    // Node.js source; bounded values/control flow
 )
 
 var Langs = []Lang{LangBash, LangPOSIX, LangPowerShell, LangJavaScript} // canonical order
@@ -85,7 +85,7 @@ The JSON field contract (a flowsh report is an engine report plus CLI metadata):
 | `schemaVersion` | string | Always `effect-ir/v2` (`engine.SchemaVersion`). |
 | `tool` | string | Always `flowsh` (`ToolName`). |
 | `toolVersion` | string | Always `flowsh/v3` (`ToolVersion`; v2 added the additive `commandCalls` and `canonical` fields, v3 the `score.cradleFlows`/`score.ingestFlows` network-flow fields). |
-| `lang` | string | `"bash"`, `"posix"`, `"posh"` or `"js"` (opaque stub). |
+| `lang` | string | `"bash"`, `"posix"`, `"posh"` or `"js"` (bounded evaluator). |
 | `input` | string | The analysed source text verbatim. |
 | `root` | string | The source name the input was read from (a file path, or `RootArgument`/`RootStdin`); present (`omitempty`) only when the caller named one via `Options.Root`. |
 | `effects` | array of `engine.Effect` | Normalised effects (merged by kind+mode, canonically sorted). Never `null` — always at least `[]`. |
@@ -202,7 +202,7 @@ Analyze(lang, src)                       analyze.go (package func)
         └─ (*Analyzer).Analyze(lang, src)
                  │
                  ├─ lang == LangJavaScript ─► analyzeJS(src, opts.Root)
-                 │        js.Analyze → one top effect → shared report assembly
+                 │        js.AnalyzeWith → bounded evaluation → shared assembly
                  │
                  ├─ lang == LangPowerShell ──► analyzePS(src, opts.psOptions(), opts.Root)
                  │        ps.Parse → ps.LowerWith(opts) → normalizeEffects
@@ -221,7 +221,7 @@ Analyze(lang, src)                       analyze.go (package func)
 
 `Encode()` (CLI `--json`) validates and marshals the report with two-space indent.
 
-The JavaScript path is a [conservative stub](javascript-frontend.md): it always returns one top effect with `Top` and `Conservative` true, a fixed reason, shared scoring, a why-trace, and a canonical form. It preserves input/root and leaves call metadata empty. `Covered()` here confirms no silent miss, not semantic JS coverage. `Options.Windows` and `Options.Vars` are ignored by JS.
+The [JavaScript evaluator](javascript-frontend.md) parses bounded values/control flow and returns effects plus source-located derivations. Calls and unsupported execution degrade to top; whole-unit parse/budget failures additionally set Top. Pure understood source returns no effects and remains uncovered under policy. Shared scoring/why/canonical helpers preserve the wire contract. Input/root are preserved; call binding metadata remains empty until the JS binder lands. `Options.Windows` and `Options.Vars` are ignored.
 
 ## Invariants
 

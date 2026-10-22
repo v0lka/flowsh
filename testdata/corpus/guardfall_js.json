@@ -1,11 +1,285 @@
 {
   "name": "guardfall-js",
-  "description": "Original JavaScript adversarial examples for classes A-E. The foundation frontend treats all source as opaque and must report top; these cases assert conservative coverage, not recognition of JavaScript effects.",
+  "description": "JavaScript GuardFall A-E examples and a benign shebang witness. The bounded evaluator must retain conservative coverage for unsupported values and execution and terminate on unbounded work; Node API effects remain outside this milestone.",
   "cases": [
-    { "id": "gf-js-a-escape", "group": "guardfall", "category": "A", "lang": "js", "input": "require('node:fs')['rm\\u0053ync']('/tmp/flowsh-js', { recursive: true });", "note": "escaped property name; opaque source must stay top" },
-    { "id": "gf-js-b-fragments", "group": "guardfall", "category": "B", "lang": "js", "input": "require('node:child_process').execSync(['rm', '-rf', '/tmp/flowsh-js'].join(' '));", "note": "command assembled from fragments instead of shell IFS; opaque source must stay top" },
-    { "id": "gf-js-c-indirection", "group": "guardfall", "category": "C", "lang": "js", "input": "const op = process.env.OP; require('node:fs')[op]('/tmp/flowsh-js');", "note": "dynamically selected operation; opaque source must stay top" },
-    { "id": "gf-js-d-encoded", "group": "guardfall", "category": "D", "lang": "js", "input": "eval(Buffer.from('dm9pZCAw', 'base64').toString());", "note": "encoded source passed to eval; opaque source must stay top" },
-    { "id": "gf-js-e-loop", "group": "guardfall", "category": "E", "lang": "js", "input": "while (true) {}", "note": "unbounded work; the stub must return top without execution" }
+    {
+      "id": "gf-js-a-escape",
+      "group": "guardfall",
+      "category": "A",
+      "lang": "js",
+      "input": "require('node:fs')['rm\\u0053ync']('/tmp/flowsh-js', { recursive: true });",
+      "note": "escaped property name; unmodelled execution must stay top"
+    },
+    {
+      "id": "gf-js-b-fragments",
+      "group": "guardfall",
+      "category": "B",
+      "lang": "js",
+      "input": "require('node:child_process').execSync(['rm', '-rf', '/tmp/flowsh-js'].join(' '));",
+      "note": "command assembled from fragments instead of shell IFS; unmodelled execution must stay top"
+    },
+    {
+      "id": "gf-js-c-indirection",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "const op = process.env.OP; require('node:fs')[op]('/tmp/flowsh-js');",
+      "note": "dynamically selected operation; unmodelled execution must stay top"
+    },
+    {
+      "id": "gf-js-d-encoded",
+      "group": "guardfall",
+      "category": "D",
+      "lang": "js",
+      "input": "eval(Buffer.from('dm9pZCAw', 'base64').toString());",
+      "note": "encoded source passed to eval; unmodelled execution must stay top"
+    },
+    {
+      "id": "gf-js-e-loop",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "while (true) {}",
+      "note": "unbounded work; the evaluator must exhaust its step budget and return top without execution"
+    },
+    {
+      "id": "gf-js-c-core-computed-key",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "const o = { [unknownKey]: 1 };",
+      "note": "unsupported computed object key must degrade, never become a guessed field"
+    },
+    {
+      "id": "gf-js-c-core-branch-call",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "let x; if (unknownCondition) x = 'a'; else x = 'b'; unknownCall(x);",
+      "note": "branch joins must not hide an unmodelled call"
+    },
+    {
+      "id": "gf-js-e-core-finally-budget",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "try { while (true) {} } finally {}",
+      "note": "finally must not bypass the analysis budget"
+    },
+    {
+      "id": "gf-js-c-core-foreach-tdz",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "let x = [1]; try { for (let x of x) {} } catch (e) { unknown(); }",
+      "note": "for-of lexical TDZ must preserve the catch path to unmodelled execution"
+    },
+    {
+      "id": "gf-js-e-core-async-iterator",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "for await (const x of [1]) {}",
+      "note": "unsupported async iteration must degrade instead of being treated as a pure array loop"
+    },
+    {
+      "id": "gf-js-c-core-inherited-destructuring",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "const {toString}={};if(toString)dangerous();",
+      "note": "Inherited destructuring must preserve a possible call."
+    },
+    {
+      "id": "gf-js-c-core-shadowed-undefined",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "{let undefined=1;if(undefined===1)dangerous();}",
+      "note": "Lexical undefined must shadow the built-in value."
+    },
+    {
+      "id": "gf-js-c-core-signed-zero",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "let x=-0;if(missing)x=0;if(1/x===1/0)dangerous();",
+      "note": "Joining opposite zero signs must preserve both branches."
+    },
+    {
+      "id": "gf-js-c-core-catch-default-finally",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "let x=0;try{try{throw {a:void 0}}catch({a=missing}){}finally{x=1}}catch(e){if(x===1)dangerous();}",
+      "note": "Catch-default throws must pass through finally."
+    },
+    {
+      "id": "gf-js-c-core-escaped-identifier",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "let x=0;{let \\u0078=1;if(x===1)dangerous();}",
+      "note": "Escaped identifiers must degrade explicitly."
+    },
+    {
+      "id": "gf-js-c-core-postfix-conversion",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "let x='';if(x++===0)dangerous();",
+      "note": "Postfix conversion must not return the original string."
+    },
+    {
+      "id": "gf-js-c-core-unknown-numeric-key",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "const o={1e21:1,1e22:2};if(o[1e21]===1)dangerous();",
+      "note": "Unknown numeric keys must not collapse into empty keys."
+    },
+    {
+      "id": "gf-js-c-core-unknown-key-rest",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "const o={'':1,a:2};const {[missing]:x,...rest}=o;if(rest['']===void 0)dangerous();",
+      "note": "Unknown destructuring keys must widen the rest object."
+    },
+    {
+      "id": "gf-js-c-core-array-hole",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "const [x]=[,];if(x)dangerous();",
+      "note": "Array holes may read inherited properties."
+    },
+    {
+      "id": "gf-js-c-core-unknown-key-throw",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "try{null[1e21]}catch(e){dangerous()}",
+      "note": "An unknown literal key must retain the null-receiver throw and catch path."
+    },
+    {
+      "id": "gf-js-c-core-catch-parameter-tdz",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "let a=1;try{try{throw {a:void 0}}catch({a=a}){}}catch(e){dangerous()}",
+      "note": "Catch defaults must see their own uninitialized bindings."
+    },
+    {
+      "id": "gf-js-c-core-iteration-default-tdz",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "let a=1;try{for(const [a=a] of [[undefined]]){}}catch(e){dangerous()}",
+      "note": "Iteration defaults must see fresh uninitialized lexical bindings."
+    },
+    {
+      "id": "gf-js-c-core-spread-mutation",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "let x=0;const it={[Symbol.iterator]:function*(){x=1;yield 1}};x=0;[...it];if(x===1)dangerous();",
+      "note": "Unsupported spread must invalidate state that iteration can mutate."
+    },
+    {
+      "id": "gf-js-c-core-class-undefined",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "class undefined{};if(undefined)dangerous();",
+      "note": "Unsupported class bindings must shadow built-in undefined."
+    },
+    {
+      "id": "gf-js-c-core-generator-undefined",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "function* undefined(){};if(undefined)dangerous();",
+      "note": "Generator declarations must retain their lexical binding."
+    },
+    {
+      "id": "gf-js-c-core-import-undefined",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "import undefined from './x.js';if(undefined===1)dangerous();",
+      "note": "Imported local bindings must shadow built-in undefined."
+    },
+    {
+      "id": "gf-js-c-core-typeof-host",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "if(typeof process !== 'undefined')dangerous();",
+      "note": "A host global absent from lexical state must not be assumed undefined."
+    },
+    {
+      "id": "gf-js-c-core-catch-var-initializer",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "var x=0;try{throw 2}catch(x){var x=1}if(x===0)dangerous();",
+      "note": "A var initializer assigns the shadowing catch parameter, leaving the outer var unchanged."
+    },
+    {
+      "id": "gf-js-c-core-catch-var-iteration",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "var x=0;try{throw 2}catch(x){for(var x of [1]){}}if(x===0)dangerous();",
+      "note": "Iteration assignments must also resolve a shadowing catch parameter."
+    },
+    {
+      "id": "gf-js-e-core-bigint",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "const x = 10n;",
+      "note": "Unsupported BigInt values must expose conservative uncertainty."
+    },
+    {
+      "id": "gf-js-e-core-legacy-octal",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "const x = 010;",
+      "note": "Unsupported legacy numeric forms must not silently look fully understood."
+    },
+    {
+      "id": "gf-js-e-core-numeric-overflow",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "const n = 1e400;",
+      "note": "Failed numeric conversion must expose conservative uncertainty."
+    },
+    {
+      "id": "gf-js-a-core-invalid-escape",
+      "group": "guardfall",
+      "category": "A",
+      "lang": "js",
+      "input": "const s = \"\\u{110000}\";",
+      "note": "Failed string decoding must emit top with a reason."
+    },
+    {
+      "id": "gf-js-e-core-update-coercion",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "let s = 'a'; s++;",
+      "note": "Unsupported primitive update coercion must expose conservative uncertainty."
+    },
+    {
+      "id": "benign-js-core-hashbang",
+      "group": "benign",
+      "lang": "js",
+      "input": "#!/usr/bin/env node\nconst N = 3; for (let i = 0; i < N; i++) { const x = i * 2; }",
+      "note": "An inert shebang must preserve the precision of a pure program."
+    }
   ]
 }

@@ -111,7 +111,7 @@ Present on every report:
 | `schemaVersion` | string | Frozen effect-schema tag (`effect-ir/v2`). |
 | `tool` | string | `flowsh`. |
 | `toolVersion` | string | CLI report-contract tag (`flowsh/v3`). |
-| `lang` | string | Selected dialect: `bash`, `posix`, `posh`, or `js` (currently an opaque top-only stub). |
+| `lang` | string | Selected dialect: `bash`, `posix`, `posh`, or `js` (bounded values/control flow; unmodelled calls remain top). |
 | `input` | string | The command source text that was analysed. |
 
 | Key | Type | Present when | Meaning |
@@ -282,7 +282,7 @@ Each step:
 | `note` | string | note non-empty | A human hint about the atom. |
 | `loc` | object | position known | `{ "file": string, "line": int, "col": int }` — the 1-based source position. |
 
-The opaque JavaScript stub uses `literal:js-opaque` as a fallback marker without a source location. It identifies unsupported analysis rather than an observed JavaScript token; the explanation is in `reason`.
+JavaScript failures that have no parsed source location use the `literal:js-opaque` fallback marker. The explanation remains in `reason`. Degradation at a reached construct includes that construct's source location.
 
 ## Reading the result
 

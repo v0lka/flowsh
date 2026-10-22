@@ -10,7 +10,7 @@ documentation, not data — the loader reads only `*.json`.
 | File | Group(s) | Content |
 | ---- | -------- | ------- |
 | `guardfall_bash.json`, `guardfall_posix.json`, `guardfall_posh.json` | `guardfall` | guard-evading classes A–E, both dialect families |
-| `guardfall_js.json` | `guardfall` | Five original JavaScript A–E examples; the foundation stub asserts conservative top coverage only, without parsing or effect recognition. |
+| `guardfall_js.json` | `guardfall` | JavaScript A–E examples plus #28 control-flow, TDZ, async-iterator, budget, and nineteen review regressions (inherited reads, shadowing, signed zero, catch defaults, escaped identifiers, postfix conversion, unknown keys, null-receiver exceptions, default TDZ, spread mutation, and unsupported declarations); the bounded evaluator asserts conservative coverage without Node API effect recognition. |
 | `destructive_bash.json` | `destructive` | canonical destructive/recall cases |
 | `benign_bash.json` | `benign` | precision control (no ⊤/conservative) |
 | `ps_cases.json` | `ps` | PowerShell-specific recall cases |
@@ -20,7 +20,7 @@ documentation, not data — the loader reads only `*.json`.
 
 The JavaScript examples are authored for this repository and use no external
 dataset. Class B uses string-fragment joining as the JS counterpart of shell
-separator construction. All five cases must retain an effect or top under the
+separator construction. All cases must retain an effect or top under the
 existing gate. They make no benign-precision claim; real effect and precision
 cases grow with later JavaScript milestones.
 

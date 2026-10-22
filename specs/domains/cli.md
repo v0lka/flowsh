@@ -92,8 +92,8 @@ options:
   --lang bash|posix|posh|js|auto
                      dialect of the input (default: bash); "auto" sniffs the
                      input for PowerShell cmdlets/aliases and picks bash or posh;
-                     js (aliases: javascript, node, nodejs) currently reports
-                     every input as ⊤, without parsing or evaluation
+                     js (aliases: javascript, node, nodejs) evaluates a bounded
+                     subset; calls and unsupported execution report ⊤
   --file PATH        read the command from PATH ("-" for stdin); the report's
                      root names the file
   --batch            read many commands (one per line) and write one JSON report
@@ -178,7 +178,7 @@ Input selection (`readInput`, returning an `input{src, root}`):
 - A failure to read the source (a missing/unreadable file, a directory, an empty file or stdin) is an `inputError` and exits `3`, distinct from a usage error (`2`).
 - In batch mode (`--batch`) the selected source is split on newlines (via `splitBatch`), blank lines are dropped, and each remaining line is analysed in turn; `root` is the shared source name for every line.
 
-Explicit `--lang js` (aliases `javascript`, `node`, `nodejs`, trimmed and case-insensitive) routes source to the [JavaScript stub](javascript-frontend.md). Every submitted source receives one top effect with a reason; the stub performs no parsing or evaluation. `--lang auto` continues to choose bash or PowerShell only. Existing input validation and batch line splitting apply to JS too.
+Explicit `--lang js` (aliases `javascript`, `node`, `nodejs`, trimmed and case-insensitive) routes source to the [bounded JavaScript evaluator](javascript-frontend.md). Calls and unsupported execution degrade to top with a reason. Pure understood programs may have no effects and remain uncovered under policy. `--lang auto` continues to choose bash or PowerShell only. Existing input validation and batch line splitting apply to JS too.
 
 ## Invariants
 

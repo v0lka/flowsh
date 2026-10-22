@@ -117,12 +117,11 @@ func TestNoEffectReportsDenyAsUncovered(t *testing.T) {
 }
 
 func TestJavaScriptReportsUseUncertaintyRules(t *testing.T) {
-	r, err := api.Analyze(api.LangJavaScript, "const x = 1;")
+	r, err := api.Analyze(api.LangJavaScript, "unknown();")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The Grades entry in the "review" config below is live only while the
-	// stub's single CodeExec(⊤) effect grades Critical.
+	// Unknown execution still grades Critical.
 	if r.Score.Grade != engine.DestructCritical {
 		t.Fatalf("grade = %v, want %v", r.Score.Grade, engine.DestructCritical)
 	}
@@ -279,5 +278,16 @@ func TestAnalysisIntegration(t *testing.T) {
 				t.Fatalf("got %+v, want %s", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestJavaScriptPureReportsRemainUncovered(t *testing.T) {
+	r, err := api.Analyze(api.LangJavaScript, "const x=1;")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := newPolicy(t, policy.Config{}).Evaluate(r)
+	if d.Action != policy.Deny || len(d.Matches) != 1 || d.Matches[0].Code != "uncovered_report" {
+		t.Fatalf("pure JS must retain the uncovered-report policy: %+v", d)
 	}
 }

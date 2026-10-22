@@ -89,7 +89,7 @@ const (
 	LangPOSIX = analysis.LangPOSIX
 	// LangPowerShell is PowerShell cmdlet syntax (canonical name "posh").
 	LangPowerShell = analysis.LangPowerShell
-	// LangJavaScript is JavaScript, currently treated as opaque.
+	// LangJavaScript is the bounded JavaScript source dialect.
 	LangJavaScript = analysis.LangJavaScript
 )
 

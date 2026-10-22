@@ -7,7 +7,7 @@
 ## Layout
 
 - `engine/` — frozen, frontend-agnostic core: effect IR, value lattices, scoring, report format
-- `front/bash/`, `front/ps/`, `front/js/` — bash, PowerShell, and the conservative JavaScript frontend stub
+- `front/bash/`, `front/ps/`, `front/js/` — bash, PowerShell, and the bounded JavaScript value/control-flow frontend
 - `kb/` — the embedded YAML knowledge base (`kb/data/*.yaml`)
 - `bind/` — command resolution and flag/operand binding
 - `internal/analysis/` — the composition facade (frontends + binder + core → `Report`)

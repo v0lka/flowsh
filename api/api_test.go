@@ -30,7 +30,7 @@ var probe = []struct {
 	{"posix read", api.LangPOSIX, `cat /etc/passwd`},
 	{"posh secret read", api.LangPowerShell, `Get-Content ~/.aws/credentials`},
 	{"posh write", api.LangPowerShell, `Set-Content x y`},
-	{"js conservative stub", api.LangJavaScript, `const x = 1;`},
+	{"js unsupported call", api.LangJavaScript, `unknown();`},
 }
 
 // TestExportedSurfaceAnalyze drives Analyze for bash, posix, posh and js

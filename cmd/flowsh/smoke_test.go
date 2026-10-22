@@ -94,7 +94,7 @@ func TestSmoke(t *testing.T) {
 	}{
 		{api.LangBash, "rm -rf $HOME"},
 		{api.LangPowerShell, "Remove-Item -Recurse -Force $HOME"},
-		{api.LangJavaScript, "const x = 1;"},
+		{api.LangJavaScript, "unknown();"},
 	} {
 		t.Run(string(tc.lang)+" JSON", func(t *testing.T) {
 			out, code := runSmoke(t, bin, "", "--lang", string(tc.lang), "--json", tc.src)
@@ -105,11 +105,22 @@ func TestSmoke(t *testing.T) {
 			if rep.Lang != string(tc.lang) || len(rep.Effects) == 0 || rep.ToolVersion != api.ToolVersion {
 				t.Fatalf("unexpected report: %+v", rep)
 			}
-			if tc.lang == api.LangJavaScript && (len(rep.Effects) != 1 || !rep.Top || !rep.Conservative || !rep.HasTop()) {
+			if tc.lang == api.LangJavaScript && (len(rep.Effects) != 1 || rep.Top || !rep.Conservative || !rep.HasTop()) {
 				t.Fatalf("expected a JavaScript top report, got %+v", rep)
 			}
 		})
 	}
+
+	t.Run("pure JavaScript", func(t *testing.T) {
+		out, code := runSmoke(t, bin, "", "--lang", "js", "--json", "const x=1;")
+		if code != 0 {
+			t.Fatalf("exit %d, want report success", code)
+		}
+		rep := decodeJSON(t, out)
+		if rep.Effects == nil || len(rep.Effects) != 0 || rep.Top || rep.Conservative || rep.Covered() || rep.Canonical != nil {
+			t.Fatalf("pure JS report = %+v", rep)
+		}
+	})
 
 	t.Run("version", func(t *testing.T) {
 		out, code := runSmoke(t, bin, "", "--version")

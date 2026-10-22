@@ -15,7 +15,7 @@ For formats and update rules, see [META.md](META.md). For how to use the system,
 | Tweak scoring / destructiveness / exfil | [Scoring](domains/engine/scoring.md), [Report Contract](contracts/report-json.md) |
 | Add a frontend (new language) | [Layer Architecture](architecture/layers.md), [frontend <-> engine Contract](contracts/frontend-engine.md), [Analysis Facade](domains/analysis-report.md) |
 | Change bash parsing / abstract execution | [bash Frontend](domains/bash-frontend/README.md), [Parse & Normalize](domains/bash-frontend/parse-normalize.md), [Abstract Execution](domains/bash-frontend/abstract-exec.md) |
-| Change JavaScript registration or conservative stub | [JavaScript Frontend](domains/javascript-frontend.md), [Analysis Facade](domains/analysis-report.md), [frontend <-> engine Contract](contracts/frontend-engine.md) |
+| Change JavaScript parsing / values / control flow | [JavaScript Frontend](domains/javascript-frontend.md), [Analysis Facade](domains/analysis-report.md), [frontend <-> engine Contract](contracts/frontend-engine.md) |
 | Change PowerShell parsing / lowering | [PowerShell Frontend](domains/powershell-frontend.md), [ADR-0014](decisions/0014-ps-abstract-state.md) |
 | Change command resolution or flag binding | [Binding](domains/binding.md), [bind <-> kb Contract](contracts/bind-kb.md) |
 | Add a NetEgress parameter or change the egress-target grammar | [Binding](domains/binding.md) (egress target gate), [Knowledge Base](domains/knowledge-base.md), [SECURITY.md](../SECURITY.md) (known risks) |
@@ -30,7 +30,7 @@ For formats and update rules, see [META.md](META.md). For how to use the system,
 | Understand the end-to-end pipeline | [Data Flow](architecture/data-flow.md) |
 | Understand the layering / import rules | [Layer Architecture](architecture/layers.md) |
 | Understand degrade-to-⊤ semantics | [Conservatism](architecture/conservatism.md) |
-| Understand why the IR is frozen / the KB is embedded / ⊤ is used / one module / the tool is named `flowsh` / public analysis and policy packages exist | [Decisions](decisions/_template.md) (ADR-0001 … ADR-0017) |
+| Understand why the IR is frozen / the KB is embedded / ⊤ is used / one module / the tool is named `flowsh` / public analysis and policy packages exist | [Decisions](decisions/_template.md) (ADR-0001 … ADR-0018) |
 | Add a new spec document | [META.md](META.md), [WORKFLOW.md](WORKFLOW.md) |
 
 ## Dependency Graph
@@ -75,7 +75,7 @@ Spec-level view of the layered system (arrows point from a layer to what it depe
               0010 public-api 0011 ci-load-budget 0012 race-parse-budget
               0013 windows-clock-tick 0014 ps-abstract-state
               0015 per-host-latency 0016 kb-load-budget
-              0017 report-policy-package
+              0017 report-policy-package 0018 javascript-semantic-kernel
 ```
 
 ## Directory Listing
@@ -103,7 +103,7 @@ specs/
 │   │   ├── README.md                          bash frontend (domain overview)
 │   │   ├── parse-normalize.md                 parse + normalize detail
 │   │   └── abstract-exec.md                   abstract execution detail
-│   ├── javascript-frontend.md                 JavaScript foundation (front/js), opaque top-only stub
+│   ├── javascript-frontend.md                 Bounded JavaScript values/control flow (front/js)
 │   ├── powershell-frontend.md                 PowerShell parse (tree-sitter) + Σ lowering
 │   ├── analysis-report.md                     composition facade + report + corpus
 │   ├── policy.md                              configurable report decisions
@@ -133,7 +133,8 @@ specs/
     ├── 0014-ps-abstract-state.md
     ├── 0015-per-host-latency-reference.md
     ├── 0016-kb-load-budget-release-headroom.md
-    └── 0017-report-policy-package.md
+    ├── 0017-report-policy-package.md
+    └── 0018-javascript-semantic-kernel.md
 ```
 
 ## Full File List
@@ -168,6 +169,7 @@ Every spec file, by path relative to `specs/`:
 - `decisions/0015-per-host-latency-reference.md`
 - `decisions/0016-kb-load-budget-release-headroom.md`
 - `decisions/0017-report-policy-package.md`
+- `decisions/0018-javascript-semantic-kernel.md`
 - `domains/analysis-report.md`
 - `domains/bash-frontend/README.md`
 - `domains/bash-frontend/abstract-exec.md`

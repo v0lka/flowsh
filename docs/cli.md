@@ -77,7 +77,7 @@ stdin and never require a command. When both are given, `--help` wins.
 | `bash` *(default)* | `front/bash` | GNU bash argv (with `-flags` and `--options`). Alias: `shell`. |
 | `posix` | `front/bash` (POSIX variant) | The POSIX shell. Bash-only special forms (e.g. `[[ … ]]`) are not recognised. Alias: `sh`. |
 | `posh` | `front/ps` | PowerShell cmdlet syntax. Aliases: `ps`, `pwsh`, `powershell`. |
-| `js` | `front/js` | JavaScript/Node.js foundation stub: every input reports ⊤ without parsing or evaluation. Aliases: `javascript`, `node`, `nodejs`. |
+| `js` | `front/js` | Bounded JavaScript/Node.js values/control flow; calls and unsupported execution report ⊤. Pure understood programs may have no effects. Aliases: `javascript`, `node`, `nodejs`. |
 | `auto` | sniffed | Pick `posh` when the input shows PowerShell cmdlet/parameter/syntax markers, else `bash`. Never fails; falls back to `bash`. |
 
 Language names and aliases are trimmed and case-insensitive. JavaScript
@@ -222,16 +222,19 @@ $ flowsh --lang auto 'Get-Content ~/.aws/credentials'
 `posh`, otherwise `bash` is used (including POSIX input). It never fails: a
 command with no distinctive markers is treated as bash.
 
-### JavaScript foundation
+### JavaScript
 
 ```sh
 $ flowsh --lang js --json 'const x = 1;'
 ```
 
-The report has `lang: "js"`, one `CodeExec(⊤)` effect, and `top` and
-`conservative` true with a reason explaining the unimplemented parser/evaluator.
-The usual score, why-trace, and canonical form are present. This is a
-registration milestone; all JS inputs remain deny-or-inspect.
+This understood pure program returns `lang: "js"` and `effects: []`, with
+`top` and `conservative` false and no canonical form. It remains uncovered;
+report policy denies it with `uncovered_report`.
+
+Calls such as `unknown()` and other unsupported execution produce
+`CodeExec(⊤)` with `conservative` true and a source-located why-trace.
+Parse errors and exhausted analysis budgets also set `top` true.
 
 ### PowerShell
 

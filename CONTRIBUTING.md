@@ -18,7 +18,7 @@ rejected. For deep structural changes, also read the relevant document in
 | `kb/` | Knowledge base | The embedded YAML command/parameter→effect dataset and the destructive-flags table (`kb/data/*.yaml`, loaded by `kb/loader.go`). |
 | `front/bash/` | Frontend | Parse POSIX/bash source and abstractly execute it; emit the effects the shell contributes and delegate ordinary commands through a resolver seam. |
 | `front/ps/` | Frontend | Parse PowerShell (tree-sitter) and lower it into the effect IR using its own alias/cmdlet tables. |
-| `front/js/` | Frontend | JavaScript foundation stub; every source emits one conservative top effect without parsing or evaluation. |
+| `front/js/` | Frontend | Bounded JavaScript values/control flow; calls and unsupported execution degrade to top. |
 | `bind/` | Binding | Resolve an invoked name and bind flags/operands against the knowledge base, producing `[]engine.Effect`. |
 | `internal/analysis/` | Composition | The single facade wiring frontends + binder + core into a deterministic `Report`. |
 | `internal/corpus/` | Tests | The test-only regression-corpus harness: the on-disk document format, its loader, and the group selectors used by the conformance tests and the benchmark harness. |
@@ -49,7 +49,7 @@ front/bash  bind   front/ps
 ```
 
 The JavaScript sibling adds `internal/analysis -> front/js -> engine`; its
-current stub discovers no command calls or API effects.
+evaluator retains source locations but has no Node API effect binder yet.
 
 Module-internal imports per layer:
 
@@ -229,7 +229,7 @@ documents:
 | ---- | ----- | ---- |
 | `guardfall_bash.json` | `guardfall` | Adversarial bash inputs that evade a surface-level scanner (classes A–E). |
 | `guardfall_posh.json` | `guardfall` | The same, for PowerShell. |
-| `guardfall_js.json` | `guardfall` | Five original JavaScript A–E examples asserting conservative top coverage only. |
+| `guardfall_js.json` | `guardfall` | JavaScript A–E examples and semantic regressions asserting conservative coverage and bounded evaluation. |
 | `guardfall_posix.json` | `guardfall` | The same, for the POSIX shell dialect (`lang: posix`). |
 | `destructive_bash.json` | `destructive` | Canonical destructive commands (recall; must reach at least the Medium grade). |
 | `ps_cases.json` | `ps` | PowerShell-specific recall cases. |

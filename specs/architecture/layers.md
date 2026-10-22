@@ -24,7 +24,7 @@ a responsibility belongs to exactly one layer.
 | Knowledge base | `kb/` | `engine` | Hold the hand-verified command/parameter→effect dataset and the destructive-flags table; lower a matched parameter to an `engine.Effect`. |
 | Shell frontend | `front/bash/` | `engine` | Parse shell source and abstractly execute it, emitting the effects the shell itself contributes and delegating ordinary commands through a resolver seam. |
 | PowerShell frontend | `front/ps/` | `engine` | Parse PowerShell source and lower it into the effect IR, using its own alias/cmdlet tables. |
-| JavaScript frontend | `front/js/` | `engine` | Conservatively report one top effect for every JavaScript source; parsing and evaluation are unimplemented. |
+| JavaScript frontend | `front/js/` | `engine` | Parse/evaluate bounded JavaScript values and control flow; calls degrade until models exist. |
 | Binding | `bind/` | `engine`, `kb`, `front/bash` | Resolve an invoked name and bind its flags/operands against the knowledge base, producing `[]engine.Effect`. |
 | Composition | `internal/analysis/` | `engine`, `bind`, `front/bash`, `front/ps`, `front/js` | Wire the frontends, the binder and the core into one deterministic `Report`; the single facade behind the CLI and the embedding API. |
 | Public API | `api/` | `internal/analysis` | Re-export the facade as an embeddable Go API — type aliases, copied constants and forwarding functions only; holds no behaviour of its own ([ADR-0010](../decisions/0010-public-embedding-api.md)). |
@@ -91,7 +91,7 @@ Key properties of the graph:
   nor another core package of this module.
 - `kb` lowers into `engine` and is never imported by it (`kb/schema.go` package
   doc: "the core never imports kb").
-- `front/js` is another sibling, importing only `engine`. Its stub returns a fresh conservative result per analysis.
+- `front/js` is another sibling, importing `engine` and the pinned parser. Its bounded evaluator owns per-analysis state; call modeling remains deferred to the invocation and Node API milestones.
 - `front/bash` and `front/ps` are siblings; neither imports the other, and
   neither imports `kb` or `bind`. The PowerShell frontend has "its own alias
   table and its own cmdlet→effect mapping" (`front/ps/parse.go`).

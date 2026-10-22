@@ -2,72 +2,185 @@
 
 ## Purpose
 
-`front/js` establishes JavaScript source targeting Node.js as an input dialect. It is a conservative foundation stub: every source is opaque and produces one top-element effect. Registration and report integration are available; parsing, evaluation, and Node API effect recognition are future milestones.
+`front/js` parses JavaScript targeting Node.js and evaluates a bounded statement/expression subset. It produces values and control flow; function invocation, module resolution, and Node API effect knowledge remain later milestones (#34 and #29–#32/#36). Unsupported execution degrades to the shared top effect.
 
 ## Key Files
 
-- `front/js/analyze.go` — `Result` and the unconditional `Analyze` stub.
-- `front/js/analyze_test.go` — opaque-input contract and independent results.
-- `internal/analysis/analyze.go` — `LangJavaScript`, alias parsing, `analyzeJS`, and report assembly.
-- `api/api.go` — public language constant and forwarding analysis surface.
-- `api/api_test.go` — shared dialect and report-contract checks.
-- `cmd/flowsh/smoke_test.go` — JavaScript CLI report smoke check.
-- `policy/policy_test.go` — JS reports pass language validation and retain uncertainty restrictions.
-- `testdata/corpus/guardfall_js.json` — five original A–E conservative-coverage cases.
+- `front/js/analyze.go` — entry points, resolver boundary, results, and degradation.
+- `front/js/parse.go` — pinned tree-sitter parsing and position-preserving normalization.
+- `front/js/value.go` — typed values, immutable container snapshots, case-sensitive lexical state, joins, and taint.
+- `front/js/expr.go` — expressions, literals, destructuring inputs, and conservative calls.
+- `front/js/exec.go` — statements, scope, hoisting, completion states, loops, switch, and exceptions.
+- `front/js/analyze_test.go` — semantic matrix, resolver witnesses, bounds, concurrency, and fuzz seeds.
+- `front/js/regressions_test.go` — reachable-call, signed-zero, key, and identifier regressions.
+- `internal/analysis/analyze.go`, `internal/analysis/analyze_javascript_test.go` — report assembly and source locations.
+- `api/api_test.go`, `cmd/flowsh/smoke_test.go`, `policy/policy_test.go` — consumer contracts.
+- `testdata/corpus/guardfall_js.json` — GuardFall A–E conservative coverage.
 
 ## Core Types
 
 ```go
 type Result struct {
-	Effects      []engine.Effect
-	Top          bool
-	Conservative bool
-	Reason       string
+    Effects      []engine.Effect
+    Derivations  []engine.Derivation
+    Top          bool
+    Conservative bool
+    Reason       string
 }
 
+type Call struct {
+    Callee string
+    Args   []Value
+    Loc    engine.SourceLoc
+}
+type Resolution struct {
+    Handled     bool
+    Value       Value
+    Effects     []engine.Effect
+    Derivations []engine.Derivation
+}
+type Resolver func(Call) Resolution
+
 func Analyze(src string) *Result
+func AnalyzeWith(name, src string, resolver Resolver) *Result
 ```
 
-`Analyze` accepts the source without inspecting it. It returns a fresh result containing one `CodeExec` effect over `ScopeTop()`, in `ModeDirect`, with `CertaintyCertain`, `TaintBottom()`, and `Reversible:false`. Both status flags are true. The fixed reason explains that parsing and evaluation are not implemented; it contains no source text.
+`Value` is a frontend-local lattice, separate from the frozen effect IR. Its zero value is unknown; exact elements include strings, numbers, booleans, null, undefined, function bodies, and bounded plain objects/arrays. A join preserves equal primitive values or identical immutable snapshots; disagreement becomes unknown. Taint always joins, independently of knownness. Unknown is distinct from JavaScript `undefined`.
+
+Numeric lattice equivalence follows [ECMAScript SameValue](https://tc39.es/ecma262/multipage/ecmascript-data-types-and-values.html#sec-numeric-types-number-sameValue): signed zeros differ and NaNs agree. JavaScript strict equality still equates the zero signs and rejects NaN equality. Unsupported primitive update conversions return unknown for both the stored value and the postfix result, preserving taint, and emit a conservative top effect with a reason; numeric updates remain exact.
+
+Escaped identifiers are explicitly unsupported during normalization. Their raw spelling differs from the [identifier name](https://tc39.es/ecma262/multipage/ecmascript-language-lexical-grammar.html#sec-names-and-keywords), so treating the spelling as a lexical binding could bypass shadowing. Unescaped `undefined` first resolves lexical bindings and uses the built-in value only when unbound.
+
+Catch parameters and each lexical loop iteration predeclare their pattern names before defaults run, preserving the temporal dead zone. Catch-parameter initialization throws join the catch's throwing outcomes before its lexical frame is removed. Finalizers run on those outcomes before an enclosing catch observes their state.
+
+Import locals remain initialized unknown bindings; class names retain lexical initialization, and generator declarations retain their binding. These declarations preserve shadowing without adding module loading or invocation semantics. Array spread widens mutable state because an unmodelled iterator can execute user code.
+
+State stores case-sensitive bindings in lexical frames, with initialization and constness. `var` declarations hoist to the analyzed unit's variable frame; `let`/`const` are predeclared in their block. Reads before lexical initialization and invalid writes degrade rather than invent a value. Branch clones share immutable container snapshots; unmodelled calls/writes invalidate potentially mutable state.
+
+`var` initializers and iteration assignments resolve the active binding, including
+a shadowing catch parameter; hoisting alone targets the variable frame.
+`typeof` on a name absent from lexical state yields unknown because the host may
+provide it. Possible host accessor throws remain catchable; known local values
+and the unshadowed built-in `undefined` retain exact types.
 
 ## Flow
 
 ```text
---lang js/javascript/node/nodejs (trimmed, case-insensitive)
-    -> ParseLang -> LangJavaScript ("js")
-    -> Analyzer.AnalyzeWith -> analyzeJS
-    -> js.Analyze(src) -> Result{one CodeExec(top), Top, Conservative, Reason}
-    -> normalizeEffects -> ComputeDestructiveness -> buildWhy -> ScoreEffects
-    -> buildCanonical -> Report{lang:"js", input, root, ...}
+explicit --lang js/javascript/node/nodejs
+    -> facade -> js.AnalyzeWith(source label, source, nil)
+    -> pinned JavascriptLanguage parser -> owned normalized tree
+    -> bounded evaluator (values + state + completion paths)
+    -> Result{effects, derivations, Top/Conservative/Reason}
+    -> shared normalization / scoring / why / canonical -> Report
 ```
 
-The shared engine determines the Critical grade. The facade supplies the normal report identity, input/root, explanation, and canonical form. `commands` stays zero, `resolution` stays its zero value, and `commandCalls` and `destructive` are omitted because the stub discovers no calls or destructive-table matches. The explanation uses the fixed `literal:js-opaque` fallback marker with no source location. It identifies opaque analysis without claiming a source token was parsed; the explanatory sentence stays in `reason`. Report fields and version tags retain their existing shapes/values.
+### Supported subset
+
+| Construct | Evaluation | Test coverage |
+| --- | --- | --- |
+| `var`/`let`/`const`, assignment, comments, leading shebang, empty statements | Case-sensitive state, block scope, var hoisting, TDZ/constant degradation; shebangs are inert and preserve source positions | `TestValuesAndStatements`, `TestDegradeRules`, `TestHashbangIsInert` |
+| Object/array destructuring, defaults, rest, holes | Exact own literal fields/elements; missing properties and unknown receivers/iterables degrade | `TestValuesAndStatements`, `TestDegradeRules` |
+| String/number/boolean/null/undefined literals | Exact primitive values; unsupported encodings/numeric forms yield unknown and conservative top with a reason | `TestValuesAndStatements`, `TestUnsupportedValuesDegrade` |
+| Plain object/array and JSON-shaped literals | Immutable bounded snapshots; literal property/index reads | `TestValuesAndStatements` |
+| Templates and string concatenation | Known primitive components fold; unknown/coercible components yield unknown, with top for unmodelled conversion | `TestUnknownTemplateIsNotLiteral`, `TestDegradeRules` |
+| Numeric arithmetic, bitwise `&`/`\|`/`^`, numeric comparisons, equality, unary operations | Fold documented primitive cases; unsupported coercions yield unknown and top | `TestValuesAndStatements`, `TestDegradeRules`, `TestUnsupportedValuesDegrade` |
+| `&&`, `\|\|`, `??`, ternary | Respect known reachability; unknown alternatives join state and values | `TestValuesAndStatements`, `TestHeadersAndUnknownExceptions` |
+| `if`/`else` | Select a known branch; fork and join unknown branches | `TestValuesAndStatements` |
+| `for`, `while`, `do-while` | Evaluate initializer/test/update/body in order; charge each iteration; unknown bounds widen mutable state and degrade | `TestValuesAndStatements`, `TestBudgetPreservesEffects` |
+| `for-of`, `for-in` | Exact finite array elements / plain-object own keys (integer keys first); other iterables degrade | `TestValuesAndStatements`, `TestDegradeRules` |
+| `break`, `continue` | Separate completion paths consumed by the enclosing loop/switch | `TestValuesAndStatements` |
+| `switch` | Test expressions in order, snapshot each possible entry, preserve fallthrough and default; shared case lexical frame | `TestSwitchEntryStates`, `TestValuesAndStatements` |
+| `try`/`catch`/`finally`, `throw`, `return` | Distinct normal/break/continue/return/throw outcomes; catch consumes throws; finally runs on every outcome and can override it | `TestFinallyOverridesAbruptCompletion`, `TestFunctionBodiesUseStatementEvaluator` |
+| Function declarations/expressions and arrows | Retain bodies as values; declarations produce no body effects; the statement evaluator can evaluate bodies in an isolated supplied state | `TestFunctionBodiesUseStatementEvaluator` |
+| `import`/`export` | Evaluate local exported declarations; external initialization remains unmodelled and degrades; imported bindings remain unknown | `TestValuesAndStatements`, `TestDegradeRules` |
+| `async`/`await` | Preserve async function bodies; sequential primitive await; unknown thenables degrade | `TestValuesAndStatements`, `TestDegradeRules` |
+
+Function **invocation** always remains conservative in this milestone. Parameter binding, caller return propagation, recursion, closures, module aliases, callback invocation, defaults, and IIFEs belong to #34. The production evaluator does not traverse a dormant function as though it ran. `return` handling is exercised through the same body evaluator without implementing calls.
+
+### Explicit degradation table
+
+| Construct | Result |
+| --- | --- |
+| Source size/raw delimiter depth limit, parse timeout/error, missing syntax, stopped parse, parser/normalizer failure | Whole-unit top with fixed diagnostic; no salvaged prefix treated as complete |
+| Unsupported numeric literals, failed string decoding, unsupported primitive unary/update coercions | Unknown + top with Conservative, a fixed reason, and a source-located derivation |
+| Exhausted execution budget or internal evaluator panic | Whole-unit top; previously discovered effects retained |
+| Unknown loop bound/iterable (incl. `for await`) | Top effect; mutable state widened; possible body, zero-iteration, and TypeError throw outcomes retained |
+| Classes/methods, generators/async iterators, accessors, Proxy, `with` | Affected value unknown and top for unsupported execution |
+| Escaped identifier tokens | Whole-unit top with an explicit unsupported-syntax reason; raw spelling is never used as a binding name |
+| Labels beyond an empty labelled statement | Top; labelled abrupt completion is unsupported |
+| Unknown literal property keys | Unknown + top; containers, reads, destructured values, and rest objects lose precision; exact empty-string keys remain supported |
+| Computed property keys beyond literal member/index keys | Evaluate the key's expressions, then unknown + top |
+| Prototype-dependent property access, object spread, property writes | Unknown + top; mutable state invalidated |
+| Calls/constructors, including user functions and Node APIs | Evaluate callee/arguments, return unknown + top unless an injected trusted resolver handles the call |
+| Unknown-value/object coercion or await of an unknown thenable | Unknown + top; retain possible throw path |
+| External module initialization | Unknown imported names + top; no runtime file resolution |
+
+The public facade supplies no JS resolver yet. The function-valued seam accepts typed arguments and returns values/effects/derivations without importing `bind`/`kb` into `front/js`. Test resolvers witness evaluation order and provenance; they are not Node API knowledge tables. The later binder must provide call metadata with the first effect family.
+
+### Console and asynchronous policy
+
+`console.log` stdout does **not** fold into expression values. The evaluator does not capture stdout, inspect a Node process, or execute logging. Until a data-driven model exists, `console.log` is an unmodelled call and degrades. This explicitly differs from Bash command-substitution stdout folding. No Node API is special-cased in Go.
+
+`await` uses sequential value semantics only. Event-loop ordering, scheduling, arbitrary thenables, and async callback execution are outside this milestone.
+
+### Report behavior
+
+An understood effect-free program (including empty library input, declarations, finite pure loops, and dormant functions) returns `effects: []`, no uncertainty flags, and no canonical form. It validates but `Covered()` is false; policy denies it with `uncovered_report`, matching existing benign Bash no-ops. The frontend manufactures neither an effect nor a conservative flag to satisfy coverage.
+
+Unsupported reached execution, literal decoding, and primitive coercions emit Direct `CodeExec(ScopeTop())`, certain and irreversible, with a fixed reason and a source-located derivation. `Conservative` is true; `Top` marks a whole-unit failure, not every local unknown call or value. Abstract unknowns produced by supported operations, such as joining different branch values, remain valid lattice results and do not by themselves imply unsupported analysis. Shared scoring supplies Critical severity for top. The facade preserves input/root and version tags. Command binding metadata remains empty because no JS effect binder is installed.
+
+Whole-unit failures without a parsed source location use the fixed `literal:js-opaque` marker without a location; the diagnostic stays in `reason`. Earlier derivations retain their source locations when evaluation exhausts its budget.
 
 ## Invariants
 
-- Every library input, including empty, whitespace-only, malformed, and valid source, yields exactly one top-element effect with a nonempty reason.
-- Reports have `Top`, `HasTop()`, `Conservative`, and `Covered()` true.
-- `Covered()` expresses conservative no-silent-miss coverage; semantic JavaScript coverage remains unimplemented.
-- Each analysis owns its result and effect slice; calls are deterministic and independent.
-- `front/js` imports only `engine`; the analysis path remains offline and side-effect-free.
-- The policy package recognizes canonical `"js"` and applies its normal unknown/conservative rules: Deny by default, optionally Review, with uncertainty always restricting Allow.
-- Every registered language exercises GuardFall classes A–E; corpus growth updates the baseline case count while preserving the existing latency and recall limits.
+- Every analysis owns its result, state, and effect slice; shared parser grammar data remains immutable.
+- Unknown values preserve joined provenance and remain distinct from exact empty strings and undefined.
+- Reachable expression headers and keys are evaluated before their bodies/values; known dead expressions remain unevaluated.
+- Completion kinds retain their own joined states; a return/throw path remains separate from a continuing path.
+- Every unsupported execution carries the canonical top effect and a nonempty reason; prior effects survive exhaustion.
+- Analysis is offline, bounded, and side-effect-free; source labels are data.
+- `front/js` depends on `engine` and the pinned parser, with the binder supplied through a function value.
+- Pure empty-effect reports retain the existing fail-closed uncovered-report policy.
 
 ## Configuration
 
-`Options.Root` is stamped into `Report.Root`. `Options.Vars` remains bash/POSIX-only, and `Options.Windows` remains PowerShell-only; JavaScript ignores both. The stub reads no host variables, files, or Node runtime state.
+| Bound | Value |
+| --- | --- |
+| Source bytes | 1 MiB |
+| Raw delimiter nesting before parsing | 256 |
+| Parser wall-clock timeout | 2 seconds in every build, including `-race` |
+| Normalization nodes / depth | 50,000 / 256 |
+| Evaluation steps / expression depth | 50,000 / 256 |
+| Container entries / recorded effects or derivations | 1,024 |
+| Materialized string bytes | 65,536 |
 
-The CLI requires an explicit JS language selection. `--lang auto` continues to choose bash or PowerShell. Existing CLI empty-input errors and batch line splitting apply before the frontend runs.
+Before invoking the parser, a linear scan checks raw `(`/`[`/`{` nesting with
+a fixed-size stack. Matching closing delimiters pop the stack; mismatched
+closers do not. This is a conservative byte-level admission check: delimiters
+inside strings, comments, templates, and regex literals also count, so deeply
+delimited data may degrade even when its syntax-tree depth would be small.
+The parser's two-second deadline is an additional safety net for other input
+shapes; its polling and cleanup can overrun that deadline. Normalization's
+node/depth limits apply only after the parser returns. A stopped or timed-out
+parse yields whole-unit top, never a partially analyzed prefix. The deadline
+can make a heavily contended host degrade earlier; availability takes
+precedence over precision at that boundary. No timeout goroutine is created.
+String decoding/concatenation and state copying also consume the step budget.
+Invalid UTF-8 source degrades before parsing. Bounds are compile-time constants,
+not source-controlled settings.
+
+`Options.Root` labels report/why locations. `Options.Vars` remains Bash/POSIX-only and `Options.Windows` remains PowerShell-only. JS reads no host environment, files, runtime state, or module contents. CLI `--lang auto` still chooses Bash or PowerShell only; existing input validation and batch splitting apply.
 
 ## Extension Points
 
-Add bounded parsing, evaluation, and effect mappings behind `Analyze` as JavaScript support grows. Unsupported constructs continue to degrade to top. Expand the corpus with each effect family; the initial A–E cases establish conservative coverage without claiming benign precision.
+#34 adds invocation semantics over retained function bodies. #36 supplies YAML-backed call resolution through the seam; #29–#32 add Node effect families. Each first effect family carries its report metadata, provenance, and corpus witnesses. The core IR and report field shapes retain their existing versions.
 
 ## Related Specs
 
-- [Analysis Report](analysis-report.md) — registration, routing, options, and public API.
-- [Frontend/Engine Contract](../contracts/frontend-engine.md) — effect boundary and degradation.
-- [Layers](../architecture/layers.md) — dependency direction.
-- [Conservatism](../architecture/conservatism.md) — the shared top shape.
-- [CLI](cli.md) — input sources, aliases, and automatic language selection.
-- [Report Policy](policy.md) — fail-closed report decisions.
+- [ADR-0018](../decisions/0018-javascript-semantic-kernel.md) — evaluator and milestone boundary.
+- [Analysis Report](analysis-report.md) — facade and report.
+- [Frontend/Engine Contract](../contracts/frontend-engine.md) — dependency and effect boundary.
+- [Layers](../architecture/layers.md) — import direction.
+- [Conservatism](../architecture/conservatism.md) — shared top representation.
+- [CLI](cli.md) — routing and input behavior.
+- [Report Policy](policy.md) — uncertainty and uncovered-report decisions.

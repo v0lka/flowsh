@@ -65,7 +65,7 @@ const (
 	// LangPowerShell is PowerShell cmdlet syntax (named/positional parameters).
 	// The canonical name is "posh", matching the CLI's --lang value.
 	LangPowerShell Lang = "posh"
-	// LangJavaScript is JavaScript, currently treated as opaque.
+	// LangJavaScript is the bounded JavaScript source dialect.
 	LangJavaScript Lang = "js"
 )
 
@@ -115,7 +115,7 @@ type Report struct {
 	// calls: which command the invocation(s) actually named. It is the zero
 	// value (empty Kind) when no call reached the binder — e.g. on the
 	// PowerShell path, which resolves through its own alias/cmdlet tables, and
-	// on the JavaScript path, which parses nothing.
+	// on the JavaScript path, which has no effect binder yet.
 	Resolution bind.Resolution `json:"resolution"`
 	// CommandCalls is the per-command resolution view: every distinct call the
 	// binder saw, with its invoked name, its normalized binary (basename,
@@ -388,12 +388,11 @@ func (a *Analyzer) Analyze(lang Lang, src string) *Report {
 	return a.AnalyzeWith(lang, src, Options{})
 }
 
-// AnalyzeWith runs the full pipeline for lang over src: for bash, parse and
-// abstractly execute with the knowledge-base resolver; for PowerShell, parse
-// and lower with the provider configuration opts selects; for JavaScript,
-// lower through the conservative ⊤ stub. It is total and deterministic — the
-// frontends degrade to ⊤ rather than fail — so the returned report is never
-// nil.
+// AnalyzeWith runs the full pipeline for lang over src.
+// Bash uses abstract execution with the knowledge-base resolver;
+// PowerShell lowers with opts; JavaScript evaluates a bounded subset.
+// The pipeline is total and deterministic. Unsupported input degrades
+// to top, and the returned report is never nil.
 func (a *Analyzer) AnalyzeWith(lang Lang, src string, opts Options) *Report {
 	switch lang {
 	case LangJavaScript:
@@ -552,14 +551,14 @@ func analyzePS(src string, opts ps.Options, root string) *Report {
 	return rep
 }
 
-// analyzeJS reports opaque JavaScript through the shared engine.
+// analyzeJS assembles a report from bounded JavaScript evaluation.
 func analyzeJS(src, root string) *Report {
-	res := js.Analyze(src)
+	res := js.AnalyzeWith(sourceName(root, "script"), src, nil)
 	rep := newReport(LangJavaScript, src, root)
 	rep.Effects = normalizeEffects(res.Effects)
 	rep.Score = engine.ScoreEffects(rep.Effects)
 	rep.Destructiveness = rep.Score.Destructiveness
-	rep.Why = buildWhy(rep.Effects, nil, engine.Atom{Kind: engine.AtomLiteral, Text: "js-opaque"})
+	rep.Why = buildWhy(rep.Effects, res.Derivations, engine.Atom{Kind: engine.AtomLiteral, Text: "js-opaque"})
 	rep.Top = res.Top
 	rep.Conservative = res.Conservative
 	rep.Reason = res.Reason
@@ -584,9 +583,8 @@ func newReport(lang Lang, src, root string) *Report {
 	}
 }
 
-// sourceName picks the source name a frontend records positions against: the
-// caller's root when set, else the historical default ("script" for bash,
-// "flowsh" for PowerShell) so a rootless analysis is unchanged.
+// sourceName uses the caller's root or the dialect default:
+// "script" for Bash and JavaScript, "flowsh" for PowerShell.
 func sourceName(root, def string) string {
 	if root == "" {
 		return def

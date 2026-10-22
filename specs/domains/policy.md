@@ -56,7 +56,7 @@ Signal reason codes are `unknown`, `conservative`, `exfiltration`, `cradle`, and
 
 `Covered()` requires at least one effect, `Top`, or `Conservative`. Authentic reports for benign no-op commands such as Bash `true` and `:` have zero effects and neither flag; they pass validation but deny with `uncovered_report`. The coverage gate applies regardless of configured rules or the absence of uncertainty.
 
-Canonical languages are `bash`, `posix`, `posh`, and `js`. JavaScript reports from the foundation stub are valid but always top/conservative: default rules deny them with uncertainty matches, while explicitly configuring both signals as Review yields Review unless another configured rule denies. Effect/grade Allow rules cannot override these signals.
+Canonical languages are `bash`, `posix`, `posh`, and `js`. JavaScript pure understood programs may produce valid empty-effect reports and deny with `uncovered_report`. Unmodelled JS execution remains top/conservative: defaults deny it with uncertainty matches, while configuring both signals as Review yields Review unless another rule denies. Effect/grade Allow rules cannot override these signals.
 
 Configuration is supplied in Go by the trusted caller; the package loads no files, environment variables, plugins, or remote rules. Default rules do not constitute a complete threat-model-specific policy. Allow means no configured restriction matched, not proof of safety. Review is not execution permission.
 

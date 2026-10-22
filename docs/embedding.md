@@ -96,13 +96,15 @@ rep, err := api.Analyze(lang, src)
 `api.Langs` lists every supported dialect in canonical order; the constants are
 `api.LangBash`, `api.LangPOSIX`, `api.LangPowerShell`, and `api.LangJavaScript`.
 
-`api.LangJavaScript` (`"js"`) currently routes to an opaque foundation stub.
-Every input, even empty or malformed library source, returns one `CodeExec(⊤)`
-effect with `Top` and `Conservative` true and a fixed reason. The report carries
-normal scoring, an explanation, and a canonical form, while call-specific
-metadata stays empty. `Covered()` is conservative coverage, not semantic JS
-analysis. The policy package recognizes `js` and applies its normal uncertainty
-rules: Deny by default, optionally Review, never Allow.
+`api.LangJavaScript` (`"js"`) evaluates a bounded statement/expression subset.
+Pure understood source (including empty library source) returns `effects: []`
+without uncertainty flags: it validates, but `Covered()` is false and policy
+denies it with `uncovered_report`. Unmodelled calls and execution return
+`CodeExec(⊤)` with `Conservative` true; parse/budget failures also set `Top`.
+The report uses shared scoring and source-located explanations. Call-specific
+metadata remains empty until the JS binder lands. Uncertainty still denies by
+default and can require Review, never Allow. No Node API effects or function
+invocation semantics are implemented.
 
 ## Options: source marker and provider selection
 

@@ -16,16 +16,20 @@ A frontend (`front/bash`, `front/ps`, `front/js`) may import the core (`engine`)
 | `engine.Derivation`, `engine.Atom` | `engine` | frontends | the concrete source facts (nodes/flags) a reported effect rests on — the why-trace vocabulary |
 | `bash.Resolver` (`func(*Command, *Program) bash.Resolution`) | `front/bash` | `bind`, via the facade | injected seam for ordinary-command effects and their `Derivation`s |
 | `ps.Result` | `front/ps` | `internal/analysis` | lowering outcome (mirrors `bind.Result`) |
-| `js.Result` | `front/js` | `internal/analysis` | one top effect plus Top/Conservative/Reason from the opaque JavaScript stub |
+| `js.Resolver` (`func(js.Call) js.Resolution`) | `front/js` | composition/test models | injected typed call boundary; the facade currently passes nil |
+| `js.Result` | `front/js` | `internal/analysis` | bounded JS effects/derivations and Top/Conservative/Reason |
 
 ## Initialization
 
 The core has no initialization. A frontend is constructed per analysis: `bash.ExecBash(src, resolver)` or `ps.Parse` + `ps.Lower(prog)`. The bash `Resolver` is supplied by the composition layer (the facade passes a closure that calls `binder.BindBash`); passing `nil` disables command binding while the shell's own intrinsic effects are still emitted.
 
-`js.Analyze(src)` currently performs no parsing or lowering of individual
-constructs. It returns one `CodeExec(ScopeTop())` effect for every input,
-including empty or malformed source. The facade assembles its score,
-explanation, and canonical form through the same engine helpers.
+`js.AnalyzeWith(name, src, resolver)` parses and evaluates a bounded subset.
+The facade passes nil for the resolver: calls and unsupported execution yield
+`CodeExec(ScopeTop())`; understood pure programs may have no effects. Whole-unit
+parse/budget failures set Top; local degradation sets Conservative. Derivations
+carry source locations into the shared explanation builder. The typed
+`js.Resolver` seam returns values/effects/derivations without a frontend import
+of bind/KB; Node API models and invocation semantics remain later work.
 
 ## Data Flow Across Boundary
 
@@ -42,7 +46,7 @@ engine.Report.Normalize  (merge equal kind|mode|netFlow by Join, sort)
 engine.ComputeDestructiveness / engine.ScoreEffects
 ```
 
-Only `engine` types cross: no frontend type (AST node, `Command`, `State`) appears in the core. Capability flows the other way through the `Resolver` function value, not through an import.
+Only `engine` types cross: no frontend type (AST node, `Command`, `State`) appears in the core. The Bash binder capability flows through its `Resolver` function value, not through an import.
 
 ## Error Propagation
 
@@ -64,5 +68,5 @@ A frontend's emitted kinds | `DefaultReversible` and the corpus expectations
 - [Layer Architecture](../architecture/layers.md) — the import rules
 - [Effect IR](../domains/engine/README.md) — the target vocabulary
 - [bash Frontend](../domains/bash-frontend/README.md) — a producer
-- [JavaScript Frontend](../domains/javascript-frontend.md) — the conservative source-dialect stub
+- [JavaScript Frontend](../domains/javascript-frontend.md) — the bounded source-dialect evaluator
 - [Report Contract](report-json.md) — the downstream boundary

@@ -142,14 +142,17 @@ sub-tick budget is not, because gotreesitter's deadline poll compares
 [ADR-0013](../decisions/0013-windows-clock-tick-parse-budget.md). `ps.Lower` also
 treats a nil program as ⊤ (`front/ps/lower.go`).
 
-### `front/js` — opaque JavaScript foundation
+### `front/js` — bounded JavaScript evaluation
 
-`js.Analyze` always emits exactly one Direct `CodeExec(ScopeTop())` effect,
-including for empty or malformed source. `Top` and `Conservative` are true and a
-fixed reason explains that parsing and evaluation are unimplemented. The facade
-normalizes and scores it through the existing helpers, preserving Critical
-severity, the why-trace, and canonical output. `Covered()` confirms conservative
-coverage here, not recognition of JavaScript semantics.
+`js.Analyze` parses and evaluates the documented subset under source/node/depth,
+step, recording, and value-size limits. Parser failures and budget exhaustion
+set Top and Conservative with the canonical Direct top effect; prior effects
+survive evaluation exhaustion. Unsupported execution sets Conservative and
+provides a fixed reason and source-located derivation. Unmodelled calls remain
+top; no function invocation or Node API effects are inferred. Pure understood
+programs can have no effects and remain uncovered under the existing policy.
+See [JavaScript Frontend](../domains/javascript-frontend.md) and
+[ADR-0018](../decisions/0018-javascript-semantic-kernel.md).
 
 ## No-silent-miss invariant
 
@@ -175,7 +178,7 @@ work that must degrade to ⊤ (budget exhaustion, unknown).
 - A ⊤ effect is `CertaintyCertain`, `TaintBottom`, `Reversible:false`.
 - An unparsable source yields a whole-program ⊤ with a non-empty `Reason`
   (`Program.Top` for bash/PowerShell; `ExecResult.Top` for bash;
-  `Result.Top` for the JavaScript stub).
+  `Result.Top` for JavaScript whole-unit failures).
 - The bash abstract execution always terminates within the step budget; running
   out of budget yields ⊤ and preserves the effects discovered so far.
 - `Result.Conservative` / `Report.Conservative` is true whenever a ⊤ effect is

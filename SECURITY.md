@@ -17,9 +17,11 @@ never executes, fetches, or writes anything it analyses. Its value is as a
 **safety guardrail** that a human operator, a CI gate, or an agent runtime
 consults before deciding whether a command is safe to run.
 
-JavaScript source is also accepted through `front/js`, currently an opaque
-foundation stub: every input emits `CodeExec(⊤)` with `top` and `conservative`
-true. It performs no parsing or evaluation and stays deny-or-inspect.
+JavaScript source is also accepted through the bounded `front/js` evaluator.
+Unmodelled execution emits `CodeExec(⊤)` with `conservative` true; parser and
+analysis-bound failures also set `top`. Pure understood programs may produce
+empty-effect reports, which remain uncovered and deny under report policy.
+Function invocation and Node API effect models remain outside this milestone.
 
 ## Supported Versions
 
@@ -257,15 +259,25 @@ implementation detail:
   interpreter by its step budget and function/alias/record caps, and the
   PowerShell parser by its wall-clock timeout
   ([front/bash/exec.go](front/bash/exec.go), [front/ps/parse.go](front/ps/parse.go)).
+  JavaScript checks source size and raw delimiter depth before parsing, keeps
+  a two-second parser deadline in every build, and bounds normalization and
+  evaluation with depth, node, step, value-size, and recording limits
+  ([JavaScript frontend](specs/domains/javascript-frontend.md#configuration)).
 - Parsing and lowering MUST NOT panic on malformed input; every failure MUST
   degrade to ⊤ (CodeExec over the any-target scope) with a human-readable
   `reason` ([specs/architecture/conservatism.md](specs/architecture/conservatism.md)).
 - No unbounded construct (unbounded loop, unbounded recursion, unbounded
   expansion) may be introduced into the analysis path.
-- The **no-silent-miss invariant** MUST hold: a report is valid only if it
-  carries an effect, ⊤, or the conservative flag (`Report.Covered()` in
-  [internal/analysis/analyze.go](internal/analysis/analyze.go)). Analysis MUST
-  NEVER "fail open" to a benign/no-effect result.
+- The **no-silent-miss invariant** MUST hold for unanalysable source: it MUST
+  carry an effect or degrade to ⊤, with the corresponding uncertainty flags
+  (`Report.Covered()` in [internal/analysis/analyze.go](internal/analysis/analyze.go)).
+  Understood effect-free source may yield a valid but uncovered report; report
+  policy MUST deny it with `uncovered_report`. Analysis MUST NEVER turn source
+  it did not understand into a benign/no-effect result.
+  Unsupported JavaScript literal decoding and primitive coercions MUST emit
+  the canonical top effect with `conservative` and a reason. Abstract unknown
+  values from supported operations, such as branch joins, do not by themselves
+  mean the source was unsupported.
 
 ### Output Encoding & Injection Prevention
 

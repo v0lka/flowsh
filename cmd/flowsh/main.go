@@ -40,8 +40,8 @@ options:
   --lang bash|posix|posh|js|auto
                      dialect of the input (default: bash); "auto" sniffs the
                      input for PowerShell cmdlets/aliases and picks bash or posh;
-                     js (aliases: javascript, node, nodejs) currently reports
-                     every input as ⊤, without parsing or evaluation
+                     js (aliases: javascript, node, nodejs) evaluates a bounded
+                     subset; calls and unsupported execution report ⊤
   --file PATH        read the command from PATH ("-" for stdin); the report's
                      root names the file
   --batch            read many commands (one per line) and write one JSON report
