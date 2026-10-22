@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # rsync and git.
 #
@@ -12,6 +12,10 @@ commands:
   - name: rsync
     dialect: rsync
     params:
+      # Finding 44: --files-from names a list file (a selection of operands).
+      - spec: "--files-from"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "--delete"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -38,10 +42,16 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "-e"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      # `man rsync`: "--rsh (or -e) … specify the remote shell to use". The
+      # documented long spelling of -e, so a spelling choice cannot hide the
+      # executed program (Finding 30).
+      - spec: "--rsh"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "--rsync-path"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-P"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -57,9 +67,14 @@ commands:
       - spec: SRC
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      # The destination of a remote copy is a network sink, not a local file:
+      # `rsync SRC [user@]host:path` is an upload (Finding 3). The egress
+      # gate keeps the effect only for a host-shaped operand, so a purely local
+      # copy contributes no fabricated egress; the read of SRC is what pairs
+      # with it in the credential-exfiltration detector.
       - spec: DEST
         kind: positional
-        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
 
   - name: git
     dialect: git
@@ -70,6 +85,45 @@ commands:
       - spec: "-c"
         kind: option
         effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
+      # Exec-bearing options (Finding 29): each value is a command git runs
+      # through the shell — `man git-rebase` ("--exec … append "exec <cmd>""),
+      # `man git-difftool` ("--extcmd=<command> … runs <command>"), and the
+      # filter-branch filters (`man git-filter-branch`: "the command is
+      # evaluated … with the shell").
+      # Finding 71: `git send-email --attach FILE` reads FILE and sends it.
+      - spec: "--attach"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--exec"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "--extcmd"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "--tree-filter"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "--index-filter"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "--env-filter"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "--commit-filter"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "--msg-filter"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "--tag-name-filter"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      # The output-to-file family (Finding 16): `--output=<file>` is documented
+      # on git diff/log/show/status as "output to a specific file instead of
+      # stdout", i.e. an arbitrary-path file write.
+      - spec: "--output"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
       - spec: "--git-dir"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
@@ -120,6 +174,39 @@ commands:
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: add
         kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      # Subcommands whose documented job mutates repository state or writes a
+      # file (Finding 16): `git branch -d/-D` and `git tag -d` delete refs,
+      # `git stash drop|clear` discards work, `git worktree add|remove` writes
+      # or prunes a working tree, `git filter-branch` rewrites all of history.
+      - spec: branch
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: tag
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: stash
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: worktree
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: filter-branch
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      # Subcommands whose documented job is to run a command
+      # (`git bisect run <cmd>`, `git submodule foreach <cmd>`).
+      - spec: bisect
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: submodule
+        kind: positional
+        effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      - spec: "--delete"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-D"
+        kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: "-f"
         kind: flag

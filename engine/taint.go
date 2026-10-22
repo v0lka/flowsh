@@ -256,7 +256,9 @@ func MaxInfluence(effects []Effect) Influence {
 // per marker so the common spellings match without over-matching:
 //
 //   - a marker containing a path separator (".kube/config", "/etc/shadow") is a
-//     path fragment and matches as a substring;
+//     path fragment and matches as a substring of the lexically normalised path
+//     (see SecretPath: "/etc//shadow", "/etc/./shadow" and the Windows
+//     "C:\…\.kube\config" spelling all resolve to the marker's file);
 //   - a dot-prefixed marker (".ssh", ".env", …) matches at the start of a path
 //     component or as the basename's suffix, so "my.envelope" does not match
 //     ".env" but "prod.env" (the common ".env" file name) does;
@@ -272,6 +274,115 @@ var secretPathMarkers = []string{
 	".kube/config", ".docker/config.json", ".npmrc", ".pypirc", ".htpasswd",
 	".bash_history", ".zsh_history", ".env", "/etc/shadow", "/etc/gshadow",
 	"/etc/sudoers", "keystore", "credentials", "secrets",
+	// Interactively-authenticated and token-based tool stores: a live OAuth or
+	// API token is as good as a password, and none of these carries a
+	// credential-shaped basename ("hosts.yml", "wg0.conf", "token_cache.json"),
+	// so they are listed by location.
+	".azure",                // Azure CLI token cache (msal_token_cache.json, accessTokens.json)
+	".config/gh",            // gh CLI OAuth token (hosts.yml)
+	".config/hub",           // hub CLI OAuth token
+	".config/gcloud",        // gcloud credentials (application_default_credentials.json)
+	".config/rclone",        // rclone remotes, including their plaintext secrets
+	".config/containers",    // podman/skopeo registry auth.json
+	".config/pip",           // pip index credentials
+	".vault-token",          // HashiCorp Vault client token
+	".terraform.d",          // Terraform registry credentials
+	".composer",             // Composer auth.json
+	".filezilla",            // stored FTP/SFTP credentials
+	".remmina",              // stored remote-desktop credentials
+	".mozilla",              // Firefox logins.json / key4.db
+	".config/google-chrome", // Chrome Login Data / Cookies
+	"/etc/wireguard",        // WireGuard peer private keys
+	"/etc/apt/auth.conf",    // apt repository credentials
+	"/etc/ppp",              // PPP/PPTP/pppoe secrets
+	// The next stores carry neither a credential-shaped basename nor an
+	// already-listed directory, so each is listed by location (Finding 39):
+	// a plain-text S3 key in `~/.s3cfg`, a boto profile in `~/.boto`, an OCI
+	// CLI key in `~/.oci/config`, a Terraform Cloud token in `~/.terraformrc`,
+	// a DigitalOcean token in `~/.config/doctl/config.yaml`, an SMTP password
+	// in `~/.msmtprc`, an age/`sops` private key in `~/.config/sops`, and the
+	// macOS login keychain in `~/Library/Keychains`.
+	".s3cfg",                // s3cmd access key and secret key
+	".boto",                 // boto/boto3 profile credentials
+	".oci",                  // OCI CLI profile (key_file, fingerprint, tenancy)
+	".terraformrc",          // Terraform CLI config (credentials block, host tokens)
+	".config/doctl",         // DigitalOcean CLI access token
+	".msmtprc",              // msmtp account passwords
+	".config/sops",          // sops age/pgp key material
+	".config/age",           // age identity files
+	".password-store",       // pass(1) password store
+	"library/keychains",     // macOS login keychain database
+	".local/share/keyrings", // GNOME keyring databases
+	"microsoft/credentials", // Windows Credential Manager blob store
+	// Build-tool, package-manager and shell-history stores that hold plaintext
+	// registry passwords or auth tokens under a name that carries no credential
+	// word (settings.xml, gradle.properties, yarnrc.yml, config, dbshell, …), so
+	// each is listed by location (Finding 39, second sweep).
+	".m2/settings.xml",          // Maven server passwords and mirrors
+	".m2/settings-security.xml", // Maven master password
+	".gradle/gradle.properties", // Gradle signing and repository passwords
+	".nuget/nuget/nuget.config", // NuGet API keys and package sources
+	".yarnrc.yml",               // Yarn Berry npmAuthToken / npmAuthIdent
+	".bundle/config",            // Bundler registry credentials
+	".config/pypoetry",          // Poetry repository tokens
+	".config/tea",               // Gitea CLI login tokens
+	".config/glab-cli",          // GitLab CLI OAuth token
+	".config/linode-cli",        // Linode CLI tokens
+	".config/heroku",            // Heroku CLI session token
+	".config/mysql",             // MySQL client login paths
+	".config/mercurial",         // Mercurial auth sections
+	".hg/hgrc",                  // Mercurial auth sections (legacy location)
+	".dbshell",                  // MongoDB shell history
+	".mysql_history",            // MySQL client history (statements with passwords)
+	".rediscli_history",         // redis-cli history (AUTH lines)
+	"/etc/mysql/debian.cnf",     // Debian maintenance account password
+	"/etc/security/opasswd",     // PAM old-password history
+	// OpenSSH host keys are spelled with underscores and end in "_key", so the
+	// dotted ".key" extension rule never saw them.
+	"ssh_host_rsa_key", "ssh_host_ed25519_key", "ssh_host_ecdsa_key", "ssh_host_dsa_key",
+}
+
+// secretEnvironmentTokens are the name components that mark an environment
+// variable as holding credential material: a value read from such a variable is
+// a secret source, exactly as a read of a secret file is.
+//
+// The test is per name component (split on "_" and on the other non-alphanumeric
+// bytes), not a blind substring, so "AWS_REGION" and "GITHUB_REPOSITORY" are not
+// secrets while "AWS_SECRET_ACCESS_KEY", "GITHUB_TOKEN", "MY_API_KEY" and
+// "PGPASSWORD" are. A component must equal one of the tokens, so "MONKEY" is not
+// a "KEY".
+var secretEnvironmentTokens = map[string]bool{
+	"SECRET": true, "SECRETS": true, "TOKEN": true, "TOKENS": true,
+	"PASSWORD": true, "PASSWD": true, "PGPASSWORD": true, "PASSPHRASE": true,
+	"CREDENTIAL": true, "CREDENTIALS": true, "CRED": true, "CREDS": true,
+	"KEY": true, "APIKEY": true, "ACCESSKEY": true, "PRIVATEKEY": true,
+	"SESSIONKEY": true, "AUTH": true, "AUTHORIZATION": true, "BEARER": true,
+	"COOKIE": true, "COOKIES": true, "PAT": true,
+}
+
+// SecretEnvName reports whether an environment-variable name marks the variable
+// as holding credential material. name is accepted in the spellings a frontend
+// may carry: "GITHUB_TOKEN", "$GITHUB_TOKEN", "${GITHUB_TOKEN}", "$env:GITHUB_TOKEN",
+// "%GITHUB_TOKEN%".
+func SecretEnvName(name string) bool {
+	n := strings.TrimSpace(name)
+	n = strings.TrimPrefix(n, "${")
+	n = strings.TrimPrefix(n, "$env:")
+	n = strings.TrimPrefix(n, "$")
+	n = strings.TrimPrefix(n, "%")
+	n = strings.TrimSuffix(n, "}")
+	n = strings.TrimSuffix(n, "%")
+	if n == "" {
+		return false
+	}
+	for _, comp := range strings.FieldsFunc(n, func(r rune) bool {
+		return r == '_' || r == '-' || r == '.' || r == ':' || r == '/' || r == '\\'
+	}) {
+		if secretEnvironmentTokens[strings.ToUpper(comp)] {
+			return true
+		}
+	}
+	return false
 }
 
 // secretExtensionMarkers are file-name extensions that mark a private key or a
@@ -282,11 +393,113 @@ var secretExtensionMarkers = []string{".pem", ".key", ".p12", ".pfx", ".pkcs12"}
 
 // SecretPath reports whether p names (or lies under) a well-known credential or
 // secret location.
+//
+// The marker comparison runs on the lexically normalised path as well as on the
+// spelling as written: the kernel resolves "/etc//shadow", "/etc/./shadow",
+// "/tmp/../etc/shadow" and the Windows "C:\…\.kube\config" spelling to exactly
+// the file the marker names, and a denylist that compares raw text does not.
+// Normalisation is lexical only — nothing is read from the filesystem — and it
+// can only ADD matches, so every path recognised before is still recognised.
 func SecretPath(p string) bool {
 	if p == "" {
 		return false
 	}
 	lp := strings.ToLower(p)
+	if pathHasSecretMarker(lp) {
+		return true
+	}
+	if c := cleanTargetPath(lp); c != lp {
+		if pathHasSecretMarker(c) {
+			return true
+		}
+	}
+	// A word carrying glob metacharacters is not one file but a set selected by
+	// the pattern; its static part still names the location the command reads
+	// (Finding 67's residual: `cat /etc/shad*` selects /etc/shadow).
+	return secretPatternPath(lp)
+}
+
+// globMetas are the unquoted shell metacharacters that turn a word into a
+// pattern: `*`, `?` and the `[` of a bracket expression.
+const globMetas = "*?["
+
+// secretPatternPath reports whether a shell glob pattern selects credential
+// material. Only the pattern's static part (the text before its first
+// metacharacter) is evidence, and three shapes are recognised:
+//
+//   - the static part ends at a credential directory (`/root/.ssh/*`,
+//     `/tmp/app/.env/*`), so every entry the pattern enumerates is credential
+//     material;
+//   - the static part is a file inside a credential directory
+//     (`/root/.ssh/id_*`, `~/.aws/cred*`);
+//   - the static basename is the beginning of a credential name in the same
+//     directory (`/etc/shad*` → /etc/shadow, `~/.ssh/id_` → id_rsa).
+//
+// The rule is deliberately one-sided: it can label a pattern as credential
+// material, never unlabel a path the exact rules already recognise, and it
+// reads nothing from the filesystem (the directory is never enumerated).
+func secretPatternPath(lp string) bool {
+	i := strings.IndexAny(lp, globMetas)
+	if i < 0 {
+		return false
+	}
+	prefix := lp[:i]
+	if prefix == "" {
+		return false
+	}
+	// The pattern enumerates a directory: the directory is the static part.
+	if strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, `\`) {
+		return pathHasSecretMarker(strings.TrimRight(prefix, `/\`))
+	}
+	dir, base := splitDirBase(prefix)
+	// Every entry of a credential directory is credential material.
+	if dir != "" && pathHasSecretMarker(dir) {
+		return true
+	}
+	// The static basename begins a credential name.
+	return basePrefixesMarker(dir, base)
+}
+
+// splitDirBase splits a path spelling at its last separator. dir carries no
+// trailing separator; base is the final component (possibly empty).
+func splitDirBase(p string) (dir, base string) {
+	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+		return p[:i], p[i+1:]
+	}
+	return "", p
+}
+
+// basePrefixesMarker reports whether base is a proper prefix of a credential
+// name that lives in dir. A path-valued marker ("/etc/shadow") also pins the
+// directory, so `/etc/shad*` matches while `/tmp/shad*` does not; a bare marker
+// ("id_rsa", ".env", "credentials") is matched by basename alone. A one-byte
+// prefix is ignored: it selects too much to be evidence of anything.
+func basePrefixesMarker(dir, base string) bool {
+	if len(base) < 2 {
+		return false
+	}
+	for _, m := range secretPathMarkers {
+		md, mb := splitDirBase(m)
+		if md == "" {
+			if strings.HasPrefix(m, base) {
+				return true
+			}
+			continue
+		}
+		if strings.HasPrefix(mb, base) && strings.HasSuffix(md, "/"+strings.TrimPrefix(dir, "/")) {
+			return true
+		}
+	}
+	for _, ext := range secretExtensionMarkers {
+		if strings.HasPrefix(ext, base) {
+			return true
+		}
+	}
+	return false
+}
+
+// pathHasSecretMarker applies the marker rules to one path spelling.
+func pathHasSecretMarker(lp string) bool {
 	base := lp
 	if i := strings.LastIndexAny(lp, "/\\"); i >= 0 {
 		base = lp[i+1:]
@@ -356,17 +569,226 @@ func anySecretTarget(s Scope) bool {
 	return false
 }
 
-// IsSecretRead reports whether e obtains credential/secret material: either a
-// CredAccess effect, or a read of a secret-bearing path or secret-tainted data.
+// IsSecretRead reports whether e obtains credential/secret material: a
+// CredAccess effect, a read of a secret-bearing path, a read of a
+// credential-shaped environment variable (AWS_SECRET_ACCESS_KEY, GITHUB_TOKEN,
+// …), or secret-tainted data.
 func IsSecretRead(e Effect) bool {
 	switch e.Kind {
 	case KindCredAccess:
 		return true
 	case KindFSRead, KindFSMeta:
 		return e.Taint.Contains(TaintSecret) || anySecretTarget(e.Target)
+	case KindEnvRead:
+		// A credential held in the environment is as much a secret source as the
+		// file that holds it: `printenv AWS_SECRET_ACCESS_KEY | curl -d @- …`
+		// must pair like `curl -d @~/.aws/credentials …` does. Only a
+		// credential-SHAPED name qualifies, so a read of PATH or HOME is not a
+		// secret and never fabricates an exfiltration finding.
+		if e.Taint.Contains(TaintSecret) || anySecretEnvTarget(e.Target) {
+			return true
+		}
+		// Reading the environment as a whole — `printenv` with no operand,
+		// `export -p`, `declare -p`, PowerShell's `Get-ChildItem Env:`, or an
+		// environment read whose variable name is not statically known (⊥/⊤
+		// target) — selects whatever credentials the process environment holds
+		// (CI runners and agent runtimes export GITHUB_TOKEN,
+		// AWS_SECRET_ACCESS_KEY, NPM_TOKEN). The set of names is not known, so
+		// the read is secret-bearing by construction: an upload of it is the
+		// exfiltration Finding 7 records, not an ordinary request.
+		if len(e.Target.Targets()) == 0 {
+			return true
+		}
+		return false
 	default:
 		return false
 	}
+}
+
+// anySecretEnvTarget reports whether s includes at least one credential-shaped
+// environment-variable name or names the environment as a whole.
+func anySecretEnvTarget(s Scope) bool {
+	for _, t := range s.Targets() {
+		if SecretEnvName(t) || wholeEnvironmentTarget(t) {
+			return true
+		}
+	}
+	return false
+}
+
+// wholeEnvironmentTarget reports whether t names the process environment as a
+// whole rather than a single variable. The spellings are the ones the frontends
+// emit for an enumeration: PowerShell's `Get-ChildItem Env:` provider target,
+// the `/proc/self/environ` pseudo-file, and the bare provider/namespace names.
+// `ENV` is included because a shell that spells the whole environment that way
+// (`$ENV`) is reading the same set; over-approximating a read of a variable
+// literally named ENV is the safe side.
+func wholeEnvironmentTarget(t string) bool {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "env:", "env", "environment", "environ", "/proc/self/environ":
+		return true
+	}
+	return false
+}
+
+// ===========================================================================
+// Cross-command staging of credential material (Finding 94)
+// ===========================================================================
+
+// PathKey returns the key two filesystem targets are compared by when the
+// analysis follows content from one command to another: the lexical
+// normalisation cleanTargetPath applies (separator runs, "." and ".."
+// segments) plus case folding for a Windows-shaped spelling, where the
+// filesystem itself is case-insensitive. Nothing is read from the filesystem.
+func PathKey(p string) string {
+	k := cleanTargetPath(strings.TrimSpace(p))
+	if isWindowsShaped(k) {
+		k = strings.ToLower(k)
+	}
+	return k
+}
+
+// ApplySecretStaging applies the two halves of the staging rule (Finding 94) to
+// one command's effects, in statement order.
+//
+// A credential can leave the host in two steps: one command copies it into a
+// file (`tar czf /tmp/x.tgz /etc/shadow`, `cp key /tmp/k`, `cat key > /tmp/k`)
+// and a later command uploads that file. The IR records both operations
+// correctly — a read, a write, an egress — but the write carries none of the
+// provenance of what the writing command read, so the upload's read is not a
+// secret source and DetectExfil reports no pair.
+//
+// The rule restores the flow in two one-sided steps, each applied only within
+// the command that performs it:
+//
+//  1. read-back — a read (FSRead/FSMeta) of a path an *earlier* command staged
+//     is a read of credential material, so the secret label is joined onto it;
+//  2. staging — every path a command writes (FSWrite) while it reads credential
+//     material holds that material, so the secret label is joined onto the
+//     write and the path enters staged.
+//
+// staged is the program's set of staged path keys (see PathKey); the caller
+// keeps it across statements, so a chain of commands (tar → convert → upload)
+// keeps the label. Step 1 consults the set as it stood before this command, so
+// a command that both reads and writes the same path (an archiver that names
+// its own archive as an operand) does not stage itself: only a later read pairs.
+//
+// The rule never fabricates a source — a command that reads no credential
+// material stages nothing, so an ordinary staged build artefact stays
+// unpaired — and it only ever adds the secret label, never removes one. It
+// mutates stmt in place; callers pass a slice of their own effect list.
+func ApplySecretStaging(stmt []Effect, staged map[string]bool) {
+	if len(stmt) == 0 {
+		return
+	}
+	// 1. Read-back: content an earlier command staged is credential material.
+	promoted := false
+	for i := range stmt {
+		e := &stmt[i]
+		if e.Kind != KindFSRead && e.Kind != KindFSMeta {
+			continue
+		}
+		for _, t := range e.Target.Targets() {
+			if stagedMatch(PathKey(t), staged) {
+				e.Taint = e.Taint.Join(TaintOf(TaintSecret))
+				promoted = true
+				break
+			}
+		}
+	}
+	if promoted {
+		// A command that reads staged credential material and reaches the
+		// network in the same statement carries that material out: the sink
+		// takes the secret label the read now has. The join is scoped to the
+		// statement that performed the read, so a program that merely staged a
+		// file does not taint an unrelated request, and a command that carries
+		// the credential as data (a token in a header) is left to the existing
+		// per-command rules.
+		for i := range stmt {
+			if stmt[i].Kind == KindNetEgress {
+				stmt[i].Taint = stmt[i].Taint.Join(TaintOf(TaintSecret))
+			}
+		}
+	}
+	// 2. Staging: what this command handled of credential material, it wrote.
+	// "Handled" is deliberately wider than "read": a credential can reach the
+	// writing command through a variable rather than through an operand
+	// (`x=$(cat key); printf '%s' "$x" > /tmp/k`), so an effect that carries
+	// the secret label counts as well as a secret read. An unknown (⊤)
+	// provenance is not evidence of credential material — treating it as such
+	// would relabel every unknown write — so only an explicit label stages.
+	secret := false
+	for _, e := range stmt {
+		// A secret read, a value that already carries the label, or a target
+		// that *names* a credential location: the last case is what an archiver
+		// row that binds its operands as writes (`7z a ARCHIVE SECRET`) reports
+		// instead of a read, and the material it names is credential material
+		// all the same.
+		if IsSecretRead(e) || (!e.Taint.IsTop() && e.Taint.Contains(TaintSecret)) || anySecretTarget(e.Target) {
+			secret = true
+			break
+		}
+	}
+	if !secret {
+		return
+	}
+	for i := range stmt {
+		if stmt[i].Kind != KindFSWrite {
+			continue
+		}
+		stmt[i].Taint = stmt[i].Taint.Join(TaintOf(TaintSecret))
+		if staged == nil {
+			continue
+		}
+		for _, t := range stmt[i].Target.Targets() {
+			staged[PathKey(t)] = true
+		}
+	}
+}
+
+// stagedMatch reports whether a read of the path key reads material a command
+// staged. Besides the exact path, two shapes are recognised, both of which name
+// a *set* of paths rather than one:
+//
+//   - a directory write covers every name under it: `cp -r ~/.ssh /tmp/k`
+//     stages /tmp/k, and a read of /tmp/k/id_rsa reads staged material;
+//   - a generated-name prefix covers the names built from it: `split FILE
+//     PREFIX` writes PREFIXaa, PREFIXab, … while the model can only name
+//     PREFIX, so a read of PREFIXaa reads staged material.
+//
+// The prefix test is limited to a prefix that cannot itself continue a file
+// name (a separator, or punctuation), so staging /tmp/x never matches a read of
+// /tmp/xyz. Both rules are one-sided: they can only label a read as staged.
+func stagedMatch(key string, staged map[string]bool) bool {
+	if len(staged) == 0 || key == "" {
+		return false
+	}
+	if staged[key] {
+		return true
+	}
+	for i := 1; i < len(key); i++ {
+		c := key[i-1]
+		switch {
+		case c == '/' || c == '\\':
+			// A write of the directory covers every name under it.
+			if staged[key[:i]] || (i > 1 && staged[key[:i-1]]) {
+				return true
+			}
+		case !isASCIINameByte(c):
+			// A generated-name prefix: split PREFIX → PREFIXaa.
+			if staged[key[:i]] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isASCIINameByte reports whether c can continue a file name: a letter, a digit
+// or a space. Anything else (a separator, punctuation) ends a name, so a staged
+// path ending there is a prefix rather than a name.
+func isASCIINameByte(c byte) bool {
+	return isASCIILetter(c) || (c >= '0' && c <= '9') || c == ' ' || c >= 0x80
 }
 
 // IsEgressSink reports whether e carries data off-host: a NetEgress whose payload

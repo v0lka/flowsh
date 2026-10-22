@@ -74,6 +74,7 @@ Spec-level view of the layered system (arrows point from a layer to what it depe
               0013 windows-clock-tick 0014 ps-abstract-state
               0015 per-host-latency 0016 kb-load-budget
               0017 report-policy-package
+              0018 determinism-gate
 ```
 
 ## Directory Listing
@@ -130,7 +131,8 @@ specs/
     ├── 0014-ps-abstract-state.md
     ├── 0015-per-host-latency-reference.md
     ├── 0016-kb-load-budget-release-headroom.md
-    └── 0017-report-policy-package.md
+    ├── 0017-report-policy-package.md
+    └── 0018-determinism-gate-parse-budget-trip.md
 ```
 
 ## Full File List
@@ -165,6 +167,7 @@ Every spec file, by path relative to `specs/`:
 - `decisions/0015-per-host-latency-reference.md`
 - `decisions/0016-kb-load-budget-release-headroom.md`
 - `decisions/0017-report-policy-package.md`
+- `decisions/0018-determinism-gate-parse-budget-trip.md`
 - `domains/analysis-report.md`
 - `domains/bash-frontend/README.md`
 - `domains/bash-frontend/abstract-exec.md`

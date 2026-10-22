@@ -40,8 +40,10 @@ func reportNotesContain(r *Report, sub string) bool {
 
 // TestPSWindowsOptionEnablesRegistry is acceptance criterion 1 for the facade:
 // the Registry branch (a Windows-only provider) can be forced on independently
-// of the host OS. With it on a registry command persists state; with it off the
-// same command is skipped and contributes no effect.
+// of the host OS. F22: a registry write is *persistence* wherever the analysis
+// runs — a non-Windows control plane dispatching to Windows endpoints must not
+// see a clean report — so both settings report Persist and the option only
+// selects the provider's note.
 func TestPSWindowsOptionEnablesRegistry(t *testing.T) {
 	a := mustAnalyzer(t)
 
@@ -51,15 +53,30 @@ func TestPSWindowsOptionEnablesRegistry(t *testing.T) {
 	}
 
 	off := a.AnalyzeWith(LangPowerShell, registrySrc, Options{Windows: Bool(false)})
-	if reportHasKind(off, engine.KindPersist) {
-		t.Fatalf("--windows off: registry must contribute no effect, got %+v", off.Effects)
+	if !reportHasKind(off, engine.KindPersist) {
+		t.Fatalf("--windows off: registry persistence must survive, got %+v", off.Effects)
 	}
-	if len(off.Effects) != 0 {
-		t.Fatalf("--windows off: want no effects, got %+v", off.Effects)
+	if !repHasTarget(off, engine.KindPersist, `HKCU:\Software\x`) {
+		t.Fatalf("--windows off: want Persist on the registry path, got %+v", off.Effects)
 	}
-	if !reportNotesContain(off, "Windows-only") {
-		t.Fatalf("--windows off: want a skipped note, got %v", off.Notes)
+	if !reportNotesContain(off, "host-agnostic") {
+		t.Fatalf("--windows off: want a host-agnostic note, got %v", off.Notes)
 	}
+}
+
+// repHasTarget reports whether rep carries kind k on the literal target want.
+func repHasTarget(rep *Report, k engine.EffectKind, want string) bool {
+	for _, e := range rep.Effects {
+		if e.Kind != k {
+			continue
+		}
+		for _, t := range e.Target.Targets() {
+			if t == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // TestPSWindowsDefaultMatchesHost is acceptance criterion 2: the zero Options
@@ -81,8 +98,10 @@ func TestPSWindowsDefaultMatchesHost(t *testing.T) {
 
 	a := mustAnalyzer(t)
 	def := a.Analyze(LangPowerShell, registrySrc)
-	if got := reportHasKind(def, engine.KindPersist); got != hostIsWindows {
-		t.Fatalf("default registry effect present=%v, want (host is Windows)=%v", got, hostIsWindows)
+	// F22: the report is host-agnostic for persistence, so a registry write is
+	// reported on every host.
+	if !reportHasKind(def, engine.KindPersist) {
+		t.Fatalf("default: want a Persist effect on every host, got %+v", def.Effects)
 	}
 	// The default must equal the explicitly-host-defaulted path.
 	explicit := a.AnalyzeWith(LangPowerShell, registrySrc, Options{})

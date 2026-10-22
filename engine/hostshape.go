@@ -65,6 +65,160 @@ func HostShapedLenient(s string) bool {
 	return hostShaped(s, true)
 }
 
+// UNCHost reports whether p is a UNC (SMB) path — `\\host\share\…` or
+// `//host/share/…` — and returns the host it names. A UNC path is not a local
+// filesystem location: every read or write of it crosses the network to that
+// authority, so a write of one is a network write (Finding 81).
+//
+// A share component is required: `\\host` alone names no share. A loopback or
+// unspecified authority is local by definition and is rejected, and the host
+// satisfies the lenient host grammar (a single-label NetBIOS name is a
+// legitimate UNC authority, so the lenient form is the right one here).
+func UNCHost(p string) (string, bool) {
+	if !strings.HasPrefix(p, "//") && !strings.HasPrefix(p, `\\`) {
+		return "", false
+	}
+	rest := strings.TrimLeft(p, `/\`)
+	i := strings.IndexAny(rest, `/\`)
+	if i <= 0 {
+		return "", false
+	}
+	host, share := rest[:i], strings.TrimLeft(rest[i:], `/\`)
+	if share == "" {
+		return "", false
+	}
+	if host == "." || host == ".." || strings.EqualFold(host, localhostName) {
+		return "", false
+	}
+	if ip := net.ParseIP(stripZone(host)); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+		return "", false
+	}
+	// The two spellings differ in ambiguity. `\\host\share` is a UNC path by
+	// construction — no Windows path starts with two backslashes except an
+	// authority — so a single-label NetBIOS name is accepted there. `//host/
+	// share` is the same path written with forward slashes, which POSIX also
+	// uses for an ordinary absolute path with a doubled separator (`//tmp/x`),
+	// so the host must be unambiguous here: a dotted name or an address
+	// literal. The ambiguous spelling is not dropped — UNCUnresolved reports it
+	// and the network layer models it as an unresolved sink (Finding 87).
+	strict := strings.HasPrefix(p, "//")
+	if !hostNameShaped(host, !strict) {
+		return "", false
+	}
+	return host, true
+}
+
+// UNCUnresolved reports whether p is a UNC-shaped path whose authority cannot
+// be proven: the forward-slash spelling whose first component is a single-label
+// name (`//attacker/share/x`). Windows reads exactly this spelling as a UNC
+// path to the NetBIOS host `attacker`, while POSIX reads it as a doubled
+// separator in a local path (`//tmp/x`), and nothing in the command text
+// decides between the two — the analysed command may be destined for either
+// host. Treating it as local is a silent under-report: a credential copied to
+// such a share formed no exfiltration pair while its `\\attacker\share\x` twin,
+// `scp attacker:/x` and `nc attacker 443` all paired (Finding 87).
+//
+// The caller models this as an unresolved network sink (a NetEgress whose
+// target is ⊤) rather than guessing: the write may cross the network, so the
+// egress is reported, and the authority stays unknown instead of being
+// fabricated from a path that may be local.
+func UNCUnresolved(p string) bool {
+	if !strings.HasPrefix(p, "//") {
+		return false
+	}
+	rest := strings.TrimLeft(p, "/")
+	i := strings.IndexByte(rest, '/')
+	if i <= 0 {
+		return false
+	}
+	host, share := rest[:i], strings.TrimLeft(rest[i:], "/")
+	if share == "" {
+		return false
+	}
+	if host == "." || host == ".." || strings.EqualFold(host, localhostName) {
+		return false
+	}
+	if ip := net.ParseIP(stripZone(host)); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+		return false
+	}
+	// A dotted or address-literal authority is named (UNCHost), so only the
+	// single-label case is unresolved — and only when it is a valid host label,
+	// since an arbitrary path segment is not an authority at all.
+	return !hostNameShaped(host, false) && hostNameShaped(host, true)
+}
+
+// HostPath reports whether p is the remote-path spelling `[user@]host:/path` —
+// the form an NFS mount source and an scp/rsync destination share — and returns
+// the host it names. Like a UNC authority it is not a local filesystem
+// location: mounting `host:/export` contacts that host, and every write under
+// the mount point travels to it. Without this recognition an NFS source stayed
+// a bare `FSMeta` target, so a credential copied under the mount point formed
+// no exfiltration pair while the CIFS spelling of the same mount paired
+// (Finding 99).
+//
+// The colon alone does not make the spelling remote, so three conditions hold
+// at once: the host part satisfies the strict host grammar (a Windows drive
+// letter `C` and the `http` of `http://` are single-label and rejected), the
+// remainder is an absolute path (a bare `host:file` is also an ordinary
+// filename with a colon), and the authority is not a loopback or unspecified
+// address (those are local by definition).
+func HostPath(p string) (string, bool) {
+	host, _, ok := splitHostPath(p)
+	if !ok {
+		return "", false
+	}
+	if host == "." || host == ".." || strings.EqualFold(host, localhostName) {
+		return "", false
+	}
+	if ip := net.ParseIP(stripZone(strings.Trim(host, "[]"))); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+		return "", false
+	}
+	if !HostShaped(host) {
+		return "", false
+	}
+	return host, true
+}
+
+// splitHostPath splits `[user@]host:/path` and `[v6]:/path` into the authority
+// and the absolute remainder. The remainder must start with a separator, so
+// `host:443` (a host and port) and `host:file` (a local filename, and scp's
+// relative form) do not qualify.
+func splitHostPath(p string) (host, rest string, ok bool) {
+	if p == "" {
+		return "", "", false
+	}
+	if p[0] == '[' {
+		end := strings.IndexByte(p, ']')
+		if end <= 0 || end+1 >= len(p) || p[end+1] != ':' {
+			return "", "", false
+		}
+		host, rest = p[:end+1], p[end+2:]
+		if rest == "" || (rest[0] != '/' && rest[0] != '\\') {
+			return "", "", false
+		}
+		return host, rest, true
+	}
+	i := strings.IndexByte(p, ':')
+	if i <= 0 {
+		return "", "", false
+	}
+	host = p[:i]
+	if u := strings.LastIndexByte(host, '@'); u >= 0 {
+		if u == 0 {
+			return "", "", false
+		}
+		host = host[u+1:]
+	}
+	if host == "" {
+		return "", "", false
+	}
+	rest = p[i+1:]
+	if rest == "" || (rest[0] != '/' && rest[0] != '\\') {
+		return "", "", false
+	}
+	return host, rest, true
+}
+
 // localURLSchemes are URI schemes that name a local or non-network resource: a
 // file, an in-document payload, an email address. A token carrying one of
 // these never names a network address, so the gate rejects it even though it is
@@ -232,6 +386,16 @@ var egressProtocols = []string{
 	"tcp:", "tcp4:", "tcp6:", "udp:", "udp4:", "udp6:",
 	"openssl:", "ssl:", "socks:", "socks4:", "socks5:",
 	"http:", "https:", "git:", "ssh:", "sftp:", "ftps:", "ftp:",
+	// The hyphenated connect-address types of the netcat dialect (socat's
+	// canonical spelling): `socat tcp-connect:host:port -` is the documented
+	// way to dial a TCP destination, and `udp-connect:`/`sctp-connect:` are its
+	// siblings (Finding 25). Without them the address was judged not
+	// host-shaped and the egress effect was dropped entirely — a tunnel or a
+	// reverse shell reported no network effect at all.
+	"tcp-connect:", "tcp4-connect:", "tcp6-connect:",
+	"udp-connect:", "udp4-connect:", "udp6-connect:",
+	"sctp-connect:", "sctp4-connect:", "sctp6-connect:",
+	"openssl-connect:", "ssl-connect:",
 }
 
 // stripEgressPrefix removes a client protocol prefix (TCP:host:port) or an

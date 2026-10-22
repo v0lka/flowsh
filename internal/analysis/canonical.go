@@ -189,9 +189,21 @@ func (c CommandCall) identity() string {
 // metadata, transport read, unlink) drop; targets that cannot be paths drop.
 // The effects are then merged and ordered by the core's canonical rules and
 // keyed by their frozen Effect.Key().
+//
+// The target rewrite is applied IN PLACE, one effect per input effect: the
+// canonical form of an effect whose scope names T targets is that same effect
+// carrying the T normalized targets. An earlier form materialised one effect per
+// target and relied on Normalize to merge them back, which turned the whole
+// path quadratic in T (Finding 47: a 93-byte command took 33 s and 8.8 GiB) —
+// the merge re-sorted a growing union per singleton and the why-remap rendered
+// the whole set per original effect. Because Effect.Join is idempotent in every
+// component (target union, certainty join, taint join, reversible AND, flow
+// join), joining T singleton copies of one effect is exactly the effect with the
+// joined targets, so the in-place form is the same canonical value at linear
+// cost.
 func buildCanonical(effs []engine.Effect, calls []CommandCall) *Canonical {
 	staged := stagingDestinations(calls)
-	var out []engine.Effect
+	out := make([]engine.Effect, 0, len(effs))
 	for _, e := range effs {
 		if e.Target.IsTop() || e.Target.IsBottom() {
 			// ⊤ cannot be refined and ⊥ has no target to normalize; keep either
@@ -200,15 +212,22 @@ func buildCanonical(effs []engine.Effect, calls []CommandCall) *Canonical {
 			out = append(out, e)
 			continue
 		}
-		for _, t := range e.Target.Targets() {
-			t = canonicalTarget(t, e.Kind, staged)
-			if t == "" {
-				continue
+		targets := e.Target.Targets()
+		kept := make([]string, 0, len(targets))
+		for _, t := range targets {
+			if ct := canonicalTarget(t, e.Kind, staged); ct != "" {
+				kept = append(kept, ct)
 			}
-			ne := e
-			ne.Target = engine.ScopeOf(t)
-			out = append(out, ne)
 		}
+		if len(kept) == 0 {
+			// Every target of this effect is noise or a folded staging file: the
+			// effect carries nothing canonical, exactly as when each of its
+			// singleton effects dropped out.
+			continue
+		}
+		ne := e
+		ne.Target = engine.ScopeOf(kept...)
+		out = append(out, ne)
 	}
 	norm := normalizeEffects(out)
 	return &Canonical{Effects: norm, Key: canonicalKey(norm)}

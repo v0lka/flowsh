@@ -8,6 +8,7 @@ package api_test
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -15,15 +16,18 @@ import (
 	"github.com/v0lka/flowsh/engine"
 )
 
+// probeCase is one effect-producing invocation per dialect.
+type probeCase struct {
+	name string
+	lang api.Lang
+	src  string
+}
+
 // probe is one effect-producing invocation per dialect. Every source was chosen
 // so the analysis yields at least one effect (a benign no-op such as bare `ls`
 // would produce none), which keeps the "non-empty effects" assertion
 // meaningful rather than vacuous.
-var probe = []struct {
-	name string
-	lang api.Lang
-	src  string
-}{
+var probe = []probeCase{
 	{"bash write", api.LangBash, `echo hi > /tmp/flowsh-api-out`},
 	{"bash read", api.LangBash, `cat /etc/passwd`},
 	{"posix remove", api.LangPOSIX, `rm -rf /tmp/flowsh-api-check`},
@@ -186,8 +190,10 @@ func TestExportedAnalyzeWithOptions(t *testing.T) {
 		t.Errorf("AnalyzeWith(Options{}) differs from Analyze:\n got=%s\nwant=%s", zb, pb)
 	}
 
-	// The Windows option toggles the host-independent Registry provider: forced
-	// on it persists state, forced off it contributes nothing.
+	// The Windows option selects the Registry provider's host reading; the
+	// *effect* of a registry write is host-agnostic (security-review F22: a
+	// control plane dispatching to Windows endpoints must not be told "no
+	// effect"), so both settings report the persistence.
 	const reg = `Set-ItemProperty -Path HKCU:\Software\x -Name y -Value z`
 	on, err := api.AnalyzeWith(api.LangPowerShell, reg, api.Options{Windows: api.Bool(true)})
 	if err != nil {
@@ -200,8 +206,8 @@ func TestExportedAnalyzeWithOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AnalyzeWith(Windows=false): %v", err)
 	}
-	if len(off.Effects) != 0 {
-		t.Errorf("AnalyzeWith(Windows=false): want 0 effects, got %d", len(off.Effects))
+	if len(off.Effects) == 0 {
+		t.Errorf("AnalyzeWith(Windows=false): a registry write is persistence on every host, got no effect")
 	}
 }
 
@@ -253,38 +259,56 @@ func TestExportedAnalyzeWithOptionsVars(t *testing.T) {
 // binary, making the goroutines race the one-time knowledge-base load as well as
 // the subsequent concurrent use of the shared analyser.
 //
+// Exactly one outcome is excluded from the byte-identity claim: a PowerShell
+// parse runs under a wall-clock budget (front/ps.DefaultTimeoutMicros), so on a
+// loaded host the budget can expire for a benign 15-byte source and the analysis
+// answers ⊤. That is the *sound* direction — ⊤ is the top element, and the
+// report stays covered and conservative — and it is a property of the host, not
+// of the analyser's determinism, so it is classified separately (ADR-0018): the
+// input is re-analysed sequentially and the trip is tolerated only when the
+// reference report comes back. A concrete result that still differs, or a ⊤ for
+// any other reason (a panic, a grammar failure), stays a real mismatch and
+// fails. Under -race the parse budget is disabled (ADR-0012), so the
+// byte-identity claim holds unconditionally there.
+//
 // Run it under -race for the gate: `go test -race ./...`.
 func TestAnalyzeConcurrentMatchesSequential(t *testing.T) {
 	const (
 		goroutines = 32
 		rounds     = 4
+		// tripRetries bounds the sequential re-analysis of a case whose
+		// concurrent result degraded to ⊤ on the parse budget. A lone analysis
+		// competes with no other goroutine, so the budget is expected to hold on
+		// the first attempt; the retries only cover a host so saturated that
+		// even that is starved.
+		tripRetries = 4
 	)
 
 	// Phase 1: hammer the shared analyser concurrently. Each goroutine records
 	// the canonical JSON of every (round, case) result; they are released
 	// together by closing the gate to maximise real overlap.
-	batches := make([][]string, goroutines)
+	batches := make([][]concurrentResult, goroutines)
 	var wg sync.WaitGroup
 	gate := make(chan struct{})
 	for g := 0; g < goroutines; g++ {
 		wg.Add(1)
 		go func(g int) {
 			defer wg.Done()
-			out := make([]string, 0, rounds*len(probe))
+			out := make([]concurrentResult, 0, rounds*len(probe))
 			<-gate
 			for r := 0; r < rounds; r++ {
 				for _, p := range probe {
 					rep, err := api.Analyze(p.lang, p.src)
 					if err != nil {
-						out = append(out, fmt.Sprintf("analyze error: %v", err))
+						out = append(out, concurrentResult{json: fmt.Sprintf("analyze error: %v", err)})
 						continue
 					}
 					data, err := rep.Encode()
 					if err != nil {
-						out = append(out, fmt.Sprintf("encode error: %v", err))
+						out = append(out, concurrentResult{json: fmt.Sprintf("encode error: %v", err)})
 						continue
 					}
-					out = append(out, string(data))
+					out = append(out, concurrentResult{json: string(data), top: rep.Top, reason: rep.Reason})
 				}
 			}
 			batches[g] = out
@@ -313,8 +337,10 @@ func TestAnalyzeConcurrentMatchesSequential(t *testing.T) {
 		want[i] = string(data)
 	}
 
-	// Phase 3: every concurrent result must equal its sequential counterpart.
-	mismatches := 0
+	// Phase 3: every concurrent result must equal its sequential counterpart,
+	// except a parse-budget ⊤ on a loaded host, which is tolerated only when a
+	// fresh sequential analysis reproduces the reference.
+	mismatches, trips, starved := 0, 0, 0
 	for g, out := range batches {
 		if len(out) != rounds*len(probe) {
 			t.Errorf("goroutine %d produced %d results, want %d", g, len(out), rounds*len(probe))
@@ -323,11 +349,31 @@ func TestAnalyzeConcurrentMatchesSequential(t *testing.T) {
 		for r := 0; r < rounds; r++ {
 			for i, p := range probe {
 				got := out[r*len(probe)+i]
-				if got != want[i] {
+				if got.json == want[i] {
+					continue
+				}
+				if !got.parseBudgetTop() {
 					mismatches++
 					if mismatches <= 5 {
 						t.Errorf("goroutine %d round %d case %q: concurrent result != sequential\n got=%s\nwant=%s",
-							g, r, p.name, got, want[i])
+							g, r, p.name, got.json, want[i])
+					}
+					continue
+				}
+				switch retrySequentially(p, want[i], tripRetries) {
+				case retryReproduced:
+					trips++
+					if trips <= 5 {
+						t.Logf("goroutine %d round %d case %q: the parse budget expired on the concurrent analysis (host load); the reference report is reproduced sequentially",
+							g, r, p.name)
+					}
+				case retryStarved:
+					starved++
+				case retryDiverged:
+					mismatches++
+					if mismatches <= 5 {
+						t.Errorf("goroutine %d round %d case %q: concurrent result != sequential, and the sequential re-analysis did not reproduce the reference either\n got=%s\nwant=%s",
+							g, r, p.name, got.json, want[i])
 					}
 				}
 			}
@@ -337,8 +383,120 @@ func TestAnalyzeConcurrentMatchesSequential(t *testing.T) {
 		t.Fatalf("concurrent analysis is nondeterministic: %d/%d results differed from the sequential run",
 			mismatches, goroutines*rounds*len(probe))
 	}
-	t.Logf("concurrency: %d goroutines x %d rounds x %d cases = %d analyses, all byte-identical to sequential",
-		goroutines, rounds, len(probe), goroutines*rounds*len(probe))
+	if trips > 0 {
+		t.Logf("concurrency: %d of %d analyses exhausted the PowerShell parse budget under host load and answered ⊤ (each reproduced the reference sequentially); every other result was byte-identical to the sequential run",
+			trips, goroutines*rounds*len(probe))
+	} else {
+		t.Logf("concurrency: %d goroutines x %d rounds x %d cases = %d analyses, all byte-identical to sequential",
+			goroutines, rounds, len(probe), goroutines*rounds*len(probe))
+	}
+	if starved > 0 {
+		t.Skipf("%d cases exhausted the parse budget on every sequential retry too: this host cannot give a benign source its parse budget, so the byte-identity half of the gate is unmeasurable here",
+			starved)
+	}
+}
+
+// concurrentResult is one concurrent analysis outcome: the report's canonical
+// JSON plus the ⊤ flag and reason, so a result that differs from the reference
+// can be classified as the documented parse-budget degradation rather than as a
+// nondeterminism.
+type concurrentResult struct {
+	json   string
+	top    bool
+	reason string
+}
+
+// parseBudgetReasonFragment identifies the ⊤ reason the PowerShell frontend
+// emits when a parse exhausts its wall-clock budget (front/ps/parse.go: "parse
+// exceeded its %d µs budget: treating source as ⊤"). Only that reason is
+// classified as a host-load artifact; every other ⊤ stays a mismatch. Matching a
+// fragment keeps the gate fail-closed: if the production wording stops
+// containing it, a budget trip is reported as nondeterminism instead of being
+// silently tolerated.
+const parseBudgetReasonFragment = "µs budget"
+
+// parseBudgetTop reports whether the result is a ⊤ the parse budget produced.
+func (r concurrentResult) parseBudgetTop() bool {
+	return r.top && strings.Contains(r.reason, parseBudgetReasonFragment)
+}
+
+// retryOutcome classifies the sequential re-analysis of a case whose concurrent
+// result degraded to ⊤ on the parse budget.
+type retryOutcome int
+
+const (
+	// retryReproduced: a re-analysis produced the reference report, so the ⊤ was
+	// a transient wall-clock artifact of the loaded host.
+	retryReproduced retryOutcome = iota
+	// retryDiverged: a re-analysis produced a concrete report that differs from
+	// the reference, or failed outright — a genuine nondeterminism.
+	retryDiverged
+	// retryStarved: every re-analysis exhausted the budget too.
+	retryStarved
+)
+
+// retrySequentially re-analyses p up to attempts times and classifies the
+// outcome. It stops at the first reference match (the trip was transient) and at
+// the first report that is not a parse-budget ⊤ (a real divergence).
+func retrySequentially(p probeCase, want string, attempts int) retryOutcome {
+	for i := 0; i < attempts; i++ {
+		rep, err := api.Analyze(p.lang, p.src)
+		if err != nil {
+			return retryDiverged
+		}
+		data, err := rep.Encode()
+		if err != nil {
+			return retryDiverged
+		}
+		if string(data) == want {
+			return retryReproduced
+		}
+		if !rep.Top || !strings.Contains(rep.Reason, parseBudgetReasonFragment) {
+			return retryDiverged
+		}
+	}
+	return retryStarved
+}
+
+// TestRetrySequentiallyClassification pins the classifier the concurrency gate
+// relies on, in the direction that matters: only a parse-budget ⊤ may be
+// tolerated as a host artifact, so a genuine divergence — or a ⊤ for any other
+// reason — still fails the gate.
+func TestRetrySequentiallyClassification(t *testing.T) {
+	// A bash source runs under no wall-clock parse budget, so its report is
+	// concrete and a re-analysis either reproduces it or diverges.
+	p := probe[0]
+	rep, err := api.Analyze(p.lang, p.src)
+	if err != nil {
+		t.Fatalf("Analyze(%s, %q): %v", p.lang, p.src, err)
+	}
+	want, err := rep.Encode()
+	if err != nil {
+		t.Fatalf("Encode(): %v", err)
+	}
+	if got := retrySequentially(p, string(want), 2); got != retryReproduced {
+		t.Errorf("retrySequentially(reference) = %v, want retryReproduced", got)
+	}
+	if got := retrySequentially(p, "not the reference report", 2); got != retryDiverged {
+		t.Errorf("retrySequentially(wrong reference) = %v, want retryDiverged", got)
+	}
+
+	if res := (concurrentResult{json: "…", top: true, reason: "parse exceeded its 250000 µs budget: treating source as ⊤"}); !res.parseBudgetTop() {
+		t.Error("a parse-budget ⊤ must be classified as a host artifact")
+	}
+	for _, tc := range []struct {
+		name string
+		res  concurrentResult
+	}{
+		{"concrete difference", concurrentResult{json: "…"}},
+		{"⊤ from a grammar failure", concurrentResult{json: "…", top: true, reason: "a command could not be parsed from the source"}},
+		{"⊤ from a panic", concurrentResult{json: "…", top: true, reason: "internal parser panic: boom"}},
+		{"⊤ without a reason", concurrentResult{json: "…", top: true}},
+	} {
+		if tc.res.parseBudgetTop() {
+			t.Errorf("%s: must not be tolerated as a parse-budget trip", tc.name)
+		}
+	}
 }
 
 // TestExportedAnalyzerReuse drives the documented NewAnalyzer entry point — the

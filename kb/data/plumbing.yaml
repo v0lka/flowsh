@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # Command discovery and file inspection plumbing: `which`, `file` and
 # `markitdown`.

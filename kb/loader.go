@@ -320,11 +320,38 @@ func decodeParam(n *yamlNode) (Param, error) {
 				return p, fmt.Errorf("param %q: effect: %w", p.Spec, err)
 			}
 			p.Effect = e
+		case "also":
+			es, err := decodeEffects(v)
+			if err != nil {
+				return p, fmt.Errorf("param %q: also: %w", p.Spec, err)
+			}
+			p.Also = es
 		default:
 			return p, fmt.Errorf("param %q: unknown key %q", p.Spec, key)
 		}
 	}
 	return p, nil
+}
+
+// decodeEffects decodes a parameter's secondary-effect list (`also:`). An empty
+// or absent list is no list at all; an entry that is not a mapping is rejected
+// by decodeEffect with the position that names it.
+func decodeEffects(n *yamlNode) ([]Effect, error) {
+	if isEmpty(n) {
+		return nil, nil
+	}
+	if !n.isSeq() {
+		return nil, fmt.Errorf("`also` must be a sequence")
+	}
+	out := make([]Effect, 0, len(n.items))
+	for i, it := range n.items {
+		e, err := decodeEffect(it)
+		if err != nil {
+			return nil, fmt.Errorf("[%d]: %w", i, err)
+		}
+		out = append(out, e)
+	}
+	return out, nil
 }
 
 func decodeEffect(n *yamlNode) (Effect, error) {
@@ -404,6 +431,12 @@ func decodeDestructiveEntry(n *yamlNode) (Destructive, error) {
 				return d, fmt.Errorf("%s %s: `class` must be a scalar", d.Command, d.Spec)
 			}
 			d.Class = DestructiveClass(s)
+		case "value":
+			s, ok := v.scalarVal()
+			if !ok {
+				return d, fmt.Errorf("%s %s: `value` must be a scalar", d.Command, d.Spec)
+			}
+			d.Value = ValuePredicate(s)
 		case "reason":
 			s, ok := v.scalarVal()
 			if !ok {

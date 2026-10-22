@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # Users, permissions, security policy and auditing.
 #
@@ -28,9 +28,12 @@ commands:
       - spec: "-e"
         kind: flag
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      # Finding 17: locking an account prefixes the password hash in /etc/shadow,
+      # i.e. it rewrites credential material — the same CredAccess the -d
+      # spelling already carries, not a metadata edit.
       - spec: "-l"
         kind: flag
-        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
       - spec: "-u"
         kind: flag
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
@@ -43,9 +46,17 @@ commands:
       - spec: "-x"
         kind: option
         effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      # Finding 17: `passwd NAME` sets NAME's password, so the operand is a
+      # credential write (the shadow entry is replaced), not metadata — parity
+      # with `-d` above and with `chpasswd`. A password change is the row's own
+      # operation, so every spelling that carries no operand at all still
+      # reports CredAccess through --stdin below.
       - spec: NAME
         kind: positional
-        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
+      - spec: "--stdin"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
 
   - name: chpasswd
     dialect: security
@@ -62,6 +73,15 @@ commands:
       - spec: "-s"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      # Finding 16: `echo 'root:pw' | chpasswd` carries no operand at all, so
+      # the row matched nothing and Bind fell back to the intrinsic ProcSpawn —
+      # a bulk password change reported as "a process ran". Changing passwords
+      # is the operation's own effect, so it is declared as an intrinsic
+      # (kind: self) credential access: the report names CredAccess even when
+      # the accounts travel on standard input.
+      - spec: chpasswd
+        kind: self
+        effect: {kind: CredAccess, mode: Direct, valueFrom: self}
 
   - name: useradd
     dialect: security
@@ -78,9 +98,14 @@ commands:
       - spec: "-g"
         kind: option
         effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      # Finding 55: granting a principal membership of a group is a privilege
+      # grant (the doctrine at the head of this document), exactly as the
+      # sibling spellings usermod -G and gpasswd -a declare it. `useradd -G
+      # sudo` creates a sudoer; reporting it as FS metadata let a
+      # privilege-escalation-denying policy through.
       - spec: "-G"
         kind: option
-        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+        effect: {kind: PrivEsc, mode: Conditional, valueFrom: flagValue}
       - spec: "-u"
         kind: option
         effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}

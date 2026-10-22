@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # Package managers (roadmap task B6).
 #
@@ -11,7 +11,10 @@ version: effect-kb/v2
 # vcs.yaml, every package-manager subcommand is a positional operand:
 #   * refreshing the index/metadata and downloading artefacts is NetEgress;
 #   * installing, removing, upgrading or otherwise rewriting the local package
-#     store is FSWrite;
+#     store is FSWrite; an install/add/update that also fetches from a registry
+#     declares BOTH effects (the registry contact in `also:`), because a row
+#     that declares only one of the two is admitted by every deny rule keyed on
+#     the other (Finding 86);
 #   * bookkeeping such as adding a repository, pinning a package, or
 #     connecting/disconnecting a snap interface is FSMeta;
 #   * read-only queries (list / search / info / audit) are FSRead;
@@ -40,6 +43,10 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: remove
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -52,6 +59,10 @@ commands:
       - spec: upgrade
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: full-upgrade
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -130,15 +141,27 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: remove
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: update
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: upgrade
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: localinstall
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -164,15 +187,27 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: remove
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: update
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: upgrade
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: download
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
@@ -239,12 +274,40 @@ commands:
       - spec: "--sync"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
-      - spec: "-Sy"
+      # Finding 15: `-Syu` (the canonical Arch full-system upgrade) declared
+      # only the download, so the package-store rewrite it performs reported
+      # NetEgress/Medium with no write and no irreversibility. The fused cluster
+      # spellings are deliberately NOT declared: an undeclared single-dash token
+      # is split into its individual flags by the binder, so `-y`/`-u` below
+      # cover `-Sy`, `-Syu`, `-Syyu` and every other ordering. The refresh
+      # downloads the databases (NetEgress); the sysupgrade installs the
+      # packages and rewrites /var/lib/pacman (FSWrite, irreversible for the
+      # packages it replaces).
+      - spec: "-y"
         kind: flag
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
-      - spec: "-Syu"
+      - spec: "--refresh"
         kind: flag
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+      - spec: "-u"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--sysupgrade"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      # A search queries the sync database and changes nothing, so it stays a
+      # read. The fused spellings are declared explicitly because the cluster
+      # splitter would otherwise bind the leading `-S` of `-Ssq` to the install
+      # write above.
+      - spec: "-Ss"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-Ssq"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--search"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: "-R"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -273,12 +336,20 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: remove
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: update
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: refresh
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
@@ -304,12 +375,20 @@ commands:
       - spec: add
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: del
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: upgrade
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: update
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
@@ -333,6 +412,10 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: remove
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -373,12 +456,20 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: uninstall
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: update
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: run
         kind: positional
         effect: {kind: CodeExec, mode: Direct, valueFrom: args}
@@ -404,6 +495,10 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: uninstall
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -444,12 +539,20 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: uninstall
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: ci
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: publish
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
@@ -462,9 +565,15 @@ commands:
       - spec: exec
         kind: positional
         effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+      # Finding 13: `npm config set|delete|edit|fix` rewrites ~/.npmrc — the
+      # registry-trust and auth-token store — and `npm config get|list` only
+      # reads it. One effect per parameter cannot split the subcommand, and the
+      # binder consumes the whole operand group at the value-matched word, so
+      # the write is declared: a persistent configuration write to a
+      # credential-bearing file must never be reported as a read.
       - spec: config
         kind: positional
-        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: "-g"
         kind: flag
         effect: {kind: PrivEsc, mode: Conditional, valueFrom: args}
@@ -481,15 +590,27 @@ commands:
       - spec: add
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: remove
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: upgrade
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: publish
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
@@ -509,12 +630,20 @@ commands:
       - spec: add
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: remove
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: publish
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
@@ -540,12 +669,20 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: uninstall
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: update
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: build
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -568,9 +705,17 @@ commands:
       - spec: add
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: uninstall
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -598,6 +743,10 @@ commands:
       - spec: update
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: "--registry"
         kind: option
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
@@ -632,9 +781,11 @@ commands:
       - spec: "--print"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      # Finding 26: rustc writes its default artefact (the source stem, in the
+      # working directory) when -o/--out-dir are absent.
       - spec: SRC
         kind: positional
-        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+        effect: {kind: FSWrite, mode: Direct, valueFrom: cwd}
 
   - name: go
     dialect: pkgmgr
@@ -645,6 +796,10 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: clean
         kind: positional
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
@@ -693,3 +848,9 @@ commands:
       - spec: fix
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-exec"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "-toolexec"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}

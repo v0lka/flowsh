@@ -8,7 +8,7 @@
 
 - `front/ps/parse.go` — the parser and the normalized AST: `Pos`, `Word`, `Param`, `Binding`, `Redirect`, `Command`, `Assign`, `Branch`/`IfStmt`, `LoopStmt`, `TryStmt`, `Kind`, `Stmt`, `Program`, `DefaultTimeoutMicros`, `Parse`/`ParseTimeout`, and the CST `walker`.
 - `front/ps/budget_race.go` / `front/ps/budget_norace.go` — the build-tagged per-parse budget `parseBudgetMicros` (and `raceDetectorEnabled`) `Parse` applies: `DefaultTimeoutMicros` in an ordinary build, `0` (disabled) under the race detector (see [ADR-0012](../decisions/0012-race-advisory-parse-budget.md)).
-- `front/ps/state.go` — the abstract variable state Σ: `Var{Value, Set, Known, Taint, Hash}`, `State`, `NewState` (automatic-variable seeds), `Clone`, `Set`/`SetUnknown`/`SetHash`/`Unset`, and `JoinStates` (the branch least upper bound).
+- `front/ps/state.go` — the abstract variable state Σ: `Var{Value, Set, Known, Taint, Hash}`, `State` with the variable map plus the drive lattice (`Drives`, `DriveUnknown`, `AllDrivesUnknown`), `NewState` (automatic-variable seeds), `Clone`, `Set`/`SetUnknown`/`SetHash`/`Unset`, `SetDrive`/`SetDriveUnknown`/`UnsetDrive`/`RewriteDrive`, and `JoinStates` (the branch least upper bound).
 - `front/ps/wordeval.go` — word evaluation against Σ: `evalWordText` (parts → {text, known, taint, envReads}), the interpolation scanner, env/using/scope qualifiers, member-access mode, splat classification.
 - `front/ps/lower.go` — lowering to the IR: `Lower`/`LowerWith`, `lowerer` (Σ + step budget), `topReason`, `emitSpec`/`emitOne`, `assignment`, `ifStmt`/`loopStmt`/`tryStmt`, `mutateState`, `expandSplat`, `bumpFor`, `finish`, and credential-material detection.
 - `front/ps/aliases.go` — the built-in `Aliases` table, `LookupAlias`, the `Cmdlets` command→effect table, `TargetKind`/`Spec`, the parameter-recognition predicates (`isSwitch`/`pathParam`/`nameParam`/`urlParam`), and the drive/provider helpers.
@@ -164,6 +164,20 @@ it whenever a word, condition or assignment touches one
   `Set-Variable`/`New-Variable`/`Set-Item Variable:` bind, `Clear-Variable`/
   `Remove-Item Variable:` unset. `$pid` and the other automatic variables are
   seeded set-but-unknown.
+- **Drive mappings** are session state too: `New-PSDrive -Name X -Root <root>`
+  records the root (and reports the network effect a UNC or `host:/path` root
+  implies — mounting contacts that host), `Remove-PSDrive` forgets it, and a
+  path rooted on a mapped letter (`X:\x`) resolves to the root it names before
+  the effect is built. A root the script does not determine, a mount reached on
+  only one branch, or a removal on any branch marks the drive unknown: a later
+  path under it widens to ⊤ instead of being taken for a local path, and no host
+  name is fabricated.
+- **Remote-session parameters** (`-Session`, `-ToSession`, `-FromSession`,
+  `-ConnectionUri`, `-VMName`, `-ContainerId`, `-CimSession`) are network
+  channels: a cmdlet carrying one and reporting no `NetEgress` of its own
+  contributes `NetEgress` over ⊤, so a credential copied through a PSSession
+  pairs with the egress. `-WebSession` is a cookie container, not a session
+  object, and keeps the request's own `-Uri` host.
 - **Egress**: an unresolved target keeps its egress — scoped to the literal
   host when one prefixes the dynamic tail (`http://evil.example/$lines` →
   `evil.example`) — and the word's provenance flows onto the effect, so an
@@ -211,7 +225,7 @@ Parse(name, src) / ParseTimeout(name, src, micros)
         specs == [] ?              ──▶ note "no external effect"
         else                       ──▶ emitSpec for each spec
                      │
-   assignment: Env → EnvWrite ; Registry → Persist (Windows only) ; Variable → no external effect
+   assignment: Env → EnvWrite ; Registry → Persist ; Variable → no external effect
                      │
                      ▼  finish(): engine.NewReport().Normalize(); destructiveness.Join(bump); dedup notes
                   Result
@@ -226,7 +240,7 @@ A target string is classified by the PowerShell provider its prefix selects (an 
 - `FileSystem` (default) → the spec's declared kind.
 - `Env:` → `EnvRead`/`EnvWrite` (write for an FS write/meta spec), scoped to the variable name.
 - `Variable:` → session-local, **no external effect**.
-- `Registry:` (`HKLM:`/`HKCU:`/`HKCR:`/`HKU:`/`HKEY_`/`registry::`) → `Persist`, but **Windows-only** (skipped on non-Windows hosts).
+- `Registry:` (`HKLM:`/`HKCU:`/`HKCR:`/`HKU:`/`HKEY_`/`registry::`) → `Persist` on **every** host: a registry write is reboot-surviving state wherever the analysed command will run, so a control plane dispatching to Windows endpoints is never told "no effect" (`Options.Windows` only selects the host reading, it cannot suppress the effect; security-review F22).
 
 ### Destructive escalation (`bumpFor`)
 
@@ -244,7 +258,7 @@ A target string is classified by the PowerShell provider its prefix selects (an 
 - `Invoke-Expression`, `Add-Type`, `New-Object`, dot-sourcing (`.`), the call operator `&` with a computed name, splatting (`@name` whose variable is not a fully-known hashtable — an `@{…}` literal bound to the variable expands entrywise), and a computed command name all lower to ⊤.
 - The PowerShell frontend resolves against **its own** alias and cmdlet tables, not the bash knowledge base: the same token means different things in the two languages (`rm`, `curl`, `iex` are aliases for `Remove-Item`, `Invoke-WebRequest`, `Invoke-Expression`). Alias lookups are case-insensitive.
 - Alias resolution consults aliases the analysed script declared (via `Set-Alias`/`New-Alias`) first, then the built-in table.
-- The Registry provider is inert on non-Windows hosts (`Options.Windows` false) unless it is set explicitly; the facade and the CLI's `--windows` flag expose that override so the Registry branches can be enabled independently of the host OS.
+- The Registry provider reports `Persist` on every host; `Options.Windows` selects the host reading (drive-letter and provider resolution), never whether the write has an effect.
 - `Result.Style` is `"ps"`, so the composition layer can tell a PowerShell result from a bash one.
 - `Lower`/`LowerWith` mirror the binder's `Result` shape including its `Derivations` (but not `Resolution`/`Destructive`, which stay at their zero value on the PowerShell path) so the two compose uniformly and each contributes why-trace atoms.
 

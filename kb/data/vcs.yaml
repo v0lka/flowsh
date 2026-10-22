@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # Version-control clients other than git: Subversion (svn), Mercurial (hg),
 # Bazaar (bzr), Fossil (fossil) and Darcs.
@@ -25,6 +25,10 @@ commands:
       - spec: update
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: commit
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
@@ -38,6 +42,12 @@ commands:
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: remove
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: del
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: rm
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: revert
@@ -56,6 +66,9 @@ commands:
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: move
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: mv
         kind: positional
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
       - spec: copy
@@ -140,6 +153,9 @@ commands:
       - spec: remove
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: rm
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: forget
         kind: positional
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
@@ -211,7 +227,7 @@ commands:
         effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
       - spec: "--ssh"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
 
   - name: bzr
     dialect: vcs
@@ -238,6 +254,9 @@ commands:
         kind: positional
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
       - spec: remove
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: rm
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: delete
@@ -310,6 +329,10 @@ commands:
       - spec: sync
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: update
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -323,6 +346,15 @@ commands:
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: delete
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: mv
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: rename
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: del
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: revert
@@ -402,6 +434,9 @@ commands:
         kind: positional
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
       - spec: remove
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: rm
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: revert

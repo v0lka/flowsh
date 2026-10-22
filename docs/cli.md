@@ -23,8 +23,7 @@ has no runtime dependencies. Requires Go 1.27 or newer (see
 ```
 flowsh [--lang bash|posix|posh|auto] [--json] [--windows] '<command>'
 echo '<command>' | flowsh [--lang bash|posix|posh|auto] [--json] [--windows]
-flowsh --file <path> [--lang bash|posix|posh|auto] [--json]
-flowsh --batch [--lang bash|posix|posh|auto] [--file <path>] [--windows]
+flowsh --batch [--lang bash|posix|posh|auto] [--windows]
 ```
 
 Flags are **position-independent**: `flowsh --lang posh 'x'` and
@@ -32,18 +31,18 @@ Flags are **position-independent**: `flowsh --lang posh 'x'` and
 
 ## Input sources
 
-The command to analyse comes from exactly one of three places:
+The command to analyse comes from exactly one of two places:
 
 | Source | How |
 | ------ | --- |
 | Positional argument | `flowsh 'rm -rf $HOME'` |
 | Standard input | `echo 'rm -rf $HOME' \| flowsh`, or the positional `-` |
-| File | `flowsh --file script.sh` (`--file -` reads stdin) |
 
-Trailing newlines are stripped from stdin and file input. If stdin is
-whitespace-only, or the file is empty, the CLI reports an **input error** and
-exits `3` (see [Exit status](#exit-status)). `--file` cannot be combined with a
-positional command or with `-`.
+The analyser reads no caller-named file: there is no `--file`, so a wrapper that
+forwards an untrusted path cannot turn the CLI into an arbitrary-file-read
+primitive. (A command that lives in a file is fed in: `flowsh < script.sh`.)
+Trailing newlines are stripped from stdin. If stdin is whitespace-only the CLI
+reports an **input error** and exits `3` (see [Exit status](#exit-status)).
 
 With `--batch`, the selected source is read as **many commands, one per line**:
 each non-blank line is analysed on its own and written as one compact JSON
@@ -58,7 +57,6 @@ whole script or a long list of commands.
 | `--json` | `-json` | Emit the full JSON report (see the [JSON report reference](report-json.md)) instead of the human summary. |
 | `--explain` | `--why`, `-explain`, `-why` | After the summary, print the why-trace that justifies each reported effect. |
 | `--windows[=<bool>]` | `-windows`, `--windows=`/`-windows=` | Force the PowerShell Registry provider **on** (`true`) or **off** (`false`) regardless of the host OS. Without the flag the host OS decides (the registry is active only on Windows). |
-| `--file <path>` | `-file`, `--file=`, `-file=` | Read the command from `path` (`-` means stdin). The report's `root` names the file. |
 | `--batch` | `-batch` | Read many commands, one per line, and write one compact JSON report per line (NDJSON). Cannot be combined with a positional command or with `--explain`. |
 | `--version` | `-version` | Print the tool-contract version and the engine schema version, one per line, and exit `0`. |
 | `-h`, `--help` | `-help` | Print usage and exit `0`. |
@@ -84,8 +82,8 @@ stdin and never require a command. When both are given, `--help` wins.
 | ---- | ------- |
 | `0` | A report was produced (or `--help` / `--version`). Unparseable input still exits `0` with a conservative report. |
 | `1` | The analysis failed internally (an internal error, or the report could not be encoded). |
-| `2` | Usage error: unknown flag, a missing `--lang`/`--file` value, an extra argument, `--file`/`--batch` combined with another input source, or an unknown language. |
-| `3` | Input error: the named source could not be read (a missing or unreadable file, a directory), or was empty (an empty file, empty stdin, or an empty batch). |
+| `2` | Usage error: unknown flag (including the removed `--file`), a missing `--lang` value, an extra argument, or an unknown language. |
+| `3` | Input error: stdin could not be read, or the command was empty (whitespace-only stdin, or an empty batch). |
 
 Because the frontends degrade to the top element (⊤) rather than fail, exit `1`
 means an internal error, never "hard input": an unresolvable or unparseable
@@ -185,14 +183,14 @@ See the [JSON report reference](report-json.md) for the full document.
 $ echo 'ls -la /tmp' | flowsh
 ```
 
-### Analysing a file
+### Analysing a script from a file
 
 ```sh
-$ flowsh --file script.sh
+$ flowsh < script.sh
 ```
 
-The report's `root` is the file path, and source positions in the why-trace are
-reported against it.
+The command is read from stdin; there is no path-taking flag. A multi-command
+script is better scanned with `--batch`.
 
 ### Scanning many commands (batch)
 
@@ -205,6 +203,16 @@ $ printf 'ls -la\nRemove-Item -Recurse -Force $HOME\n' | flowsh --batch --lang a
 With `--batch` each non-blank input line is analysed and emitted as one compact
 JSON report per line (NDJSON), in input order. `--lang auto` picks the dialect
 per line, so one batch may mix bash and PowerShell.
+
+Each line is analysed against an empty variable state, so cross-line state is
+**not** modelled. The frame fails closed rather than open: a line that reads a
+variable an earlier line assigned (`T=$(…)` then `curl -d "$T" …`, including the
+`IFS= read -r T` idiom, `printf -v T`, `T+=`, `T[0]=`, `declare`, `export` and a
+`for`/`getopts` loop variable) is reported `top: true, conservative: true` with a
+reason instead of being analysed against an unset — and therefore untainted —
+variable. A line that continues onto the next one (a trailing backslash or an
+open quote) is treated as a fragment on both sides, for the same reason. Analyse
+a script as one input when its statements share variables.
 
 ### Detecting the dialect automatically
 

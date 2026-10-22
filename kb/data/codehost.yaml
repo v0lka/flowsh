@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # Code-host and modern version-control command-line clients: the GitHub CLI
 # (gh), the GitLab CLI (glab) and Jujutsu (jj).
@@ -153,6 +153,37 @@ commands:
       - spec: "--token"
         kind: option
         effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      # Finding 71 (code-host member): the API and release subcommands take a
+      # local payload as an option value. `gh api -F key=@FILE` reads FILE and
+      # ships its content, and `gh release create -F FILE` (--notes-file) /
+      # `gh api --input FILE` upload a file's text verbatim. The @file
+      # convention — and, for these four specs, the bare path — is a payload
+      # reference: fileRef makes the parameter report the read of FILE and carry
+      # its provenance (secret-tainted for a credential path) into the egress,
+      # so the exfiltration detector pairs it instead of certifying the upload
+      # as egress-only.
+      - spec: "-F"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue, fileRef: true}
+      - spec: "--field"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue, fileRef: true}
+      - spec: "--notes-file"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue, fileRef: true}
+      - spec: "--body-file"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue, fileRef: true}
+      - spec: "--input"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue, fileRef: true}
+      # A raw field is a literal string by definition: it names no file.
+      - spec: "-f"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "--raw-field"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "--json"
         kind: option
         effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}

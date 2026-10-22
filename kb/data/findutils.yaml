@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # GNU findutils and tar.
 #
@@ -15,13 +15,13 @@ commands:
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: "-exec"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-execdir"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-ok"
         kind: option
-        effect: {kind: ProcSpawn, mode: Conditional, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Conditional, valueFrom: flagValue}
       - spec: "-print"
         kind: flag
         effect: {kind: Stdio, mode: Direct, valueFrom: args}
@@ -29,6 +29,18 @@ commands:
         kind: flag
         effect: {kind: Stdio, mode: Direct, valueFrom: args}
       - spec: "-fprint"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      # Finding 41: `find --help` lists "-fprint0 FILE -fprint FILE -ls -fls
+      # FILE"; -fprintf and -fls write to a named file (and truncate it), so
+      # they are file writes exactly like the declared -fprint.
+      - spec: "-fprintf"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-fprint0"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-fls"
         kind: option
         effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
       - spec: "-name"
@@ -77,13 +89,10 @@ commands:
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: "-c"
         kind: flag
-        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: "-t"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
-      - spec: "-C"
-        kind: option
-        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
       - spec: "-f"
         kind: option
         effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
@@ -101,28 +110,106 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: "-r"
         kind: flag
-        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: "-u"
         kind: flag
-        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: "--overwrite"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: "--delete"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      # Finding 44: -T/--files-from names a *list* file (a selection of
+      # operands, not options): the list itself is a read, and the entries it
+      # names are operands the analysis cannot enumerate.
+      - spec: "-T"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--files-from"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "--to-command"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "--use-compress-program"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-I"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "--checkpoint-action"
         kind: option
         effect: {kind: CodeExec, mode: Conditional, valueFrom: flagValue}
+      # Finding 32: `man tar`: "--rsh-command=COMMAND  Use COMMAND instead of
+      # rsh when accessing remote archives" — an attacker-chosen local program,
+      # the same effect the row already gives -I/--use-compress-program.
+      - spec: "--rsh-command"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      # Finding 24 / Finding 33: the documented GNU long spellings of the
+      # mode flags. Extraction is the operation that creates and overwrites
+      # files, so --extract/--get carry the write; --create carries the read.
+      - spec: "--extract"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--get"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--create"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--file"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      # Finding 66: -C/--directory is the directory the operation is resolved
+      # against. In create mode tar *reads* it recursively (`tar czf - -C DIR .`
+      # archives DIR's contents); in extract mode it is the write root. One
+      # effect per parameter cannot express both modes and the schema has no
+      # base-directory kind (kb/schema.go), so the effect stays the write the
+      # kb spot-check pins (kb/loader_test.go: tar -C = FSWrite) and the
+      # extraction spellings below carry the write the extraction performs.
+      # Closing the create-mode read needs the baseDir schema property and a
+      # binder rule (see the review's fix (a)/(b)).
+      - spec: "-C"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--directory"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
       - spec: FILE
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      # The POSIX first-argument option bundle (`tar xf A`, `tar czf - .`):
+      # a cluster of single letters, none of them declared as an option on its
+      # own, which the model otherwise reads as a file name (Finding 24). Each
+      # bundle is value-matched as a subcommand word and carries that mode's
+      # effect. FILE is declared first so the index-order fallback of a dashed
+      # spelling (`tar -xf A`) still lands on the file operand.
+      - spec: x
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: xf
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: xzf
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: xvf
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: xjf
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: c
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: cf
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: czf
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: cvf
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}

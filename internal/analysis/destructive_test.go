@@ -154,13 +154,14 @@ func TestKBClassCannotLowerSeverity(t *testing.T) {
 
 // TestDestructiveFlagWithoutEffectTrail is acceptance criterion A3.3: a
 // destructive flag whose modelled effect trail contains no filesystem write
-// still forces the report to the class's severity. install -m matches a class-E
-// entry but is modelled as a mode change plus a conditional privilege
-// escalation — there is no FSWrite effect to "explain" the severity — yet the
-// report must still reach Critical.
+// still forces the report to the class's severity. `install -m 4755 FILE`
+// matches a class-E entry but is modelled as a source read plus a conditional
+// privilege escalation — with no destination operand there is no FSWrite effect
+// to "explain" the severity — yet the report must still reach Critical.
+// (install's destination *is* an FSWrite when present; Finding 10.)
 func TestDestructiveFlagWithoutEffectTrail(t *testing.T) {
 	a := mustAnalyzer(t)
-	const in = "install -m 4755 x y"
+	const in = "install -m 4755 x"
 	rep := mustAnalyzeBash(t, a, in)
 
 	if !reportHasClass(rep, "E") {

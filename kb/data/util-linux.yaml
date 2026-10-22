@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # util-linux: mount/umount, device and privilege tooling.
 #
@@ -122,7 +122,7 @@ commands:
         effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
       - spec: "-s"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-l"
         kind: flag
         effect: {kind: PrivEsc, mode: Direct, valueFrom: args}
@@ -702,9 +702,14 @@ commands:
       - spec: "-f"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      # Finding 68: the operand is the text handed to syslog, not a path — it
+      # is written to no file (the -n/--server destination is the egress the row
+      # already declares). Declaring it a filesystem write fabricated both a
+      # write and its target; the exfiltration pair is formed by the egress
+      # taint join, which sees the secret reaching this operand.
       - spec: MESSAGE
         kind: positional
-        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        effect: {kind: Stdio, mode: Direct, valueFrom: args}
 
   - name: login
     dialect: util-linux
@@ -1094,7 +1099,7 @@ commands:
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
       - spec: FILE
         kind: positional
-        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
 
   - name: renice
     dialect: util-linux
@@ -1170,7 +1175,7 @@ commands:
         effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
       - spec: "-s"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-l"
         kind: flag
         effect: {kind: PrivEsc, mode: Direct, valueFrom: args}

@@ -92,7 +92,16 @@ func breadthOfTarget(t string) Breadth {
 	if t == "" {
 		return BreadthNone
 	}
-	trimmed := strings.TrimRight(t, "/\\")
+	// F50: the extent is a property of what the path NAMES, not of how it is
+	// spelled. A lexically normalised spelling of the root ("/.", "/./", "//.",
+	// "/tmp/..") reaches the whole host exactly as "/" does, so the comparison
+	// runs on the cleaned form. Cleaning is lexical only: nothing is read from
+	// the filesystem.
+	clean := cleanTargetPath(t)
+	if clean == "/" {
+		return BreadthRoot
+	}
+	trimmed := strings.TrimRight(clean, "/\\")
 	if trimmed == "" {
 		// Nothing but separators names the filesystem root — but only a POSIX
 		// spelling. A target of nothing but backslashes is not a root: on POSIX
@@ -102,14 +111,22 @@ func breadthOfTarget(t string) Breadth {
 		}
 		return BreadthExact
 	}
-	if isWindowsVolumeRoot(t, trimmed) {
+	if isWindowsVolumeRoot(t, trimmed) || isVolumeRootSpelling(t, trimmed) {
+		return BreadthRoot
+	}
+	// F38: a raw device is not one file among many — a write to it destroys the
+	// whole disk, volume or memory device behind it, which is the extent the
+	// destructive table already states for `dd of=`. The same predicate runs on
+	// the lexically cleaned name, so "/dev//sda" and "/dev/./sda" are the same
+	// device as "/dev/sda".
+	if isDeviceTarget(t) || isDeviceTarget(clean) {
 		return BreadthRoot
 	}
 	if isHomeRoot(trimmed) {
 		return BreadthHome
 	}
-	if i := strings.IndexAny(t, "*?["); i >= 0 {
-		base := strings.TrimRight(t[:i], "/\\")
+	if i := strings.IndexAny(clean, "*?["); i >= 0 {
+		base := strings.TrimRight(clean[:i], "/\\")
 		switch {
 		case base == "":
 			return BreadthRoot
@@ -122,6 +139,129 @@ func breadthOfTarget(t string) Breadth {
 		}
 	}
 	return BreadthExact
+}
+
+// isVolumeRootSpelling reports whether t spells a bare Windows volume root
+// ("C:") after lexical cleaning, in a spelling that carries a Windows path
+// shape. It complements isWindowsVolumeRoot for the forward-slash and dot-segment
+// spellings that normalise to the volume root ("C:/Users/.."): those carry
+// content past the drive colon, so they are Windows paths, while a bare "x:" is a
+// legal POSIX file name and stays Exact (the F50 inverse—a non-root path must
+// never become a root).
+func isVolumeRootSpelling(t, cand string) bool {
+	if len(cand) != 2 || cand[1] != ':' || !isASCIILetter(cand[0]) {
+		return false
+	}
+	return len(t) > 2 && isWindowsShaped(t)
+}
+
+// deviceTargetPrefixes are the raw-device namespaces whose whole extent a write
+// destroys: the disk and partition names (SCSI/SATA, virtio, Xen, NVMe, eMMC),
+// the volume-manager and device-mapper nodes, the software-RAID and loop
+// devices, and the memory devices. A prefix is matched against the whole
+// basename-bearing path, so "/dev/sda1", "/dev/nvme0n1p2" and
+// "/dev/disk/by-id/x" all match while the stream pseudo-files ("/dev/stdin",
+// "/dev/fd/3", "/dev/null") do not.
+var deviceTargetPrefixes = []string{
+	"/dev/sd", "/dev/hd", "/dev/vd", "/dev/xvd", "/dev/nvme", "/dev/mmcblk",
+	"/dev/disk", "/dev/dm-", "/dev/md", "/dev/loop", "/dev/mapper/",
+	"/dev/mem", "/dev/kmem", "/dev/port",
+}
+
+// isDeviceTarget reports whether t names a raw device whose whole content a
+// write destroys. It is the single predicate the breadth lattice uses; the
+// Windows raw-device namespace ("\\.\PhysicalDrive0", "\\.\C:") is recognised
+// too.
+func isDeviceTarget(t string) bool {
+	if t == "" {
+		return false
+	}
+	if strings.HasPrefix(t, `\\.\`) {
+		return true
+	}
+	for _, p := range deviceTargetPrefixes {
+		if strings.HasPrefix(t, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// cleanTargetPathNeeded reports whether t contains anything cleaning could
+// change: a repeated or trailing separator-with-dot segment, an inner "."/".."
+// segment, or a backslash inside a Windows-shaped spelling. A path with none of
+// those is already canonical, so the caller skips the allocation.
+func cleanTargetPathNeeded(t string) bool {
+	if strings.Contains(t, "//") ||
+		strings.Contains(t, "/./") || strings.Contains(t, "/../") ||
+		strings.HasSuffix(t, "/.") || strings.HasSuffix(t, "/..") {
+		return true
+	}
+	return isWindowsShaped(t) && strings.ContainsRune(t, '\\')
+}
+
+// isASCIILetter reports whether c is an ASCII letter.
+func isASCIILetter(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+// isWindowsShaped reports whether t is spelled as a Windows path: a drive-letter
+// prefix ("C:\", "C:/") or a UNC/device prefix ("\\server\share", "\\.\C:").
+// A lone "\\" is not Windows-shaped — it is a legal POSIX file name — and a bare
+// "x:" is not either (':' is an ordinary filename byte off Windows), so both keep
+// their existing classification.
+func isWindowsShaped(t string) bool {
+	if len(t) >= 2 && t[1] == ':' && isASCIILetter(t[0]) {
+		return true
+	}
+	if len(t) > 2 && t[0] == '\\' && t[1] == '\\' {
+		return true
+	}
+	return false
+}
+
+// cleanTargetPath normalises a target lexically, without touching the
+// filesystem: separators are unified, runs of separators collapse, and "." and
+// ".." segments are resolved ("/tmp/.." is "/", "C:\Users\.." is "C:", "~/.kube/./config"
+// is "~/.kube/config"). Resolution stops at the root for an absolute path and
+// keeps leading ".." segments for a relative one ("../.." stays "../.."), so a
+// relative spelling can never be widened into the root.
+//
+// A backslash counts as a separator only in a Windows-shaped spelling; on POSIX
+// it is an ordinary filename byte and is preserved.
+func cleanTargetPath(t string) string {
+	if t == "" || !cleanTargetPathNeeded(t) {
+		return t
+	}
+	if isWindowsShaped(t) {
+		t = strings.ReplaceAll(t, `\`, "/")
+	}
+	abs := strings.HasPrefix(t, "/")
+	parts := strings.Split(t, "/")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		switch p {
+		case "", ".":
+			continue
+		case "..":
+			if n := len(out); n > 0 && out[n-1] != ".." {
+				out = out[:n-1]
+				continue
+			}
+			if abs {
+				// "/.." and "/../.." are the root.
+				continue
+			}
+			out = append(out, p)
+		default:
+			out = append(out, p)
+		}
+	}
+	res := strings.Join(out, "/")
+	if abs {
+		res = "/" + res
+	}
+	return res
 }
 
 // isWindowsVolumeRoot reports whether the target t names a bare Windows volume

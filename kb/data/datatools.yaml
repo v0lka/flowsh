@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # Data and query command-line tools: the JSON/YAML processors (jq, yq), the
 # database clients (sqlite3, psql, redis-cli) and the fast search tools

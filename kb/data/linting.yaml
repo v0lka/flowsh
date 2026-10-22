@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # Build, test and lint drivers across the JS/TS, Go, Python, Rust and shell
 # toolchains: the TypeScript compiler (tsc), the JavaScript linters/formatters
@@ -26,9 +26,12 @@ commands:
   - name: tsc
     dialect: build
     params:
+      # Finding 26: compiling writes its artefacts next to the source
+      # (file.ts → file.js, plus any .d.ts/.map) into the working directory
+      # unless --outDir/--outFile relocates them; --noEmit is the exception.
       - spec: SOURCE
         kind: positional
-        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+        effect: {kind: FSWrite, mode: Direct, valueFrom: cwd}
       - spec: "--outDir"
         kind: option
         effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
@@ -105,9 +108,17 @@ commands:
       - spec: "-c"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
       - spec: "--config"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
       - spec: "--ext"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
@@ -138,6 +149,20 @@ commands:
       - spec: "--help"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--plugin"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
+      - spec: "--rulesdir"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
 
   - name: prettier
     dialect: build
@@ -166,6 +191,10 @@ commands:
       - spec: "--config"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
       - spec: "--ignore-path"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
@@ -212,6 +241,10 @@ commands:
       - spec: "--config"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
       - spec: "--root"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
@@ -236,6 +269,27 @@ commands:
       - spec: "--help"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--setupFiles"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
+      - spec: "--globalSetup"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
+      - spec: "--globalTeardown"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
 
   - name: jest
     dialect: build
@@ -255,9 +309,17 @@ commands:
       - spec: "-c"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
       - spec: "--config"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
       - spec: "--testPathPattern"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
@@ -309,6 +371,55 @@ commands:
   # criterion, so nothing keeps it escalating. Leaving golangci-lint
   # unresolved keeps that shape escalating (non-canonical C6, marker off)
   # while the marker keeps the benign invocations allowed.
+      - spec: "--globalSetup"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
+      - spec: "--globalTeardown"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
+      - spec: "--setupFiles"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
+      - spec: "--setupFilesAfterEnv"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
+      - spec: "--testEnvironment"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
+      - spec: "--resolver"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
+      - spec: "--transform"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
 
   - name: gofmt
     dialect: build
@@ -930,12 +1041,37 @@ commands:
       - spec: "--config"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
       - spec: "--version"
         kind: flag
         effect: {kind: Stdio, mode: Direct, valueFrom: args}
       - spec: "--help"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-r"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
+      - spec: "--require"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
+      - spec: "--loader"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
 
   - name: ava
     dialect: build
@@ -977,6 +1113,10 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: uninstall
         kind: positional
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
@@ -998,6 +1138,10 @@ commands:
       - spec: "--config"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
       - spec: "--reporter"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
@@ -1020,6 +1164,10 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: verify
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -1035,6 +1183,10 @@ commands:
       - spec: "--config"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
       - spec: "--spec"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
@@ -1047,6 +1199,13 @@ commands:
       - spec: "--help"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--config-file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
 
   - name: biome
     dialect: build
@@ -1160,10 +1319,10 @@ commands:
     params:
       - spec: PATH
         kind: positional
-        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: "--glob"
         kind: flag
-        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: "--version"
         kind: flag
         effect: {kind: Stdio, mode: Direct, valueFrom: args}
@@ -1261,6 +1420,15 @@ commands:
       - spec: "--help"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
+
+      # Finding 99: `-p`/`--plugin` names a plugin module pytest imports and
+      # executes before collecting tests, so it is code execution, not a read.
+      - spec: "-p"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      - spec: "--plugin"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
 
   - name: flake8
     dialect: build

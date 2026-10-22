@@ -25,13 +25,16 @@ import (
 //
 // v2 added the per-parameter `fileRef` marker (the `@file` convention); a v1
 // document cannot express it, so the schema version was bumped rather than
-// extended in place.
-const SchemaVersion = "effect-kb/v2"
+// extended in place. v3 adds the per-parameter `also` list of secondary
+// effects (the same token contributes two independent effects, e.g. a package
+// manager's install both reaches a registry and rewrites the local store); a
+// v2 reader would reject the key, so the version is bumped again.
+const SchemaVersion = "effect-kb/v3"
 
 // KnownVersions lists every schema version the loader accepts. Keeping this an
 // explicit list (rather than an inline string comparison) makes version
 // handling a checked decision that can be extended without a schema break.
-var KnownVersions = []string{SchemaVersion}
+var KnownVersions = []string{"effect-kb/v2", SchemaVersion}
 
 // Known reports whether v is an accepted schema version.
 func Known(v string) bool {
@@ -233,6 +236,20 @@ type Param struct {
 	Kind ParamKind `yaml:"kind" json:"kind"`
 	// Effect is the primary effect this parameter contributes.
 	Effect Effect `yaml:"effect" json:"effect"`
+	// Also lists secondary effects the same parameter contributes. A single
+	// token often carries two independent effects that a closed, single-effect
+	// field cannot express: a package manager's `install`/`add`/`update`
+	// subcommand both reaches a registry (NetEgress) and rewrites the local
+	// store or manifest (FSWrite), and a VCS `update` both fetches and rewrites
+	// the working copy. Declaring only one of the two made every deny rule that
+	// keys on the missing kind admit the operation (Finding 86).
+	//
+	// Every entry is lowered exactly like a primary effect of its own kind, so
+	// the egress-target gate, the taint join and the target vocabulary apply
+	// unchanged. An entry that lowers to nothing (an egress target that names no
+	// address) contributes nothing, and an entry identical to the primary — or
+	// to another secondary — is dropped rather than duplicated.
+	Also []Effect `yaml:"also,omitempty" json:"also,omitempty"`
 }
 
 // Validate reports whether the parameter is well-formed. The spec is also
@@ -275,6 +292,26 @@ func (p Param) Validate() error {
 	}
 	if err := p.Effect.Validate(); err != nil {
 		return fmt.Errorf("param %q: effect: %w", p.Spec, err)
+	}
+	// A secondary effect is an ordinary effect lowered on its own, so it obeys
+	// the same well-formedness rules. `self` and the option/value-source pairing
+	// are properties of the parameter's surface syntax rather than of one
+	// effect, so they are checked against the primary only; `fileRef` is a
+	// payload-reference convention that belongs to the primary as well, and a
+	// secondary entry that set it would duplicate the payload read.
+	seen := make(map[engine.EffectKind]bool, len(p.Also)+1)
+	seen[p.Effect.Kind] = true
+	for i, e := range p.Also {
+		if err := e.Validate(); err != nil {
+			return fmt.Errorf("param %q: also[%d]: %w", p.Spec, i, err)
+		}
+		if e.FileRef {
+			return fmt.Errorf("param %q: also[%d]: fileRef belongs to the primary effect only", p.Spec, i)
+		}
+		if seen[e.Kind] {
+			return fmt.Errorf("param %q: also[%d]: duplicate effect kind %s", p.Spec, i, string(e.Kind))
+		}
+		seen[e.Kind] = true
 	}
 	return nil
 }
@@ -447,8 +484,38 @@ type Destructive struct {
 	Command string           `yaml:"command" json:"command"`
 	Spec    string           `yaml:"spec" json:"spec"`
 	Class   DestructiveClass `yaml:"class" json:"class"`
-	Reason  string           `yaml:"reason" json:"reason"`
+	// Value gates the row on a *resolved operand value* rather than on the
+	// parameter alone. Some parameters are destructive only for some of their
+	// values, and the table can only name a parameter: a row keyed on chmod's
+	// MODE would classify every `chmod`, so the mode was left unclassed and
+	// `chmod 4755 /tmp/evil` graded Medium while the same operation spelled
+	// `install -m 4755` graded Critical (F100). The KB cannot evaluate a
+	// predicate (it never sees an operand), so the binder evaluates it and
+	// passes the satisfied set to the lookup; the empty value means "the
+	// parameter alone is enough".
+	Value  ValuePredicate `yaml:"value,omitempty" json:"value,omitempty"`
+	Reason string         `yaml:"reason" json:"reason"`
 }
+
+// ValuePredicate is a resolved-operand condition a destructive row may require.
+type ValuePredicate string
+
+const (
+	// ValueAlways means the row applies whenever the parameter matches.
+	ValueAlways ValuePredicate = ""
+	// ValueSuid means the operand sets the set-user-ID or set-group-ID bit:
+	// chmod's octal special-bit digit (4755, 2755) or a symbolic +s/=s clause
+	// naming u, g or all.
+	ValueSuid ValuePredicate = "suid"
+)
+
+// ValuePredicates is every valid predicate, in canonical order.
+var ValuePredicates = []ValuePredicate{ValueAlways, ValueSuid}
+
+var valuePredicateSet = setOf(ValuePredicates)
+
+// Valid reports whether v is a defined predicate.
+func (v ValuePredicate) Valid() bool { _, ok := valuePredicateSet[v]; return ok }
 
 // Validate reports whether the entry is well-formed (referential integrity
 // against the command set is enforced by KB.Validate).
@@ -461,6 +528,9 @@ func (d Destructive) Validate() error {
 	}
 	if !d.Class.Valid() {
 		return fmt.Errorf("%s %s: invalid class %q", d.Command, d.Spec, string(d.Class))
+	}
+	if !d.Value.Valid() {
+		return fmt.Errorf("%s %s: invalid value predicate %q", d.Command, d.Spec, string(d.Value))
 	}
 	if d.Reason == "" {
 		return fmt.Errorf("%s %s: empty reason", d.Command, d.Spec)

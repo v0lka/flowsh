@@ -48,6 +48,22 @@ jobs:
       - name: vet
         run: go vet ./...
 
+      # Supply-chain integrity (SECURITY.md — Build, Release & Supply-Chain
+      # Integrity): verify the module graph against go.sum, then scan for known
+      # vulnerabilities reachable from this module. govulncheck exits non-zero
+      # on a reachable finding, so a vulnerable dependency blocks the merge.
+      - name: module integrity
+        run: go mod verify
+
+      # Deliberately on every runner rather than Linux only: govulncheck
+      # resolves the call graph for the host GOOS/GOARCH, and the release
+      # matrix ships windows/amd64 and darwin/arm64 binaries. Scanning a single
+      # platform would let a vulnerability reachable solely on another target
+      # through. The pin is shared with .github/workflows/release.yml, so both
+      # paths judge the module with the same scanner version.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
       # Lint with the repository's pinned configuration (.golangci.yml). The
       # action validates that config against the schema for the pinned version.
       - name: lint

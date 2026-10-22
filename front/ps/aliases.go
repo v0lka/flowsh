@@ -144,6 +144,7 @@ var Aliases = map[string]string{
 	"gal":     "Get-Alias",
 	"sal":     "Set-Alias",
 	"nal":     "New-Alias",
+	"ral":     "Remove-Alias",
 	"gcm":     "Get-Command",
 	"gv":      "Get-Variable",
 	"sv":      "Set-Variable",
@@ -341,8 +342,14 @@ var Cmdlets = map[string][]Spec{
 	},
 
 	// ---- Processes ----
-	"Start-Process": {{engine.KindProcSpawn, engine.ModeDirect, TargetSelf, false, "spawn"}},
-	"Invoke-Item":   {{engine.KindProcSpawn, engine.ModeDirect, TargetSelf, false, "open"}},
+	// Start-Process and Invoke-Item are modelled by lowerer.launcher, which binds
+	// -FilePath (or the first positional operand) as the spawn target — the
+	// program that actually runs — models -Verb RunAs as PrivEsc, and degrades
+	// an interpreter's argument payload (Start-Process cmd -ArgumentList "/c …")
+	// to ⊤ CodeExec. Their entries stay in the table so the cmdlets remain
+	// *known* (an absent name would lower to ⊤ even for a bare invocation).
+	"Start-Process": {{engine.KindProcSpawn, engine.ModeDirect, TargetPath, false, "spawn"}},
+	"Invoke-Item":   {{engine.KindProcSpawn, engine.ModeDirect, TargetPath, false, "open"}},
 	"Stop-Process":  {{engine.KindProcSignal, engine.ModeDirect, TargetName, false, "signal"}},
 	"Start-Job":     {{engine.KindProcSpawn, engine.ModeDirect, TargetSelf, false, "spawn"}},
 
@@ -594,6 +601,7 @@ var Cmdlets = map[string][]Spec{
 	"Get-Alias":         {},
 	"Set-Alias":         {},
 	"New-Alias":         {},
+	"Remove-Alias":      {},
 	"Get-History":       {},
 	"Get-Variable":      {},
 	"Set-Variable":      {},
@@ -605,25 +613,30 @@ var Cmdlets = map[string][]Spec{
 	"Start-Sleep":       {},
 	"Select-Object":     {},
 	"Where-Object":      {},
-	"ForEach-Object":    {},
-	"Sort-Object":       {},
-	"Measure-Object":    {},
-	"Group-Object":      {},
-	"Format-Table":      {},
-	"Format-List":       {},
-	"Format-Wide":       {},
-	"ConvertTo-Json":    {},
-	"ConvertFrom-Json":  {},
-	"ConvertTo-Csv":     {},
-	"ConvertFrom-Csv":   {},
-	"Join-Path":         {},
-	"Split-Path":        {},
-	"Resolve-Path":      {},
-	"Get-Process":       {},
-	"Get-Job":           {},
-	"Stop-Job":          {},
-	"Receive-Job":       {},
-	"Remove-Job":        {},
+	// ForEach-Object is effect-free in its script-block form (the block's body is
+	// walked and its effects reported), but its PropertyAndMethodSet
+	// (`-MemberName Delete`, the positional `% Delete`, `-ArgumentList …`) calls
+	// an arbitrary method on every pipeline object: lowerer.memberMethodInvocation
+	// resolves that to ⊤ CodeExec (F43).
+	"ForEach-Object":   {},
+	"Sort-Object":      {},
+	"Measure-Object":   {},
+	"Group-Object":     {},
+	"Format-Table":     {},
+	"Format-List":      {},
+	"Format-Wide":      {},
+	"ConvertTo-Json":   {},
+	"ConvertFrom-Json": {},
+	"ConvertTo-Csv":    {},
+	"ConvertFrom-Csv":  {},
+	"Join-Path":        {},
+	"Split-Path":       {},
+	"Resolve-Path":     {},
+	"Get-Process":      {},
+	"Get-Job":          {},
+	"Stop-Job":         {},
+	"Receive-Job":      {},
+	"Remove-Job":       {},
 
 	// ---- Consolidated "pure" cmdlets (B11): known, no external effect ----
 	// A read-only/projection cmdlet is registered with an empty Spec so it
@@ -782,7 +795,7 @@ var (
 // bareParam lower-cases and trims a parameter's bare name.
 func bareParam(bare string) string { return strings.ToLower(strings.TrimSpace(bare)) }
 
-// inNames reports whether b (already lower-cased) is one of names.
+// inNames reports whether b (already lower-cased) is exactly one of names.
 func inNames(names []string, b string) bool {
 	for _, n := range names {
 		if n == b {
@@ -790,6 +803,46 @@ func inNames(names []string, b string) bool {
 		}
 	}
 	return false
+}
+
+// inNamesPrefix applies PowerShell's documented "shortest unique prefix" rule
+// (Finding 35: -OutF names -OutFile, -InFi names -InFile, -Attach names
+// -Attachments) to the value-carrying data-file parameter names, where the
+// global table is a faithful stand-in for the cmdlet's own list. It is used
+// only there: the path/name/url/pattern tables are global approximations that
+// mix parameters of different cmdlets, so a prefix there (-Method for
+// -MethodName) would misclassify a distinct parameter.
+func inNamesPrefix(names []string, b string) bool {
+	if b == "" {
+		return false
+	}
+	var hits []string
+	for _, n := range names {
+		if n == b {
+			return true
+		}
+		if strings.HasPrefix(n, b) {
+			hits = append(hits, n)
+		}
+	}
+	if len(hits) == 0 {
+		return false
+	}
+	// Synonym spellings of one parameter (-Attachment / -Attachments) nest, so
+	// they are one candidate, not an ambiguity: every hit must be a prefix of
+	// the longest one.
+	longest := hits[0]
+	for _, n := range hits[1:] {
+		if len(n) > len(longest) {
+			longest = n
+		}
+	}
+	for _, n := range hits {
+		if !strings.HasPrefix(longest, n) {
+			return false
+		}
+	}
+	return true
 }
 
 // isSwitch reports whether a bare parameter name is a PowerShell switch (a flag

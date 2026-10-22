@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # Shell builtins (POSIX sh and the common bash extensions).
 #
@@ -525,7 +525,7 @@ commands:
     params:
       - spec: "-e"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-s"
         kind: option
         effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
@@ -634,7 +634,7 @@ commands:
         effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-C"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: WORD
         kind: positional
         effect: {kind: Stdio, mode: Direct, valueFrom: args}
@@ -662,7 +662,7 @@ commands:
         effect: {kind: EnvWrite, mode: Direct, valueFrom: flagValue}
       - spec: "-C"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: NAME
         kind: positional
         effect: {kind: EnvWrite, mode: Direct, valueFrom: args}

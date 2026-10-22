@@ -142,6 +142,7 @@ type Param struct {
 	Spec   string    `yaml:"spec"`   // "-r", "-o", "FILE", "of="
 	Kind   ParamKind `yaml:"kind"`
 	Effect Effect    `yaml:"effect"`
+	Also   []Effect  `yaml:"also,omitempty"` // secondary effects of the same token
 }
 
 type Command struct {
@@ -151,6 +152,8 @@ type Command struct {
 	Params  []Param  `yaml:"params"`
 }
 ```
+
+`Also` lets one parameter declare a second, independent effect: a package manager's `install`/`add`/`update` subcommand both reaches a registry (`NetEgress`) and rewrites the local store or manifest (`FSWrite`), and a VCS `update`/`sync` both fetches and rewrites the working copy. Every entry is lowered by exactly the same path as a primary effect of its kind, so the egress-target gate, the taint join and the target vocabulary cannot drift between the two declarations; a duplicate kind, an invalid kind, or a secondary `fileRef` is a load error.
 
 `Effect.Validate`, `Param.Validate` and `Command.Validate` enforce well-formedness; `Effect.EngineEffect(target, taint, certainty)` lowers a KB effect into a core `engine.Effect`, and `DefaultReversible(kind)` supplies the conservative reversibility default. `Command.buildIndex()` precomputes a `Spec`→position index (`paramIndex`) over `Params`, and `Command.AssignParams()` returns its `ParamAssign` params in declaration order (the binder consumes both for O(1) parameter lookup).
 
@@ -236,13 +239,15 @@ kb/data/*.yaml  (embedded via //go:embed data/*.yaml)
 - Every destructive entry refers to a parameter that is actually declared on a known command (referential integrity).
 - A parameter's `spec` syntax matches its `kind`: `flag`/`option` specs start with `-`, `assign` specs end with `=`, `positional` specs do not start with `-`.
 - An effect's `kind` and `mode` are members of the core's closed sets, and `fileRef` is set only when `valueFrom: flagValue`.
+- A parameter's `also` entries are valid effects of distinct kinds, and none of them sets `fileRef` (a payload reference belongs to the primary effect).
+- A package-manager/toolchain subcommand that installs, adds, updates or otherwise resolves packages declares both `FSWrite` and `NetEgress` (one as the primary, the other in `also`); the only exceptions are the documented index refreshes (`apt update`, `apk update`), which rewrite only the package index.
 - Distinct documents' commands are merged by appending; conflicts surface either as a duplicate name/alias (build) or a duplicate destructive key.
 - A command belongs to exactly one dialect, and every dialect listed in `Dialects` is exercised by at least one command (`TestDialectCoverage` in `kb/loader_test.go`).
 
 ## Configuration
 
-- `SchemaVersion` = `"effect-kb/v2"` — the only accepted value today; every data file declares `version: effect-kb/v2`.
-- `KnownVersions` = `[]string{SchemaVersion}` — the explicit list the loader accepts; extend it to add a version.
+- `SchemaVersion` = `"effect-kb/v3"` — the value every data file declares (`version: effect-kb/v3`). v3 adds the per-parameter `also` list; v2 added `fileRef`.
+- `KnownVersions` = `[]string{"effect-kb/v2", SchemaVersion}` — the explicit list the loader accepts; extend it to add a version.
 - `dataDir` = `"data"` — the directory inside the embedded FS holding the schema documents.
 - Document discovery accepts `.yaml` and `.yml`; at least one document must exist.
 - Supported YAML subset (a strict, documented subset — anything else is an explicit error): block mappings, block sequences, single-line flow collections, plain/single/double-quoted scalars, and `#` comments. Anchors, aliases, tags, multi-line scalars and tab indentation are rejected.
@@ -253,7 +258,7 @@ kb/data/*.yaml  (embedded via //go:embed data/*.yaml)
 - **Add a command or parameter**: append to the relevant `kb/data/*.yaml` document (or add a new `*.yaml` file — discovery is automatic). Keep the `kind`/`spec` syntax consistent; validation rejects drift.
 - **Add a dialect**: append to the `Dialect` constants and to the `Dialects` slice in `kb/schema.go`.
 - **Add a destructive flag**: add a `(command, spec, class, reason)` entry to `kb/data/destructive.yaml`. The spec must already be declared on the command.
-- **Add a parameter/effect field shape**: bump `SchemaVersion` and add the new value to `KnownVersions` (this is exactly why v2 added `fileRef` and bumped the version rather than extending v1 in place).
+- **Add a parameter/effect field shape**: bump `SchemaVersion` and add the new value to `KnownVersions` (this is exactly why v2 added `fileRef` and v3 added `also`, each bumping the version rather than extending the previous one in place).
 - **Add a new `ParamKind`/`ValueSource`/`DestructiveClass`**: extend the corresponding slice; `Valid()` derives from the slice's membership set.
 
 ## Related Specs

@@ -543,6 +543,30 @@ func TestExecEnvironmentAssignments(t *testing.T) {
 	}
 }
 
+// TestExecEnvVarChannels pins the exported channel predicate that the binder's
+// copy of the shell's assignment channels shares: every exec spelling is
+// covered (program-valued variables, the option channel, git's environment
+// configuration family), and an ordinary variable is not.
+func TestExecEnvVarChannels(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{name: "LD_PRELOAD", want: true},
+		{name: "JAVA_TOOL_OPTIONS", want: true},
+		{name: "TAR_OPTIONS", want: true},
+		{name: "GIT_CONFIG_COUNT", want: true},
+		{name: "GIT_CONFIG_PARAMETERS", want: true},
+		{name: "PATH", want: false},
+		{name: "FOO", want: false},
+	}
+	for _, tt := range tests {
+		if got := bash.ExecEnvVar(tt.name); got != tt.want {
+			t.Errorf("ExecEnvVar(%q) = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
 // The abstract state exposes the pieces of Σ that carry state.
 func TestExecFinalState(t *testing.T) {
 	r := newResolver(t)

@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # BSD variants.
 #
@@ -138,6 +138,45 @@ commands:
       - spec: reformat
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: zeroDisk
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: randomDisk
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: secureErase
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: partitionDisk
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: splitPartition
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: mergePartitions
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: resizeVolume
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: repairDisk
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: verifyDisk
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: activity
+        kind: positional
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: apfs
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: appleRAID
+        kind: positional
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: cs
+        kind: positional
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
       - spec: DEVICE
         kind: positional
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
@@ -251,10 +290,10 @@ commands:
     params:
       - spec: "-a"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-b"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-e"
         kind: flag
         effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
@@ -366,6 +405,42 @@ commands:
       - spec: "-raw"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      # Finding 56: `dscl(1)`: "Leading dashes ("-") are optional for all
+      # commands" — `dscl . -create /Users/evil` is the same command as the
+      # declared bare `dscl . create /Users/evil`. Without the dashed
+      # spellings the token was split into an unrecognised short-flag cluster
+      # and dropped, so the write never bound and its path was reported as a
+      # read.
+      - spec: "-read"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-list"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-search"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-create"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-append"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-merge"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-delete"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-change"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-changei"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "-passwd"
+        kind: flag
+        effect: {kind: CredAccess, mode: Direct, valueFrom: args}
       - spec: read
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}

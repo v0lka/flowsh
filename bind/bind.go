@@ -83,6 +83,22 @@ type Arg struct {
 	// metadata and is deliberately not part of the serialized call.
 	Taint engine.Taint `json:"-"`
 
+	// Root marks a literal relative operand that the shell's tracked working
+	// directory resolves to the filesystem root: "." after `cd /`, "../../"
+	// after `cd /tmp`, and every other spelling whose resolved path is "/". The
+	// operand text is kept as written; a consumer that grades extents (a
+	// metadata change under `chmod -R`) resolves it to the root it names
+	// instead of treating the literal "." as one exact file (Finding 70).
+	Root bool `json:"-"`
+
+	// FromXargs marks an operand whose value xargs substitutes from its input
+	// items (Finding 92). The value is data rather than text, so it is unknown
+	// (⊤): a parameter that reads a file reads a path the analysis cannot name,
+	// and the read is reported as secret-bearing by construction — the same
+	// rule engine.IsSecretRead applies to an environment read whose variable
+	// name is not statically known.
+	FromXargs bool `json:"-"`
+
 	// Pos is the source position of the word this argument was lowered from,
 	// when the frontend knows it. It rides on the why-trace atoms so an effect
 	// can be pinned back to the token (flag/operand) that justified it. It is
@@ -217,12 +233,11 @@ func (b *Binder) Bind(c *Call) *Result {
 		r.Conservative = true
 		r.Notes = append(r.Notes, "no knowledge base bound")
 		// Without a knowledge base nothing can be inert: report the
-		// environment writes as before the wrapper pass existed.
-		for _, a := range c.Env {
-			ew := envWrite(a)
-			raw = append(raw, ew)
-			ders = append(ders, derive(ew, []engine.Atom{envVarAtom(a.Name, withFile(a.Pos, c.Pos.File))}, "env.write"))
-		}
+		// environment writes and the code-execution channel they can carry as
+		// before the wrapper pass existed.
+		effs, envDers := envAssignEffects(c)
+		raw = append(raw, effs...)
+		ders = append(ders, envDers...)
 		r.Effects = raw
 		r.Derivations = ders
 		normalizeResult(r)
@@ -279,16 +294,16 @@ func (b *Binder) Bind(c *Call) *Result {
 			ders = append(ders, derive(f.e, f.atoms, ruleForKind(engine.KindPrivEsc)))
 		}
 		// Environment assignments (VAR=x cmd, env VAR=x cmd) mutate the
-		// environment. An inert wrapper line runs nothing, so the binder's
-		// copy of the writes is suppressed with the rest of the line (the
-		// wrapper-donated writes the bash interpreter recorded at peel time
-		// are not retracted — an accepted precision residual, SECURITY.md
-		// Known Risks).
-		for _, a := range c.Env {
-			ew := envWrite(a)
-			raw = append(raw, ew)
-			ders = append(ders, derive(ew, []engine.Atom{envVarAtom(a.Name, withFile(a.Pos, c.Pos.File))}, "env.write"))
-		}
+		// environment, and an assignment to a variable the runtime executes
+		// (LD_PRELOAD, JAVA_TOOL_OPTIONS, TAR_OPTIONS, git's GIT_CONFIG_*)
+		// executes a program as well. An inert wrapper line runs nothing, so
+		// the binder's copy of them is suppressed with the rest of the line
+		// (the wrapper-donated writes the bash interpreter recorded at peel
+		// time are not retracted — an accepted precision residual,
+		// SECURITY.md Known Risks).
+		effs, envDers := envAssignEffects(c)
+		raw = append(raw, effs...)
+		ders = append(ders, envDers...)
 	}
 
 	if !c.NamePresent {
@@ -334,11 +349,17 @@ func (b *Binder) Bind(c *Call) *Result {
 				r.Notes = append(r.Notes, quote(res.command.Name)+" resolved behind "+quote(callName(c))+": wrapped command not analyzable; assuming ⊤ (CodeExec)")
 			}
 		} else if res.command != nil {
-			eff, ds, ms, unknown := b.bindCommand(res.command, res.args, c.StdinTaint, c.Pos)
-			if len(eff) == 0 {
-				// The name resolved to a KB command, but its invocation matched
-				// no parameter that contributes an effect (a flag-only entry
-				// such as reboot/poweroff/halt/shutdown or date/id/sync).
+			eff, ds, ms, unknown, posModelled, opFlagEffect, _ := b.bindCommand(res.command, res.args, c.StdinTaint, c.Pos)
+			// Finding 65: the intrinsic "it ran" effect keys on whether the
+			// command's operation slot was modelled, not on the effect count.
+			// An invocation whose subcommand matched nothing contributes no
+			// operation effect (git branch -D, make, an unmodelled subcommand),
+			// even when a read-only option added an unrelated read — that read
+			// must not certify the operation as modelled. A flag-only entry
+			// (reboot/poweroff/halt/shutdown, date/id/sync) has no operation
+			// slot at all and keeps the empty-effect condition.
+			fallback := len(eff) == 0 || (!posModelled && !opFlagEffect && declaresOperationSlot(res.command))
+			if fallback {
 				// Emitting nothing would fail open to an empty, benign result,
 				// so contribute the command's intrinsic "it ran" effect
 				// (ProcSpawn over the command's own scope).
@@ -348,7 +369,7 @@ func (b *Binder) Bind(c *Call) *Result {
 			}
 			raw = append(raw, eff...)
 			ders = append(ders, ds...)
-			r.Destructive = destructiveEntries(b.k, res.command.Name, ms)
+			r.Destructive = destructiveEntries(b.k, res.command.Name, ms, resolvedValuePredicates(res.command, res.args))
 			if len(unknown) > 0 {
 				r.Notes = append(r.Notes, "unrecognized flag(s): "+strings.Join(dedup(unknown), " "))
 			}
@@ -397,13 +418,27 @@ type match struct {
 }
 
 // bindCommand parses argv against cmd's declared parameters and emits the
-// effect each matched parameter contributes. It returns the effects, the specs
-// that matched (for the destructive table), and any unrecognized flag names.
-func (b *Binder) bindCommand(cmd *kb.Command, argv []Arg, stdinTaint engine.Taint, callLoc engine.SourceLoc) ([]engine.Effect, []engine.Derivation, []string, []string) {
+// effect each matched parameter contributes. It returns the effects, the
+// derivations, the specs that matched (for the destructive table), any
+// unrecognized flag names, whether the command's operation slot was modelled
+// (the condition the intrinsic ProcSpawn fallback keys on, Finding 65), and
+// whether a token could not be bound faithfully (⊤, Finding 34).
+func (b *Binder) bindCommand(cmd *kb.Command, argv []Arg, stdinTaint engine.Taint, callLoc engine.SourceLoc) ([]engine.Effect, []engine.Derivation, []string, []string, bool, bool, bool) {
 	if cmd == nil {
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, false, false, false
 	}
-	operands, matches, unknown := parseArgs(cmd, argv)
+	operands, matches, unknown, degrade := parseArgs(cmd, argv)
+
+	// Finding 85: a single-file compressor that streams its result to standard
+	// output (or only inspects the file) performs no in-place rewrite, so the
+	// write the row attaches to its mode and tuning flags (-d, -z, -f, -9, -b)
+	// is not an effect of this invocation. Dropping those matches here — before
+	// they are lowered — keeps `gzip -9c FILE` a read plus a stream instead of
+	// a fabricated write, and lets the operation's own write be synthesised
+	// below for the spellings that really do rewrite the file.
+	if isSingleFileCompressor(cmd) && compressorStreams(matches) {
+		matches = dropInPlaceWrites(matches)
+	}
 
 	var out []engine.Effect
 	var ders []engine.Derivation
@@ -412,23 +447,42 @@ func (b *Binder) bindCommand(cmd *kb.Command, argv []Arg, stdinTaint engine.Tain
 	cmdAtom := commandAtom(cmd.Name, callLoc)
 	file := callLoc.File
 
+	// posModelled records that a positional/subcommand/assign parameter
+	// produced an effect, and opFlagEffect that a *flag* carrying the
+	// invocation's operation (valueFrom: args — java -version, ls -l) did. The
+	// intrinsic ProcSpawn fallback keys on both (Finding 65): a read-only option
+	// whose value is its own operand (git -C DIR, make -C DIR, -f FILE) does not
+	// model the operation, while a flag that *is* the operation does.
+	var posModelled, opFlagEffect bool
+
 	// Assignment operands (dd of=FILE, if=FILE): a key=value operand whose key
-	// matches a declared assign parameter. cmd.AssignParams is the command's
-	// precomputed ParamAssign subset, so this match never scans the command's
-	// whole parameter list.
+	// matches a declared assign parameter. The frontend keeps the literal key of
+	// a partly-dynamic word (`of=$X` expands to the text "of=" with a dynamic
+	// tail), so a known key with an unknown value binds the parameter over ⊤
+	// rather than being dropped (Finding 42): the write certainly happens, only
+	// its target is unbound.
 	var rest []Arg
 	assigns := cmd.AssignParams()
 	for _, op := range operands {
 		done := false
-		if op.Literal {
+		if op.Value != "" {
 			for _, p := range assigns {
 				if strings.HasPrefix(op.Value, p.Spec) {
-					val := Arg{Value: op.Value[len(p.Spec):], Literal: true, Pos: withFile(op.Pos, file)}
+					val := Arg{
+						Value:   op.Value[len(p.Spec):],
+						Literal: op.Literal,
+						Dir:     op.Dir,
+						Taint:   op.Taint,
+						Pos:     withFile(op.Pos, file),
+					}
 					group := []Arg{val}
-					effs, ds := lowerParam(cmd, p, val, argsScope(group, p.Effect.Kind == engine.KindNetEgress), argsTaint(group), stdinTaint, []engine.Atom{cmdAtom, operandAtom(op.Value, withFile(op.Pos, file))})
+					effs, ds := lowerParam(cmd, p, val, scopeForGroup(group, p.Effect.Kind), argsTaint(group), stdinTaint, []engine.Atom{cmdAtom, operandAtom(op.Value, withFile(op.Pos, file))}, false, "")
 					out = append(out, effs...)
 					ders = append(ders, ds...)
 					specs = append(specs, p.Spec)
+					if len(effs) > 0 {
+						posModelled = true
+					}
 					done = true
 					break
 				}
@@ -439,9 +493,33 @@ func (b *Binder) bindCommand(cmd *kb.Command, argv []Arg, stdinTaint engine.Tain
 		}
 	}
 
+	// Finding 84: tar's POSIX old-style option bundle (`tar cf ARCHIVE SRC…`)
+	// names the operation and its operands in the first word. When it is
+	// present, the bundle — not the row's index-order positional fallback —
+	// binds the operands below, so a bundle the row does not declare by name
+	// (`rf`, `zcf`, `xvzf`, `tf`) cannot be distributed over unrelated
+	// positional specs and fabricate effects for the wrong words.
+	tarBundle := false
+	tarOp := rune(0)
+	if op, ok := tarOldStyleOp(cmd, rest); ok {
+		tarBundle, tarOp = true, op
+	}
+
 	// Flags and options matched by name; their effect target defaults to the
 	// operand set for valueFrom=args.
 	operandScope, operandTaint := argsScope(rest, false), argsTaint(rest)
+
+	// Finding 28: an ssh_config file's PermitLocalCommand only *enables* the
+	// LocalCommand path; when the same line already supplies the command, the
+	// command (not the enabling directive) is the subject of the spawn.
+	sshExecNamed := false
+	for _, m := range matches {
+		if isOpenSSH(cmd) && m.param.Spec == "-o" && m.hasVal && m.value.Literal {
+			if text, ok := sshDirectiveExec(m.value.Value); ok && text != "" {
+				sshExecNamed = true
+			}
+		}
+	}
 	for _, m := range matches {
 		mv := m.value
 		mv.Pos = withFile(mv.Pos, file)
@@ -449,14 +527,102 @@ func (b *Binder) bindCommand(cmd *kb.Command, argv []Arg, stdinTaint engine.Tain
 		if m.hasVal && mv.Value != "" {
 			atoms = append(atoms, operandAtom(mv.Value, mv.Pos))
 		}
-		scope := operandScope
-		if m.param.Effect.Kind == engine.KindNetEgress {
-			scope = argsScope(rest, true)
+		// Finding 28: a `-o` value the analysis cannot read statically may hide
+		// an exec-bearing directive (`ssh -o "$OPT" host` with
+		// OPT=ProxyCommand=…), so the option degrades to ⊤ CodeExec instead of
+		// the bounded egress a benign value would keep. The invocation is
+		// certainly able to run a local command; only the host operand's egress
+		// remains, which is what `ssh host` reports.
+		if isOpenSSH(cmd) && m.param.Spec == "-o" && m.hasVal && !mv.Literal {
+			te := topEffect(engine.ModeDirect)
+			out = append(out, te)
+			ders = append(ders, derive(te, atoms, "code.exec"))
+			specs = append(specs, m.param.Spec)
+			continue
 		}
-		effs, ds := lowerParam(cmd, m.param, mv, scope, operandTaint, stdinTaint, atoms)
+		// Finding 28: ssh_config's exec-bearing directives. `-o ProxyCommand=…`,
+		// `-o LocalCommand=…` and `-o KnownHostsCommand=…` carry a shell command
+		// line the client runs locally, so the option is a code-execution sink,
+		// not an egress destination; PermitLocalCommand enables the same path.
+		// Every other directive keeps its declared treatment.
+		if isOpenSSH(cmd) && m.param.Spec == "-o" && m.hasVal && mv.Literal {
+			if text, ok := sshDirectiveExec(mv.Value); ok && (text != "" || !sshExecNamed) {
+				e := execTextEffect(text, mv)
+				out = append(out, e)
+				ders = append(ders, derive(e, withSink(atoms, e), "code.exec"))
+				specs = append(specs, m.param.Spec)
+				continue
+			}
+		}
+		// Finding 66: in create mode `tar -C DIR` is the base directory whose
+		// contents are archived, so the option reads DIR recursively. The row's
+		// declared FSWrite is the extract-mode meaning of the same option and
+		// stays in force there.
+		if m.hasVal {
+			if e, ok := tarCreateBaseDirRead(cmd, m.param.Spec, mv, tarCreates(cmd, matches, rest)); ok {
+				out = append(out, e)
+				ders = append(ders, derive(e, atoms, "fs.read"))
+				specs = append(specs, m.param.Spec)
+				continue
+			}
+		}
+		// Finding 44: a parameter whose value is a file of options. What the
+		// invocation does is written in that file, which the analysis cannot
+		// read (no runtime I/O) and, for the stdin spellings, belongs to another
+		// command: the net effect is unknown, so the result widens to ⊤ rather
+		// than asserting a bounded read of the file's own path.
+		// Finding 95: the same holds for a file of the tool's own *command
+		// language* — psql -f runs the script's `\!` meta-commands, sqlite3
+		// -init its dot-commands, gdb -x its `shell` commands — so the script
+		// spelling of a capability the row declares inline (`-c`, `-ex`, `-cmd`)
+		// is unknown here while the inline text stays bounded.
+		if isOptionFile(cmd, m.param.Spec) || isLanguageFile(cmd, m.param.Spec) {
+			te := topEffect(engine.ModeDirect)
+			out = append(out, te)
+			ders = append(ders, derive(te, atoms, "code.exec"))
+			// Finding 95: the tool reads the script file, and that read is a
+			// fact of the invocation. A row that declares the script parameter
+			// as CodeExec (`sqlite3 -init`, `gdb -x`) loses it when the ⊤
+			// subsumes the bounded effect, and a row that declares the read
+			// (`psql -f`) keeps it; emitting it here makes all three report the
+			// same shape. Standard input (`-`) names no file.
+			if isLanguageFile(cmd, m.param.Spec) && m.hasVal && mv.Literal && mv.Value != "" && mv.Value != "-" {
+				e, d := uploadSourceRead(mv, atoms)
+				out = append(out, e)
+				ders = append(ders, d)
+			}
+		}
+		scope := operandScope
+		switch m.param.Effect.Kind {
+		case engine.KindNetEgress:
+			scope = argsScope(rest, true)
+		case engine.KindFSMeta:
+			scope = metaScope(rest)
+		}
+		// Finding 71: an upload whose local payload is an option value
+		// (`az storage blob upload -f FILE`) reads that file.
+		if m.hasVal && mv.Literal && uploadSourceFlagSpecs(cmd, rest)[m.param.Spec] {
+			e, d := uploadSourceRead(mv, atoms)
+			out = append(out, e)
+			ders = append(ders, d)
+		}
+		effs, ds := lowerParam(cmd, m.param, mv, scope, operandTaint, stdinTaint, atoms, false, "")
+		if len(effs) > 0 && m.param.Effect.ValueFrom == kb.ValueArgs {
+			opFlagEffect = true
+		}
 		out = append(out, effs...)
 		ders = append(ders, ds...)
 		specs = append(specs, m.param.Spec)
+		// Finding 29: `git -c key=value` also *runs* the value when the key is
+		// one git interprets as a command (core.pager, core.sshCommand, an
+		// alias, a diff/filter driver, include.path). The assignment stays an
+		// EnvWrite — it is one — and the executed program is the CodeExec the
+		// report was missing.
+		if text, ok := gitConfigExecKey(cmd, m.param.Spec, mv); ok {
+			e := codeTextEffect(text)
+			out = append(out, e)
+			ders = append(ders, derive(e, withSink(atoms, e), "code.exec"))
+		}
 	}
 
 	// Positional operands. A leading literal operand that names a declared
@@ -465,6 +631,13 @@ func (b *Binder) bindCommand(cmd *kb.Command, argv []Arg, stdinTaint engine.Tain
 	// nft list|flush); the remaining positional parameters fall back to index
 	// order for generic operands (SRC/DEST/FILE).
 	ps := positionalParams(cmd)
+	// Finding 27, spelling parity: an option can already have filled a
+	// positional slot. GNU sed takes its script from `-e SCRIPT` / `-f FILE`,
+	// and every operand is then an input file; binding the first operand to the
+	// SCRIPT positional described a credential path as script text (Stdio) and
+	// lost its FSRead, so `sed -e 'p' /etc/shadow | curl -d @- …` formed no
+	// exfiltration pair while its non-`-e` twin was Critical.
+	ps = dropOptionFilledPositionals(cmd, ps, matches)
 	idxBySpec := make(map[string]int, len(ps))
 	for i, p := range ps {
 		idxBySpec[p.Spec] = i
@@ -477,22 +650,71 @@ func (b *Binder) bindCommand(cmd *kb.Command, argv []Arg, stdinTaint engine.Tain
 	// value match occurred: the value-matched parameter is the whole positional
 	// binding.
 	valueMatched := false
+	var targetBound bool
 	if len(rest) > 0 && rest[0].Literal {
 		if pi, ok := idxBySpec[rest[0].Value]; ok {
 			p := ps[pi]
 			group := rest[1:]
+			// Finding 84: in tar's old-style create bundle the word the `f`
+			// letter names is the archive being written, not a member being
+			// read, so it is not part of the operands the bundle's read covers.
+			if sources, ok := tarCreateSourceGroup(cmd, rest); ok {
+				group = sources
+			}
+			// Finding 25: socat's EXEC:/SYSTEM: address types run a program;
+			// they are not destinations and must not be lowered as one.
+			group, execs := splitAddressGroup(cmd, p, group)
+			out = append(out, addressExecEffects(execs)...)
+			ders = append(ders, addressExecDerivations(execs, cmdAtom)...)
 			atoms := []engine.Atom{cmdAtom}
 			for _, g := range group {
 				atoms = append(atoms, operandAtom(g.Value, withFile(g.Pos, file)))
 			}
-			effs, ds := lowerParam(cmd, p, Arg{}, argsScope(group, p.Effect.Kind == engine.KindNetEgress), argsTaint(group), stdinTaint, atoms)
+			// Finding 14: a subcommand's declared network effect survives even
+			// when its remote is a name the host grammar rejects (`origin`,
+			// `requests`); a local path still names no destination.
+			var subName string
+			if paramDeclaresEgress(p) {
+				subName = firstRemoteOperand(group)
+			}
+			effs, ds := lowerParam(cmd, p, Arg{}, scopeForGroup(group, p.Effect.Kind), argsTaint(group), stdinTaint, atoms, true, subName)
 			out = append(out, effs...)
 			ders = append(ders, ds...)
 			specs = append(specs, p.Spec)
 			valueMatched = true
+			if p.Spec == "TARGET" && len(group) > 0 {
+				targetBound = true
+			}
+			if len(effs) > 0 {
+				posModelled = true
+			}
+			// Finding 52: `kubectl get|describe secret…` and `helm get
+			// values|all` print credential material to stdout, so the
+			// subcommand is a CredAccess — the secret source the exfiltration
+			// detector needs before it can pair the upload.
+			if e, ok := secretSubcommandRead(cmd, p, group); ok {
+				out = append(out, e)
+				ders = append(ders, derive(e, withSink(atoms, e), "cred.access"))
+				posModelled = true
+			}
+			// Finding 18: the verb of `ip <object> <verb> …` is the second
+			// operand of the phrase, which the value match never reaches.
+			if verb, vgroup, ok := ipVerbParam(cmd, p, group); ok {
+				vatoms := []engine.Atom{cmdAtom, operandAtom(group[0].Value, withFile(group[0].Pos, file))}
+				for _, g := range vgroup {
+					vatoms = append(vatoms, operandAtom(g.Value, withFile(g.Pos, file)))
+				}
+				veffs, vds := lowerParam(cmd, verb, Arg{}, argsScope(vgroup, false), argsTaint(vgroup), stdinTaint, vatoms, false, "")
+				out = append(out, veffs...)
+				ders = append(ders, vds...)
+				specs = append(specs, verb.Spec)
+				if len(veffs) > 0 {
+					posModelled = true
+				}
+			}
 		}
 	}
-	if !valueMatched {
+	if !valueMatched && !tarBundle {
 		for i, p := range ps {
 			var group []Arg
 			switch {
@@ -506,14 +728,23 @@ func (b *Binder) bindCommand(cmd *kb.Command, argv []Arg, stdinTaint engine.Tain
 			if len(group) == 0 {
 				continue
 			}
+			group, execs := splitAddressGroup(cmd, p, group)
+			out = append(out, addressExecEffects(execs)...)
+			ders = append(ders, addressExecDerivations(execs, cmdAtom)...)
 			atoms := []engine.Atom{cmdAtom}
 			for _, g := range group {
 				atoms = append(atoms, operandAtom(g.Value, withFile(g.Pos, file)))
 			}
-			effs, ds := lowerParam(cmd, p, Arg{}, argsScope(group, p.Effect.Kind == engine.KindNetEgress), argsTaint(group), stdinTaint, atoms)
+			effs, ds := lowerParam(cmd, p, Arg{}, scopeForGroup(group, p.Effect.Kind), argsTaint(group), stdinTaint, atoms, false, "")
 			out = append(out, effs...)
 			ders = append(ders, ds...)
 			specs = append(specs, p.Spec)
+			if p.Spec == "TARGET" {
+				targetBound = true
+			}
+			if len(effs) > 0 {
+				posModelled = true
+			}
 		}
 	}
 
@@ -527,10 +758,127 @@ func (b *Binder) bindCommand(cmd *kb.Command, argv []Arg, stdinTaint engine.Tain
 		if p.Kind != kb.ParamSelf {
 			continue
 		}
-		effs, ds := lowerParam(cmd, p, Arg{}, engine.ScopeBottom(), engine.TaintBottom(), stdinTaint, []engine.Atom{cmdAtom})
+		effs, ds := lowerParam(cmd, p, Arg{}, engine.ScopeBottom(), engine.TaintBottom(), stdinTaint, []engine.Atom{cmdAtom}, false, "")
 		out = append(out, effs...)
 		ders = append(ders, ds...)
 		specs = append(specs, p.Spec)
+	}
+
+	// Finding 27: GNU sed's script language. `w FILE` writes (and truncates)
+	// FILE, `r FILE` reads it and `e CMD` (or `s///e`) runs CMD — none of which
+	// the row's SCRIPT/Stdio declaration models. A script the analysis cannot
+	// see (-f FILE) degrades to ⊤, exactly like another interpreter's script.
+	if isSedCommand(cmd) {
+		effs, ds, sedDegrade := sedEffects(cmd, rest, matches, cmdAtom, file)
+		out = append(out, effs...)
+		ders = append(ders, ds...)
+		if sedDegrade {
+			te := topEffect(engine.ModeDirect)
+			out = append(out, te)
+			ders = append(ders, derive(te, []engine.Atom{cmdAtom}, "code.exec"))
+		}
+	}
+
+	// Finding 100: `chmod` MODE that sets the SUID/SGID bit — privilege
+	// escalation spelled as a permission change. The KB's MODE parameter can
+	// only carry FSMeta (an effect belongs to a parameter, not to its value), so
+	// the mode is decided here; `install -m 4755` has always reported the same
+	// escalation, and `chmod 4755` did not.
+	if isChmodCommand(cmd) {
+		if e, d, ok := chmodEscalates(matches, rest, cmdAtom, file); ok {
+			out = append(out, e)
+			ders = append(ders, d)
+		}
+	}
+
+	// Finding 100, install spelling: `install -m 4755 SRC DEST` installs a
+	// set-user-ID program, exactly as the `chmod 4755 DEST` twin does. The KB's
+	// `-m` parameter declares the metadata change; the escalation is decided
+	// from the literal mode here and asserted over the files install writes.
+	if isInstallCommand(cmd) {
+		if e, d, ok := installEscalates(matches, rest, cmdAtom, file); ok {
+			out = append(out, e)
+			ders = append(ders, d)
+		}
+	}
+
+	// Finding 11: `patch` rewrites the files named in the diff's headers. When
+	// no TARGET operand names them, the write is certain but its target comes
+	// from data, so it is reported over ⊤ — never dropped, and never narrowed to
+	// a bounded read of the patch file.
+	if isPatchCommand(cmd) && !targetBound && patchApplies(specs) && !hasFlagSpec(specs, "--dry-run") {
+		e := topWrite()
+		out = append(out, e)
+		ders = append(ders, derive(e, []engine.Atom{cmdAtom, operandAtom("patch", callLoc)}, "fs.write"))
+	}
+
+	// Finding 7, whole-environment spelling: `printenv`, `export -p`,
+	// `declare -p` and bare `set` print every variable the environment holds.
+	// The row declares no target for the bare form (there is no operand), so
+	// the invocation used to contribute only its intrinsic ProcSpawn and an
+	// upload of the dump paired with nothing. The read is emitted here, over no
+	// named variable, and carries the secret label the exfiltration detector
+	// needs.
+	if e, d, ok := wholeEnvironmentRead(cmd, rest, matches, cmdAtom); ok {
+		out = append(out, e)
+		ders = append(ders, d)
+		posModelled = true
+	}
+
+	// Finding 34: a token that could not be bound faithfully (an ambiguous
+	// long-option abbreviation) leaves the invocation's effects unknown, so the
+	// result widens to ⊤ rather than silently binding nothing or the wrong
+	// declared option.
+	if degrade {
+		te := topEffect(engine.ModeDirect)
+		out = append(out, te)
+		ders = append(ders, derive(te, []engine.Atom{cmdAtom}, "code.exec"))
+	}
+
+	// Finding 96: a response file (`gcc @args.rsp`, `ld @args`, `javac @args`)
+	// supplies *options*, not an operand: the tool replaces the word before it
+	// runs. What the invocation does is written in that file — including the
+	// options that run or load a program (-wrapper, -fplugin=, --plugin) and the
+	// ones that relocate an output (-specs=, -o) — and the analysis cannot read
+	// it, so the effect set is unknown and the result widens to ⊤ instead of
+	// claiming the bounded write the SRC positional declares. The file itself is
+	// read by the tool, so its read is reported beside the ⊤.
+	if paths, ok := responseFileOperands(cmd, rest); ok {
+		for _, p := range paths {
+			atoms := []engine.Atom{cmdAtom, operandAtom("@"+p.Value, withFile(p.Pos, file))}
+			e, d := uploadSourceRead(p, atoms)
+			out = append(out, e)
+			ders = append(ders, d)
+		}
+		te := topEffect(engine.ModeDirect)
+		out = append(out, te)
+		ders = append(ders, derive(te, []engine.Atom{cmdAtom}, "code.exec"))
+	}
+
+	// Finding 71: a remote-upload client's local payload operand is a read.
+	// Without it the credential-exfiltration detector has no secret source and
+	// the upload is certified as egress-only. A code-host client may name
+	// several payloads in one invocation (`gh release upload TAG A B`), and
+	// each is read.
+	if idxs, ok := uploadSourceIndices(cmd, rest); ok {
+		for _, idx := range idxs {
+			if idx < 0 || idx >= len(rest) {
+				continue
+			}
+			src := rest[idx]
+			e, d := uploadSourceRead(src, []engine.Atom{cmdAtom, operandAtom(src.Value, withFile(src.Pos, file))})
+			out = append(out, e)
+			ders = append(ders, d)
+		}
+		// `kubectl cp SRC DEST` streams the source to the pod: the destination
+		// is a network sink, not a local file (its path lives inside the
+		// container, so the address itself is unresolved).
+		if cmd.Name == "kubectl" && len(idxs) > 0 && idxs[0]+1 < len(rest) {
+			dst := rest[idxs[0]+1]
+			we := engine.Effect{Kind: engine.KindNetEgress, Target: engine.ScopeTop(), Mode: engine.ModeDirect, Certainty: engine.CertaintyCertain, Taint: engine.TaintBottom(), Reversible: true}
+			out = append(out, we)
+			ders = append(ders, derive(we, []engine.Atom{cmdAtom, operandAtom(dst.Value, withFile(dst.Pos, file))}, "net.egress"))
+		}
 	}
 
 	// A wget invocation that names concrete URL operands writes each fetched
@@ -582,16 +930,64 @@ func (b *Binder) bindCommand(cmd *kb.Command, argv []Arg, stdinTaint engine.Tain
 		}
 	}
 
-	return out, ders, specs, unknown
+	// Finding 85: the single-file compressors' default operation rewrites each
+	// named FILE operand in place. The row declares the operand a read (it is
+	// always read), so the write half is synthesised here — unless the
+	// invocation streams the result to stdout, only inspects the file, or names
+	// its output explicitly (zstd -o). Without it `gzip FILE` reported a read
+	// and no write; with it declared on the operand instead, `gzip -c FILE`
+	// fabricated a write and lost the read that carries the credential.
+	if effs, ds := compressorOperationWrite(cmd, matches, rest, cmdAtom, file); len(effs) > 0 {
+		out = append(out, effs...)
+		ders = append(ders, ds...)
+		posModelled = true
+	}
+
+	// Finding 84: tar's POSIX old-style option bundle (`tar cf ARCHIVE SRC…`)
+	// names the operation in its first operand. The row declares that operand a
+	// read, so the archive a create/append/update spelling writes was missing
+	// from the report entirely — including the remote (UNC) archive, whose
+	// write is what turns the copy into a tainted egress. Add the write half.
+	if tarBundle {
+		if effs, ds := tarBundleEffects(cmd, rest, valueMatched, tarNamesArchive(matches), cmdAtom, file); len(effs) > 0 {
+			out = append(out, effs...)
+			ders = append(ders, ds...)
+			posModelled = true
+		}
+		// A bundle the row does not declare by name (`xvzf`, `xtf`) still
+		// extracts, so it carries the destructive class the declared `x`/`xf`
+		// specs carry: the class lookup is keyed on specs, and the index-order
+		// fallback that used to supply them is suppressed for a bundle.
+		if tarOp == 'x' {
+			specs = append(specs, "x")
+		}
+	}
+	// The dashed spelling of the same operations: `-c`/`-r`/`-u` name the
+	// operation and its sources, and the archive is the `-f`/`--file` value —
+	// which the row already writes, or the default device when no -f is given.
+	if !tarBundle {
+		if op, ok := tarWriteOperation(cmd, matches, rest); ok {
+			if effs, ds := tarOperationWrite(cmd, rest, op, tarNamesArchive(matches), cmdAtom, file); len(effs) > 0 {
+				out = append(out, effs...)
+				ders = append(ders, ds...)
+				posModelled = true
+			}
+		}
+	}
+
+	return out, ders, specs, unknown, posModelled, opFlagEffect, degrade
 }
 
 // parseArgs splits argv into positional operands, matched flags/options, and
-// unrecognized flag names.
-func parseArgs(cmd *kb.Command, argv []Arg) ([]Arg, []match, []string) {
+// unrecognized flag names. degrade reports that a token could not be bound
+// faithfully (a long-option abbreviation that is ambiguous between declared
+// specs), so the caller widens the result to ⊤ instead of guessing.
+func parseArgs(cmd *kb.Command, argv []Arg) ([]Arg, []match, []string, bool) {
 	var (
 		operands []Arg
 		matches  []match
 		unknown  []string
+		degrade  bool
 	)
 	noMore := false
 
@@ -620,8 +1016,24 @@ func parseArgs(cmd *kb.Command, argv []Arg) ([]Arg, []match, []string) {
 			}
 			p, ok := cmd.Param(name)
 			if !ok {
-				unknown = append(unknown, name)
-				continue
+				// Finding 34: getopt_long/argp resolve an unambiguous prefix of
+				// a long option, so `tar --to-com=…` names --to-command and
+				// `xz --decompres` names --decompress. Matching the name
+				// literally dropped the declared effect; an *ambiguous* prefix
+				// is not decidable, so the invocation degrades to ⊤ instead of
+				// silently binding nothing (or the wrong option).
+				pp, found, ambiguous := longOptionPrefix(cmd, name)
+				switch {
+				case ambiguous:
+					degrade = true
+					unknown = append(unknown, name)
+					continue
+				case found:
+					p = pp
+				default:
+					unknown = append(unknown, name)
+					continue
+				}
 			}
 			if p.Kind == kb.ParamOption {
 				switch {
@@ -666,7 +1078,27 @@ func parseArgs(cmd *kb.Command, argv []Arg) ([]Arg, []match, []string) {
 				operands = append(operands, a)
 				continue
 			}
+			// Finding 31: a multi-character short option written with an
+			// attached value (`java -agentlib:jdwp=…`, `-agentpath:/x.so`) is
+			// the tool's documented grammar. Match the longest declared spec
+			// that prefixes the token when it continues with ':' or '=', and
+			// bind the remainder as the option's value, before the one-letter
+			// cluster splitter can cut the token into fabricated flags.
+			if p, val, ok := attachedShortOption(cmd, v); ok {
+				matches = append(matches, match{param: p, value: Arg{Value: val, Literal: true, Pos: shiftCol(a.Pos, len(p.Spec)+1)}, hasVal: true, pos: a.Pos})
+				continue
+			}
 			cluster := v[1:]
+			// A token that carries a ':' or '=' is an attached-value spelling,
+			// not a bundle of one-letter switches: only a declared option in
+			// the first position may bind it (and it takes the rest as its
+			// value). Without this guard the `p` in `agentpath` or the `m`
+			// inside `/tmp` fired an unrelated one-letter option and stole the
+			// token tail as its operand (Finding 31b).
+			limit := len(cluster)
+			if k := strings.IndexAny(cluster, ":="); k > 0 {
+				limit = 1
+			}
 			consumed := false
 			// Dedupe by spec so a long cluster token (-rrrr…) contributes one
 			// match per distinct flag, not one per byte: this bounds the memory
@@ -674,7 +1106,7 @@ func parseArgs(cmd *kb.Command, argv []Arg) ([]Arg, []match, []string) {
 			// effects of a repeated flag.
 			seenSpec := make(map[string]bool, len(cluster))
 			unknownSeen := make(map[string]bool, len(cluster))
-			for j := 0; j < len(cluster); j++ {
+			for j := 0; j < limit; j++ {
 				spec := "-" + string(cluster[j])
 				if seenSpec[spec] {
 					continue
@@ -710,7 +1142,7 @@ func parseArgs(cmd *kb.Command, argv []Arg) ([]Arg, []match, []string) {
 			operands = append(operands, a)
 		}
 	}
-	return operands, matches, unknown
+	return operands, matches, unknown, degrade
 }
 
 // ===========================================================================
@@ -966,7 +1398,7 @@ func wrapperElevation(cmd *kb.Command, w Wrapper, file string, innerPresent bool
 			ownerSpec = o.Value
 		}
 	}
-	_, matches, unknown := parseArgs(cmd, opts)
+	_, matches, unknown, _ := parseArgs(cmd, opts)
 	// The print-and-exit and usage-error spellings are unknown to the
 	// knowledge base by design (pinned by kb's inert-spellings test): they
 	// must not surface as "unrecognized flag(s)" — sudo recognizes every one
@@ -1250,11 +1682,88 @@ func wrapperElevation(cmd *kb.Command, w Wrapper, file string, innerPresent bool
 // of the named file — or, for `@-`, no read at all, because the content comes
 // from standard input — and carries the payload's provenance into its own
 // effect, so that a data-carrying flag becomes a tainted egress.
-func lowerParam(cmd *kb.Command, p kb.Param, value Arg, argScope engine.Scope, argTaint, stdinTaint engine.Taint, atoms []engine.Atom) ([]engine.Effect, []engine.Derivation) {
+// lowerParam lowers one matched parameter into the effects it contributes: the
+// declared primary effect plus every secondary effect the row lists in `also`.
+// A single token frequently carries two independent effects (a package
+// manager's install reaches a registry and rewrites the local store; a VCS
+// update fetches and rewrites the working copy), and a row that declares only
+// one of them makes every deny rule keyed on the other admit the operation.
+// Each secondary is lowered by exactly the same path as a primary effect of its
+// kind, so the egress-target gate, the taint join and the target vocabulary
+// cannot drift between the two declarations; an entry that lowers to nothing
+// contributes nothing, and one that duplicates an effect already present is
+// dropped rather than reported twice.
+func lowerParam(cmd *kb.Command, p kb.Param, value Arg, argScope engine.Scope, argTaint, stdinTaint engine.Taint, atoms []engine.Atom, subcommand bool, subName string) ([]engine.Effect, []engine.Derivation) {
+	effs, ders := lowerParamPrimary(cmd, p, value, argScope, argTaint, stdinTaint, atoms, subcommand, subName)
+	if len(p.Also) == 0 {
+		return effs, ders
+	}
+	seen := make(map[string]bool, len(effs))
+	for _, e := range effs {
+		seen[e.Key()] = true
+	}
+	for _, also := range p.Also {
+		secondary := p
+		secondary.Effect = also
+		secondary.Also = nil
+		more, moreDers := lowerParamPrimary(cmd, secondary, value, argScope, argTaint, stdinTaint, atoms, subcommand, subName)
+		for i, e := range more {
+			// A secondary egress that names no destination is not a network
+			// event: the row's primary effect already reports the operation
+			// (`npm install` with no operand writes the local store and
+			// contacts no registry). Only an egress with a target — a named
+			// remote, a package name, or an unresolved (top) destination —
+			// contributes the network half.
+			if e.Kind == engine.KindNetEgress && !namesRemote(e.Target) {
+				continue
+			}
+			k := e.Key()
+			if seen[k] {
+				continue
+			}
+			seen[k] = true
+			effs = append(effs, e)
+			ders = append(ders, moreDers[i])
+		}
+	}
+	return effs, ders
+}
+
+func lowerParamPrimary(cmd *kb.Command, p kb.Param, value Arg, argScope engine.Scope, argTaint, stdinTaint engine.Taint, atoms []engine.Atom, subcommand bool, subName string) ([]engine.Effect, []engine.Derivation) {
 	cert := certaintyOf(p.Effect.Mode)
 	target := targetFor(cmd, p, value, argScope)
 	taint := taintFor(p, value, argTaint, stdinTaint)
-	path, fromStdin, fileRef := fileRefPath(value)
+	path, fromStdin, fileRef := fileRefPathFor(p.Spec, value)
+
+	// Finding 92: the value is data xargs substituted from its input items, so
+	// no path is known. A parameter that reads a file therefore reads an
+	// unknown path, and the read is secret-bearing by construction — the input
+	// may name any file, exactly as an environment read whose variable name is
+	// not statically known may select any credential. Reporting the read keeps
+	// it in the dataflow: without it, `echo /etc/shadow | xargs -I{} curl -d @{} …`
+	// bound the payload to a file literally called "{}" and formed no
+	// exfiltration pair while carrying the file out.
+	if value.FromXargs && (p.Effect.FileRef || p.Effect.Kind == engine.KindFSRead) {
+		re := engine.Effect{
+			Kind:       engine.KindFSRead,
+			Target:     engine.ScopeTop(),
+			Mode:       engine.ModeDirect,
+			Certainty:  cert,
+			Taint:      engine.TaintOf(engine.TaintSecret),
+			Reversible: kb.DefaultReversible(engine.KindFSRead),
+		}
+		out := []engine.Effect{re}
+		ders := []engine.Derivation{derive(re, atoms, ruleForKind(engine.KindFSRead), "cred.path")}
+		if p.Effect.FileRef && p.Effect.Kind != engine.KindFSRead {
+			// The payload reference is not a destination: the declared effect
+			// keeps the payload's provenance but not the file spec as its
+			// target, as in the literal path below.
+			de := p.Effect.EngineEffect(engine.ScopeBottom(), engine.TaintOf(engine.TaintSecret), cert)
+			out = append(out, de)
+			ders = append(ders, derive(de, withSink(atoms, de), ruleForKind(de.Kind)))
+		}
+		return out, ders
+	}
 
 	// Egress target gate: a NetEgress effect may only carry a target that
 	// passes the host/URL grammar. A literal operand that names no address (a
@@ -1269,11 +1778,39 @@ func lowerParam(cmd *kb.Command, p kb.Param, value Arg, argScope engine.Scope, a
 	// not a destination (⊥ target), and the destination is another
 	// parameter's business.
 	if p.Effect.Kind == engine.KindNetEgress && (!p.Effect.FileRef || !fileRef) {
+		// Finding 3: a copy client's destination is remote only when it is
+		// spelled as one. scp/rsync name a remote as `[user@]host:path` (or an
+		// rsync URL); a destination without that colon is a local path the copy
+		// writes, whatever the lenient host grammar makes of a bare name. An
+		// unresolved (⊤) destination stays the egress it was — the analysis
+		// cannot prove it local.
+		if isCopyClientDest(cmd, p) && !copyDestIsRemote(target) {
+			e := localCopyDestWrite(target, taint, cert)
+			return []engine.Effect{e}, []engine.Derivation{derive(e, withSink(atoms, e), "fs.write")}
+		}
 		filtered, keep := engine.FilterEgressTargets(target, lenientHostDialect(cmd))
-		if !keep {
+		switch {
+		case keep:
+			target = filtered
+		case subcommand && subName != "":
+			// Finding 14: the operand belongs to a subcommand the row declares
+			// as a network operation (git push/fetch/clone, npm publish, pip
+			// download). Its remote is a *name* (`origin`, `requests`), which
+			// the host grammar cannot accept as an address, but the declared
+			// egress is real: keep it, naming the remote. A local path is never
+			// reported as a destination.
+			target = engine.ScopeOf(subName)
+		case isCopyClientDest(cmd, p):
+			// Finding 3: a copy client's destination that is not host-shaped is
+			// the local file the copy creates. The row declares DEST NetEgress
+			// for the `host:path` upload spelling; the gate has just established
+			// that this operand names no host, so dropping the parameter would
+			// drop the write a local copy performs (parity with `cp DEST`).
+			e := localCopyDestWrite(target, taint, cert)
+			return []engine.Effect{e}, []engine.Derivation{derive(e, withSink(atoms, e), "fs.write")}
+		default:
 			return nil, nil
 		}
-		target = filtered
 	}
 
 	if !p.Effect.FileRef || !fileRef {
@@ -1283,6 +1820,21 @@ func lowerParam(cmd *kb.Command, p kb.Param, value Arg, argScope engine.Scope, a
 		// file literally called "-", and an ingest sink pointing at it would be
 		// a fabricated write target.
 		if isDownloadOutput(cmd, p) && value.Value == "-" {
+			e := engine.Effect{
+				Kind:       engine.KindStdio,
+				Target:     engine.ScopeBottom(),
+				Mode:       p.Effect.Mode,
+				Certainty:  cert,
+				Taint:      taint,
+				Reversible: kb.DefaultReversible(engine.KindStdio),
+			}
+			return []engine.Effect{e}, []engine.Derivation{derive(e, withSink(atoms, e), ruleForKind(engine.KindStdio))}
+		}
+		// Finding 84: tar's archive parameter written as `-` names standard
+		// input/output, not a file called "-". `tar cf - SRC` (the old-style
+		// bundle) and `tar -cf - SRC` are the same operation, so both must
+		// report the stream and neither may fabricate a file named "-".
+		if isTarArchiveDash(cmd, p) && value.Value == "-" {
 			e := engine.Effect{
 				Kind:       engine.KindStdio,
 				Target:     engine.ScopeBottom(),
@@ -1446,32 +1998,6 @@ func ruleForKind(k engine.EffectKind) string {
 		return "code.exec"
 	default:
 		return "effect.derive"
-	}
-}
-
-// fileRefPath recognizes the @file convention in a parameter value: "@path"
-// names a file, "@-" names standard input, and "name=@path" (curl's multipart
-// form syntax) is accepted too. The boolean is false when the value does not
-// use the convention.
-func fileRefPath(value Arg) (path string, fromStdin, ok bool) {
-	if !value.Literal || value.Value == "" {
-		return "", false, false
-	}
-	v := value.Value
-	if i := strings.IndexByte(v, '='); i >= 0 && i+1 < len(v) && v[i+1] == '@' {
-		v = v[i+1:]
-	}
-	if !strings.HasPrefix(v, "@") {
-		return "", false, false
-	}
-	rest := v[1:]
-	switch rest {
-	case "-":
-		return "", true, true
-	case "":
-		return "", false, false
-	default:
-		return rest, false, true
 	}
 }
 
@@ -1792,6 +2318,48 @@ func argsScope(g []Arg, egress bool) engine.Scope {
 	return engine.ScopeOf(vals...)
 }
 
+// scopeForGroup returns the target scope an operand group contributes to an
+// effect of kind k.
+//
+// For a metadata change (chmod/chown/attr and their Windows counterparts) a
+// relative operand that the shell resolved to the filesystem root is resolved
+// to the root: `cd / && chmod -R 777 .` touches the whole host exactly as
+// `chmod -R 777 /` does, and the written "." used to be graded as one exact
+// file — one full severity band below its absolute twin (Finding 70; the same
+// differential Finding 50 records for root *spellings*). The resolution is
+// one-sided (it can only widen a metadata change's extent, never narrow one)
+// and lexical — nothing is read from the filesystem.
+//
+// A read keeps its written target: the credential-source resolution of a
+// relative read is `credentialOperandReads`' job, and rewriting it here would
+// fabricate an absolute path for every ordinary `cat readme.txt`.
+func scopeForGroup(g []Arg, k engine.EffectKind) engine.Scope {
+	switch k {
+	case engine.KindNetEgress:
+		return argsScope(g, true)
+	case engine.KindFSMeta:
+		return metaScope(g)
+	default:
+		return argsScope(g, false)
+	}
+}
+
+// metaScope is argsScope for a metadata-change operand group: an operand the
+// frontend marked as resolving to the filesystem root contributes "/" as its
+// target instead of its written spelling.
+func metaScope(g []Arg) engine.Scope {
+	// Copy before rewriting: the caller's operand list is shared with the
+	// other parameters matched on the same invocation.
+	out := make([]Arg, len(g))
+	copy(out, g)
+	for i := range out {
+		if out[i].Literal && out[i].Root {
+			out[i].Value = "/"
+		}
+	}
+	return argsScope(out, false)
+}
+
 // positionalParams returns cmd's positional parameters in declaration order.
 func positionalParams(cmd *kb.Command) []kb.Param {
 	if cmd == nil {
@@ -1822,6 +2390,31 @@ func certaintyOf(m engine.EffectMode) engine.Certainty {
 	default:
 		return engine.CertaintyCertain
 	}
+}
+
+// envAssignEffects lowers the environment assignments a call carries: the write
+// each one performs, plus the code-execution effect an exec-bearing one implies.
+// The exec channel is not a rule the binder owns — a variable whose value the
+// runtime executes (LD_PRELOAD, JAVA_TOOL_OPTIONS), an option channel
+// (TAR_OPTIONS) and git's environment configuration family (GIT_CONFIG_*) are
+// front/bash's ExecEnvVar, and lowering them here through bash.ExecEnvEffect is
+// what keeps the binder's copy of the shell's assignment channels from drifting
+// from the interpreter's: a policy that denies code execution must see a prefix
+// assignment or an `env` operand handed to Bind directly, not only the same line
+// through the interpreter.
+func envAssignEffects(c *Call) ([]engine.Effect, []engine.Derivation) {
+	var effs []engine.Effect
+	var ders []engine.Derivation
+	for _, a := range c.Env {
+		ew := envWrite(a)
+		effs = append(effs, ew)
+		ders = append(ders, derive(ew, []engine.Atom{envVarAtom(a.Name, withFile(a.Pos, c.Pos.File))}, "env.write"))
+		if ee, ok := bash.ExecEnvEffect(a.Name, a.Value.Value, a.Value.Literal, a.Value.Taint); ok {
+			effs = append(effs, ee)
+			ders = append(ders, derive(ee, []engine.Atom{envVarAtom(a.Name, withFile(a.Pos, c.Pos.File))}, "code.exec"))
+		}
+	}
+	return effs, ders
 }
 
 // envWrite is the effect of an environment assignment.
@@ -1865,8 +2458,10 @@ func intrinsicProcSpawn(name string, loc engine.SourceLoc) engine.Effect {
 }
 
 // destructiveEntries resolves the matched (command, spec) pairs against the
-// knowledge base's destructive-flags table, de-duplicated and sorted.
-func destructiveEntries(k *kb.KB, command string, specs []string) []kb.Destructive {
+// knowledge base's destructive-flags table, de-duplicated and sorted. A row
+// gated on a resolved operand value (`value: suid`) applies only when the
+// invocation satisfied that predicate.
+func destructiveEntries(k *kb.KB, command string, specs []string, satisfied map[kb.ValuePredicate]bool) []kb.Destructive {
 	if k == nil {
 		return nil
 	}
@@ -1875,6 +2470,9 @@ func destructiveEntries(k *kb.KB, command string, specs []string) []kb.Destructi
 	for _, s := range specs {
 		d, ok := k.DestructiveFor(command, s)
 		if !ok {
+			continue
+		}
+		if d.Value != kb.ValueAlways && !satisfied[d.Value] {
 			continue
 		}
 		key := d.Command + "|" + d.Spec
@@ -1965,6 +2563,12 @@ func FromBash(cmd *bash.Command, prog *bash.Program) *Call {
 		}
 		ea := EnvAssign{Name: a.Name, Via: a.Via,
 			Pos: engine.SourceLoc{Line: a.Pos.Line, Col: a.Pos.Col}}
+		// A normalized assignment carries no Value when it assigns nothing:
+		// `VAR=` binds the empty string and `declare VAR` leaves the variable
+		// unset. Both execute nothing, so the value is known-empty rather than
+		// unknown — the distinction the exec channel keys on (a cleared
+		// LD_PRELOAD must not read as an unresolvable one).
+		ea.Value.Literal = true
 		if a.Value != nil {
 			ea.Value = Arg{Value: a.Value.Value, Literal: a.Value.Literal, Taint: a.Value.Taint,
 				Pos: engine.SourceLoc{Line: a.Value.Pos.Line, Col: a.Value.Pos.Col}}
@@ -2014,8 +2618,9 @@ func wordArg(w *bash.Word) Arg {
 	if w == nil {
 		return Arg{}
 	}
-	return Arg{Value: w.Value, Literal: w.Literal, Dir: w.Dir, Taint: w.Taint,
-		Pos: engine.SourceLoc{Line: w.Pos.Line, Col: w.Pos.Col}}
+	return Arg{Value: w.Value, Literal: w.Literal, Dir: w.Dir, Taint: w.Taint, Root: w.Root,
+		FromXargs: w.FromXargs,
+		Pos:       engine.SourceLoc{Line: w.Pos.Line, Col: w.Pos.Col}}
 }
 
 // ===========================================================================

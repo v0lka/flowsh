@@ -185,10 +185,19 @@ func newWhyRemap(orig, merged []Effect, group []int) whyRemap {
 	// different effects (they differ only in a field the key does not spell
 	// out, i.e. their network-flow role). Such a key is dropped from the exact
 	// table: the trace cannot be attributed to one of the two.
+	//
+	// Each merged effect's key is rendered ONCE (Finding 47): keying it inside
+	// the loop over every original effect would render the whole merged target
+	// set per original effect, which is quadratic in the target count for an
+	// effect that carries many targets.
 	ambiguous := make(map[string]bool)
+	mergedKeys := make([]string, len(merged))
+	for i := range merged {
+		mergedKeys[i] = merged[i].Key()
+	}
 	for i, e := range orig {
 		k := e.Key()
-		want := merged[group[i]].Key()
+		want := mergedKeys[group[i]]
 		if prev, ok := rm.exact[k]; ok {
 			if prev != want {
 				ambiguous[k] = true
@@ -201,13 +210,13 @@ func newWhyRemap(orig, merged []Effect, group []int) whyRemap {
 		delete(rm.exact, k)
 	}
 	dup := make(map[string]bool, len(merged))
-	for _, e := range merged {
-		km := effectKindMode(e.Key())
+	for i := range merged {
+		km := effectKindMode(mergedKeys[i])
 		if _, ok := rm.byKindMode[km]; ok {
 			dup[km] = true
 			continue
 		}
-		rm.byKindMode[km] = e.Key()
+		rm.byKindMode[km] = mergedKeys[i]
 	}
 	for k := range dup {
 		delete(rm.byKindMode, k)

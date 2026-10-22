@@ -77,6 +77,19 @@ func hashEqual(a, b []KV) bool {
 // State is the abstract variable environment Σ.
 type State struct {
 	Vars map[string]*Var
+	// Drives maps a mounted drive letter ("x") onto the root it was created
+	// with, so a later `X:\…` path can be resolved to the location it really
+	// names. It is the state `New-PSDrive` establishes: without it a path under
+	// a drive mapped to a UNC share looks like a local path, and a credential
+	// copied to it is never reported as network egress (Finding 98).
+	Drives map[string]string
+	// DriveUnknown records a drive whose root the script did not determine
+	// statically (a variable, a computed expression). A later path under it is
+	// widened to ⊤ rather than assumed local.
+	DriveUnknown map[string]bool
+	// AllDrivesUnknown records a `New-PSDrive` whose *name* was not determined:
+	// any drive letter may then be mapped to a remote root.
+	AllDrivesUnknown bool
 }
 
 // automaticVars are the automatic variables the analysis seeds as
@@ -95,7 +108,11 @@ var automaticVars = []string{
 
 // NewState returns a fresh state seeded with the automatic variables.
 func NewState() *State {
-	s := &State{Vars: make(map[string]*Var, len(automaticVars)+8)}
+	s := &State{
+		Vars:         make(map[string]*Var, len(automaticVars)+8),
+		Drives:       make(map[string]string),
+		DriveUnknown: make(map[string]bool),
+	}
 	for _, n := range automaticVars {
 		s.Vars[n] = &Var{Set: true, Known: false}
 	}
@@ -109,12 +126,96 @@ func (s *State) Clone() *State {
 	if s == nil {
 		return nil
 	}
-	out := &State{Vars: make(map[string]*Var, len(s.Vars))}
+	out := &State{
+		Vars:             make(map[string]*Var, len(s.Vars)),
+		Drives:           make(map[string]string, len(s.Drives)),
+		DriveUnknown:     make(map[string]bool, len(s.DriveUnknown)),
+		AllDrivesUnknown: s.AllDrivesUnknown,
+	}
 	for k, v := range s.Vars {
 		copied := *v
 		out.Vars[k] = &copied
 	}
+	for k, v := range s.Drives {
+		out.Drives[k] = v
+	}
+	for k := range s.DriveUnknown {
+		out.DriveUnknown[k] = true
+	}
 	return out
+}
+
+// driveLetter returns the lower-cased drive letter a path is rooted on when it
+// is written as `X:\…`, `X:/…` or `X:`; it reports false for a relative path, a
+// provider-qualified path (`Env:`, `HKLM:`) and a plain name.
+func driveLetter(p string) (string, bool) {
+	if len(p) < 2 || p[1] != ':' {
+		return "", false
+	}
+	c := p[0]
+	if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
+		return "", false
+	}
+	if len(p) > 2 && p[2] != '\\' && p[2] != '/' {
+		return "", false
+	}
+	return strings.ToLower(string(c)), true
+}
+
+// SetDrive records that drive letter names the given root.
+func (s *State) SetDrive(letter, root string) {
+	if s == nil {
+		return
+	}
+	if s.Drives == nil {
+		s.Drives = make(map[string]string)
+	}
+	delete(s.DriveUnknown, letter)
+	s.Drives[letter] = root
+}
+
+// SetDriveUnknown records that drive letter is mounted on a root the analysis
+// could not determine.
+func (s *State) SetDriveUnknown(letter string) {
+	if s == nil {
+		return
+	}
+	if s.DriveUnknown == nil {
+		s.DriveUnknown = make(map[string]bool)
+	}
+	delete(s.Drives, letter)
+	s.DriveUnknown[letter] = true
+}
+
+// UnsetDrive forgets a drive (Remove-PSDrive).
+func (s *State) UnsetDrive(letter string) {
+	if s == nil {
+		return
+	}
+	delete(s.Drives, letter)
+	delete(s.DriveUnknown, letter)
+}
+
+// RewriteDrive resolves a path rooted on a mapped drive onto the root the drive
+// names. present reports that the drive is known to the state at all (a mapped
+// root or an unresolved one); known distinguishes the two, so the caller can
+// widen an unresolved drive to ⊤ instead of treating the path as local.
+func (s *State) RewriteDrive(p string) (out string, present, known bool) {
+	letter, ok := driveLetter(p)
+	if !ok || s == nil {
+		return p, false, false
+	}
+	if root, ok := s.Drives[letter]; ok {
+		rest := strings.TrimLeft(p[2:], `\/`)
+		if rest == "" {
+			return root, true, true
+		}
+		return strings.TrimRight(root, `\/`) + `\` + rest, true, true
+	}
+	if s.AllDrivesUnknown || s.DriveUnknown[letter] {
+		return p, true, false
+	}
+	return p, false, false
 }
 
 // Get returns the variable named name (case-insensitively), or nil when it is
@@ -191,6 +292,34 @@ func JoinStates(a, b *State) *State {
 			out.Vars[n] = &Var{Set: true, Known: true, Value: av.Value, Hash: keep,
 				Taint: av.Taint.Join(bv.Taint)}
 		}
+	}
+	// A drive mapping survives a branch join only when every finger agrees on
+	// it: a drive mounted on one path only, or mounted on two different roots,
+	// is not statically known afterwards — widening to ⊤ keeps the join sound.
+	out.Drives = make(map[string]string, len(a.Drives))
+	out.DriveUnknown = make(map[string]bool, len(a.DriveUnknown)+len(b.DriveUnknown))
+	out.AllDrivesUnknown = a.AllDrivesUnknown || b.AllDrivesUnknown
+	for k, av := range a.Drives {
+		if bv, ok := b.Drives[k]; ok && bv == av {
+			out.Drives[k] = av
+		} else {
+			out.DriveUnknown[k] = true
+		}
+	}
+	for k, bv := range b.Drives {
+		if av, ok := a.Drives[k]; ok && av == bv {
+			out.Drives[k] = bv
+		} else {
+			out.DriveUnknown[k] = true
+		}
+	}
+	for k := range a.DriveUnknown {
+		out.DriveUnknown[k] = true
+		delete(out.Drives, k)
+	}
+	for k := range b.DriveUnknown {
+		out.DriveUnknown[k] = true
+		delete(out.Drives, k)
 	}
 	return out
 }

@@ -1,6 +1,7 @@
 package bash
 
 import (
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -44,6 +45,11 @@ type Var struct {
 	// arithmetic, which is not evaluated, so they must not be trusted as
 	// literal strings.
 	Int bool `json:"int,omitempty"`
+	// Ref names the variable a nameref (`declare -n r=a`) aliases. Reads of the
+	// nameref carry the target's provenance, so a credential assigned to the
+	// target after the declaration is still seen through the reference
+	// (Finding 51).
+	Ref string `json:"ref,omitempty"`
 	// Numeric records the numeric class: the value is an unknown but bounded
 	// integer (an exit status, a pid, a line number, …) or a join of such
 	// integers. The exact digits stay unknowable, so a word reading the
@@ -355,27 +361,22 @@ func (it *interp) newCfg() *expand.Config {
 	return &expand.Config{
 		Env: stateEnviron{it.state},
 		CmdSubst: func(w io.Writer, cs *syntax.CmdSubst) error {
-			if info, ok := it.substMemo[cs]; ok {
+			if info, ok := it.cachedSubst(cs); ok {
 				// The substitution was already executed while expanding this
-				// statement; reuse its folded stdout instead of running it again.
+				// word (the pre-scan) or this statement (a [[ … ]] clause); reuse
+				// its folded stdout instead of running it again.
 				_, _ = io.WriteString(w, info.out)
 				return nil
 			}
-			out, known, taint, net := it.captureSubst(cs)
-			info := substInfo{out: out, known: known, taint: taint, net: net}
-			it.subst[cs] = info
-			if it.substMemo != nil {
-				it.substMemo[cs] = info
-			}
-			_, _ = io.WriteString(w, out)
+			info := it.execSubstOnce(cs)
+			_, _ = io.WriteString(w, info.out)
 			return nil
 		},
 		ProcSubst: func(ps *syntax.ProcSubst) (string, error) {
 			if it.procMemo[ps] {
 				return "/dev/fd/63", nil
 			}
-			net := it.execProcSubst(ps)
-			it.subst[ps] = substInfo{known: false, taint: engine.TaintOf(engine.TaintUntrusted), net: net}
+			it.execProcSubstOnce(ps)
 			if it.procMemo != nil {
 				it.procMemo[ps] = true
 			}
@@ -400,12 +401,19 @@ const maxExpandedFields = 4096
 // expandFields expands one word into its fields (field splitting and — were it
 // enabled — pathname expansion applied), together with whether the result is
 // statically known and the taint the word carries. Expansion never panics: a
-// failure degrades to "unknown".
+// failure degrades to ⊤.
 func (it *interp) expandFields(w *syntax.Word) expandedWord {
 	ew := expandedWord{taint: engine.TaintBottom()}
 	if w == nil {
 		return ew
 	}
+	// Run every substitution part BEFORE the all-or-nothing expansion: the
+	// vendored expander aborts a word at the first part it refuses (an unquoted
+	// extglob, an @-operator), and without this pre-scan every substitution
+	// AFTER that part — including one nested in an array subscript — was never
+	// executed, so its effects and its provenance were dropped (Findings
+	// 37/74).
+	it.prescanSubsts(w)
 	// Bound brace expansion before materialising it: a word such as {1..1000000}
 	// would otherwise allocate gigabytes for a few bytes of input.
 	if braceExpansionOverflow(wordLiteralText(w)) {
@@ -417,12 +425,26 @@ func (it *interp) expandFields(w *syntax.Word) expandedWord {
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
+				if _, isBudget := r.(budgetError); isBudget {
+					// The step budget must unwind the whole analysis; turning it
+					// into a plain "unknown word" would defeat the bound.
+					panic(r)
+				}
 				ew.fields, ew.known = nil, false
+				// A part the expander refuses is not a benign unknown value: it
+				// may have hidden a sibling substitution, so it degrades to ⊤ with
+				// a reason rather than to a silently-clean word (Finding 74).
+				if !it.top {
+					it.markTop("unhandled expansion: " + fmt.Sprint(r))
+				}
 			}
 		}()
 		fields, err := expand.Fields(it.newCfg(), w)
 		if err != nil {
 			ew.fields, ew.known = nil, false
+			if !it.top {
+				it.markTop("unhandled expansion: " + err.Error())
+			}
 			return
 		}
 		if len(fields) > maxExpandedFields {
@@ -433,8 +455,133 @@ func (it *interp) expandFields(w *syntax.Word) expandedWord {
 		ew.fields = fields
 		ew.known = it.wordKnown(w)
 	}()
+	// Charge the expansion's size against the step budget. Without it a loop
+	// body multiplies the per-word field cap by its iteration count, so a
+	// 44-byte loop allocated tens of GiB while the budget never fired
+	// (Finding 48).
+	it.chargeExpansion(len(ew.fields))
 	ew.taint = it.wordTaint(w)
+	// ${x:=word} / ${x=word} assign the alternate word to x: the variable then
+	// holds that word's value, provenance included (Finding 61).
+	it.applyParamAssignments(w, ew.taint)
 	return ew
+}
+
+// applyParamAssignments records the variable an expansion-assignment operator
+// (${x:=word}, ${x=word}) stores its alternate word in. The expansion engine
+// performs the assignment with an empty taint, so without this the variable
+// read afterwards lost the provenance of the word that produced it — and a
+// credential read through `${x:=$(cat SECRET)}` reached the egress untainted
+// (Finding 61).
+func (it *interp) applyParamAssignments(w *syntax.Word, taint engine.Taint) {
+	if w == nil || taint.IsBottom() {
+		return
+	}
+	var walk func(parts []syntax.WordPart)
+	walk = func(parts []syntax.WordPart) {
+		for _, p := range parts {
+			switch p := p.(type) {
+			case *syntax.DblQuoted:
+				walk(p.Parts)
+			case *syntax.ParamExp:
+				if p == nil || p.Param == nil || p.Excl {
+					continue
+				}
+				if p.Exp != nil && (p.Exp.Op == syntax.AssignUnset || p.Exp.Op == syntax.AssignUnsetOrNull) {
+					it.state.SetUnknown(p.Param.Value, it.wordTaint(p.Exp.Word))
+				}
+				if p.Exp != nil && p.Exp.Word != nil {
+					walk(p.Exp.Word.Parts)
+				}
+			}
+		}
+	}
+	walk(w.Parts)
+}
+
+// chargeExpansion draws the work one word expansion performed from the step
+// budget: every materialised field costs one unit (bounded by the field cap
+// itself, so the charge cannot overflow). It is what makes the cost of a loop
+// body proportional to the data it produces, not merely to its iterations.
+func (it *interp) chargeExpansion(fields int) {
+	if fields < 1 {
+		return
+	}
+	if fields > maxExpandedFields {
+		fields = maxExpandedFields
+	}
+	for i := 0; i < fields; i++ {
+		it.step()
+	}
+}
+
+// prescanSubsts executes every command and process substitution part of w,
+// without descending into the body of a substitution (its own execution walks
+// that), so no single refused part can suppress a sibling's effects and a
+// substitution nested inside a parameter subscript or an arithmetic expression
+// is executed like the shell executes it (Findings 37/74).
+func (it *interp) prescanSubsts(w *syntax.Word) {
+	if w == nil {
+		return
+	}
+	it.prescanParts(w.Parts)
+}
+
+func (it *interp) prescanParts(parts []syntax.WordPart) {
+	for _, p := range parts {
+		switch p := p.(type) {
+		case *syntax.CmdSubst:
+			it.execSubstOnce(p)
+		case *syntax.ProcSubst:
+			it.execProcSubstOnce(p)
+		case *syntax.DblQuoted:
+			it.prescanParts(p.Parts)
+		case *syntax.ParamExp:
+			if p == nil {
+				continue
+			}
+			if p.Exp != nil && p.Exp.Word != nil {
+				it.prescanSubsts(p.Exp.Word)
+			}
+			if p.Repl != nil {
+				it.prescanSubsts(p.Repl.Orig)
+				it.prescanSubsts(p.Repl.With)
+			}
+			if p.Index != nil {
+				it.prescanArithm(p.Index)
+			}
+			if p.Slice != nil {
+				if p.Slice.Offset != nil {
+					it.prescanArithm(p.Slice.Offset)
+				}
+				if p.Slice.Length != nil {
+					it.prescanArithm(p.Slice.Length)
+				}
+			}
+		case *syntax.ArithmExp:
+			if p.X != nil {
+				it.prescanArithm(p.X)
+			}
+		}
+	}
+}
+
+// prescanArithm runs every substitution inside an arithmetic expression.
+func (it *interp) prescanArithm(e syntax.ArithmExpr) {
+	if e == nil {
+		return
+	}
+	syntax.Walk(e, func(n syntax.Node) bool {
+		switch n := n.(type) {
+		case *syntax.CmdSubst:
+			it.execSubstOnce(n)
+			return false
+		case *syntax.ProcSubst:
+			it.execProcSubstOnce(n)
+			return false
+		}
+		return true
+	})
 }
 
 // wordLiteralText returns the concatenated literal text of a word's unquoted
@@ -485,13 +632,13 @@ func braceCount(s string, depth int) (int, bool) {
 		inner := s[i+1 : end]
 		alt := 0
 		for _, part := range splitTopComma(inner) {
-			if lo, hi, isRange := braceRange(part); isRange && hi >= lo {
-				if hi-lo >= maxExpandedFields {
+			if n, isRange := braceRange(part); isRange {
+				if n > maxExpandedFields {
 					// A single range already blows the cap; cap the arithmetic
 					// so a huge bound cannot overflow the int multiplication.
 					return maxExpandedFields + 1, true
 				}
-				alt += hi - lo + 1
+				alt += n
 				continue
 			}
 			c, ok := braceCount(part, depth+1)
@@ -559,19 +706,64 @@ func splitTopComma(s string) []string {
 	return out
 }
 
-// braceRange parses a {lo..hi} range body (lo/hi decimal integers), returning
-// the bounds and whether it is a valid numeric range.
-func braceRange(s string) (lo, hi int, ok bool) {
-	i := strings.Index(s, "..")
-	if i < 0 {
-		return 0, 0, false
+// braceRange parses a brace range body — {lo..hi} or {lo..hi..step} over
+// integers OR single characters — and returns how many fields it expands to.
+//
+// The estimator must know every range spelling bash accepts: a character range
+// ({a..z}, 26 fields) or a stepped range ({1..4000..1}) that falls through to
+// the literal one-field count is materialised in full before the post-check
+// fires, so a 41-byte input could allocate tens of GiB (Finding 46). Every
+// spelling that is not a plain two- or three-part `A..B[..S]` over comparable
+// bounds reports ok=false and is therefore counted as one field, which can only
+// over-estimate the total when it is not a real range — and a real range bash
+// accepts is always counted.
+func braceRange(s string) (count int, ok bool) {
+	parts := strings.Split(s, "..")
+	if len(parts) != 2 && len(parts) != 3 {
+		return 0, false
 	}
-	a, err1 := strconv.Atoi(strings.TrimSpace(s[:i]))
-	b, err2 := strconv.Atoi(strings.TrimSpace(s[i+2:]))
-	if err1 != nil || err2 != nil {
-		return 0, 0, false
+	step := 1
+	if len(parts) == 3 {
+		n, err := strconv.Atoi(strings.TrimSpace(parts[2]))
+		if err != nil || n == 0 {
+			return 0, false
+		}
+		if n < 0 {
+			n = -n
+		}
+		step = n
 	}
-	return a, b, true
+	lo, loNum, okLo := braceBound(parts[0])
+	hi, hiNum, okHi := braceBound(parts[1])
+	if !okLo || !okHi || loNum != hiNum {
+		return 0, false
+	}
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	// A span that overflows (or already exceeds the cap) is reported as an
+	// overflow: an over-estimate only degrades the word to ⊤, while an
+	// under-estimate would materialise the expansion (Finding 46).
+	span := hi - lo
+	if span < 0 || span > int64(maxExpandedFields) {
+		return maxExpandedFields + 1, true
+	}
+	return int(span)/step + 1, true
+}
+
+// braceBound parses one end of a brace range: a decimal integer, or a single
+// character (bash's character range). The boolean result reports whether the end
+// is numeric, so the two ends must agree on their kind.
+func braceBound(s string) (val int64, numeric, ok bool) {
+	s = strings.TrimSpace(s)
+	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return n, true, true
+	}
+	r := []rune(s)
+	if len(r) != 1 {
+		return 0, false, false
+	}
+	return int64(r[0]), false, true
 }
 
 // expandLiteral expands one word as a single literal string (no field
@@ -581,16 +773,29 @@ func (it *interp) expandLiteral(w *syntax.Word) (string, bool, engine.Taint) {
 	if w == nil {
 		return "", true, engine.TaintBottom()
 	}
+	// Same pre-scan as expandFields: a part this path refuses must not suppress
+	// a sibling substitution's effects, and a substitution stored in a value the
+	// word re-executes (@P) still runs in the shell (Findings 72/74).
+	it.prescanSubsts(w)
 	var out string
 	known := false
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
+				if _, isBudget := r.(budgetError); isBudget {
+					panic(r)
+				}
 				out, known = "", false
+				if !it.top {
+					it.markTop("unhandled expansion: " + fmt.Sprint(r))
+				}
 			}
 		}()
 		s, err := expand.Literal(it.newCfg(), w)
 		if err != nil {
+			if !it.top {
+				it.markTop("unhandled expansion: " + err.Error())
+			}
 			return
 		}
 		out, known = s, it.wordKnown(w)
@@ -621,6 +826,11 @@ func (it *interp) partKnown(p syntax.WordPart, quoted bool) bool {
 	switch p := p.(type) {
 	case *syntax.Lit:
 		if !quoted && hasGlobMeta(p.Value) {
+			// A glob operand's target is an arbitrary set of files, so the word
+			// is not statically known. The literal text is not discarded, though:
+			// execCall reports a credential read for the pattern's static text
+			// (Finding 67), so the ⊤ target is kept here and the concrete
+			// credential prefix is added as its own read.
 			return false
 		}
 		return true
@@ -864,6 +1074,17 @@ func (it *interp) numericConfinedDir(w *syntax.Word) (string, bool) {
 				if strings.Contains(p.Value, `\`) {
 					return false
 				}
+				// Brace expansion runs BEFORE parameter expansion and can
+				// fabricate a path component out of the literal text: `{/,$?}`
+				// expands to the words `/` and `<status>`, whose directory is the
+				// filesystem root, while the source text's prefix "{" confined the
+				// target to a directory that does not exist (Finding 8). Any brace
+				// syntax therefore disqualifies the numeric confinement, so the
+				// word degrades to ⊤ — the sound side — instead of to a fabricated
+				// directory.
+				if strings.ContainsAny(p.Value, "{}") {
+					return false
+				}
 				if prevEmpty && startsNewComponent(p.Value) {
 					escaped = true
 				}
@@ -982,15 +1203,99 @@ func (it *interp) wordTaint(w *syntax.Word) engine.Taint {
 	return t
 }
 
+// shellDataVars are the shell's own data-bearing variables: they hold text the
+// shell produced (a regex capture, the previous command's last argument, a
+// function's argument stack, the sourced-file names) rather than a value the
+// script wrote. Σ never seeds them, and an absent variable contributes no
+// provenance, which let a captured credential reach an egress untainted
+// (Finding 64). A read of one of them is therefore data of unknown provenance:
+// it is reported as untrusted rather than as bottom.
+var shellDataVars = map[string]bool{
+	"BASH_REMATCH": true, "BASH_ARGV": true, "BASH_ARGV0": true,
+	"BASH_COMMAND": true, "BASH_SOURCE": true, "FUNCNAME": true,
+	"BASH_LINENO": true, "_": true, "REPLY": true, "MAPFILE": true,
+	"DIRSTACK": true, "GROUPS": true, "COMP_REPLY": true, "OLDPWD": true,
+}
+
+// paramTaint returns the provenance a bare parameter read takes from Σ.
+//
+//   - `${!name}` names another variable, so its value — and therefore its
+//     provenance — belongs to the pointee, not to the pointer (Finding 63).
+//     When the pointer's value is not statically known any variable may be the
+//     pointee, so the read is at least untrusted.
+//   - a nameref (`declare -n r=a`) contributes its target's provenance.
+//   - an absent data-bearing shell variable (BASH_REMATCH, $_, BASH_ARGV, …)
+//     holds run-time data, so it contributes untrusted rather than bottom
+//     (Finding 64).
+func (it *interp) paramTaint(p *syntax.ParamExp) engine.Taint {
+	if p == nil || p.Param == nil {
+		return engine.TaintBottom()
+	}
+	name := p.Param.Value
+	if p.Excl && p.Names == 0 {
+		v := it.state.Get(name)
+		t := engine.TaintBottom()
+		if v == nil {
+			return engine.TaintOf(engine.TaintUntrusted)
+		}
+		t = t.Join(v.Taint)
+		if v.Set && v.Known && v.Value != "" {
+			if pv := it.state.Get(v.Value); pv != nil {
+				return t.Join(pv.Taint)
+			}
+		}
+		// The pointer is not pinned to one name: any variable may be read.
+		return t.Join(engine.TaintOf(engine.TaintUntrusted))
+	}
+	v := it.state.Get(name)
+	if v == nil {
+		if shellDataVars[name] {
+			return engine.TaintOf(engine.TaintUntrusted)
+		}
+		return engine.TaintBottom()
+	}
+	t := v.Taint
+	if v.Ref != "" {
+		if rv := it.state.Get(v.Ref); rv != nil {
+			t = t.Join(rv.Taint)
+		} else {
+			t = t.Join(engine.TaintOf(engine.TaintUntrusted))
+		}
+	}
+	return t
+}
+
+// arithmWord returns the word an arithmetic expression evaluates, if it is one.
+func arithmWord(e syntax.ArithmExpr) *syntax.Word {
+	w, _ := e.(*syntax.Word)
+	return w
+}
+
 func (it *interp) partTaint(p syntax.WordPart) engine.Taint {
 	switch p := p.(type) {
 	case *syntax.ParamExp:
-		if p.Param != nil {
-			if v := it.state.Get(p.Param.Value); v != nil {
-				return v.Taint
+		t := it.paramTaint(p)
+		// An operator can splice a nested word into the value — the alternate of
+		// ${x:-w}/${x-w}/${x:=w}/${x=w}/${x:+w}/${x+w}, the replacement of
+		// ${x/o/w} — and a subscript is an arithmetic expression of its own. Any
+		// of those words may carry a credential read, so its provenance is part
+		// of the expansion's value (Findings 37/62).
+		if p.Exp != nil && p.Exp.Word != nil {
+			t = t.Join(it.wordTaint(p.Exp.Word))
+		}
+		if p.Repl != nil {
+			t = t.Join(it.wordTaint(p.Repl.Orig)).Join(it.wordTaint(p.Repl.With))
+		}
+		if w := arithmWord(p.Index); w != nil {
+			t = t.Join(it.wordTaint(w))
+		}
+		if p.Slice != nil {
+			t = t.Join(it.wordTaint(arithmWord(p.Slice.Offset)))
+			if p.Slice.Length != nil {
+				t = t.Join(it.wordTaint(arithmWord(p.Slice.Length)))
 			}
 		}
-		return engine.TaintBottom()
+		return t
 	case *syntax.CmdSubst, *syntax.ProcSubst:
 		// The output of an executed command is attacker-influenceable at least
 		// insofar as any code's output is (untrusted); it additionally carries

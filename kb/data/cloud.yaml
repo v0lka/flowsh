@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # Cloud provider command-line clients: the AWS CLI (aws), the Google Cloud
 # CLI (gcloud) and the Azure CLI (az).
@@ -54,9 +54,14 @@ commands:
       - spec: lambda
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: env}
+      # Finding 52: `aws sts get-session-token` / `assume-role` *returns*
+      # credentials (access key, secret, session token), so the service is a
+      # credential source as well as an egress; CredAccess makes the response a
+      # secret source for the exfiltration detector, which the NetEgress-only
+      # declaration never did.
       - spec: sts
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
+        effect: {kind: CredAccess, mode: Direct, valueFrom: env}
       - spec: route53
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: env}
@@ -72,9 +77,10 @@ commands:
       - spec: eks
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: env}
+      # Finding 52: `aws ecr get-login-password` prints a registry credential.
       - spec: ecr
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
+        effect: {kind: CredAccess, mode: Direct, valueFrom: env}
       - spec: rds
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: env}
@@ -90,18 +96,25 @@ commands:
       - spec: cloudwatch
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: env}
+      # Finding 52: `aws secretsmanager get-secret-value` returns secret
+      # material; the service is a credential source (the request is still an
+      # egress, but a single effect per parameter cannot carry both, and the
+      # response is what the exfiltration control needs).
       - spec: secretsmanager
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
+        effect: {kind: CredAccess, mode: Direct, valueFrom: env}
+      # Finding 52: `aws ssm get-parameter --with-decryption` returns the
+      # decrypted value.
       - spec: ssm
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
+        effect: {kind: CredAccess, mode: Direct, valueFrom: env}
       - spec: organizations
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: env}
+      # Finding 52: `aws kms decrypt` returns plaintext.
       - spec: kms
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
+        effect: {kind: CredAccess, mode: Direct, valueFrom: env}
       - spec: glue
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: env}
@@ -153,6 +166,10 @@ commands:
       - spec: "--endpoint-url"
         kind: option
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      # Finding 71: `aws s3api put-object --body FILE` uploads FILE's content.
+      - spec: "--body"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "--no-verify-ssl"
         kind: flag
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
@@ -214,9 +231,10 @@ commands:
       - spec: pubsub
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: env}
+      # Finding 52: `gcloud secrets versions access` prints the secret payload.
       - spec: secrets
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
+        effect: {kind: CredAccess, mode: Direct, valueFrom: env}
       - spec: services
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: env}
@@ -332,6 +350,26 @@ commands:
       - spec: storage
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: env}
+      # Finding 71: `az storage blob upload -f FILE` reads FILE locally and
+      # streams it to the container; -c/-n name the destination object.
+      - spec: "-f"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-c"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "--container-name"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "-n"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "--name"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: network
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: env}
@@ -353,9 +391,10 @@ commands:
       - spec: appconfig
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: env}
+      # Finding 52: `az keyvault secret show` returns the secret value.
       - spec: keyvault
         kind: positional
-        effect: {kind: NetEgress, mode: Direct, valueFrom: env}
+        effect: {kind: CredAccess, mode: Direct, valueFrom: env}
       - spec: monitor
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: env}
@@ -449,6 +488,10 @@ commands:
       - spec: upgrade
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: env}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: "--subscription"
         kind: option
         effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}

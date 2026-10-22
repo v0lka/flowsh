@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # Archives and compression.
 #
@@ -12,6 +12,16 @@ version: effect-kb/v2
 # to standard output carry Stdio instead. Flags that overwrite existing output
 # or rewrite an archive in place are recorded as FSWrite and are additionally
 # listed in the destructive table (kb/data/destructive.yaml).
+#
+# Mode-dependent operands (Findings 12, 85): a single-file compressor's FILE
+# operand is always *read*, and the in-place rewrite of that operand is the
+# command's operation rather than a property of one spelling. The rows below
+# therefore declare FILE/INPUT as FSRead, and the binder synthesises the
+# operation's FSWrite for the spellings that perform it — every spelling except
+# the ones that stream to stdout or only inspect the file (`-c`/`--stdout`,
+# `-t`/`--test`, `-l`/`--list`; see bind/archive_op.go). Declaring the operand
+# FSWrite instead fabricated a write for `gzip -c FILE` and lost the read of
+# FILE, so a credential read piped to an upload reported a bare write.
 #
 # Dialect note: every entry is documented against the `archive` dialect, the
 # family shared by the archivers and compressors (POSIX-specified and GNU alike).
@@ -54,6 +64,18 @@ commands:
       - spec: "-S"
         kind: option
         effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "--test"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--list"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--keep"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "--force"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: FILE
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -88,6 +110,18 @@ commands:
       - spec: "-S"
         kind: option
         effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "--test"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--list"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--keep"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "--force"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: FILE
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -141,6 +175,15 @@ commands:
       - spec: "-9"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--test"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--keep"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "--force"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: FILE
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -166,6 +209,15 @@ commands:
       - spec: "-t"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--test"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--keep"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "--force"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: FILE
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -203,6 +255,21 @@ commands:
       - spec: "-9"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--test"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--list"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--keep"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "--force"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--compress"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: FILE
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -231,6 +298,18 @@ commands:
       - spec: "-l"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--test"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--list"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--keep"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "--force"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: FILE
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -271,6 +350,18 @@ commands:
       - spec: "-l"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--test"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--list"
+        kind: flag
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--keep"
+        kind: flag
+        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+      - spec: "--force"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: INPUT
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -399,9 +490,16 @@ commands:
       - spec: "-P"
         kind: option
         effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      # Finding 24: `unzip ARCHIVE` with no narrowing operand extracts every
+      # member into the working directory, creating and overwriting files. The
+      # declared write flags (-o/-n/-f/-u/-d) are all optional, so the default
+      # spelling has to carry the write itself; the archive is the only anchor
+      # operand the model can name. (-l/-t, the pure listing modes, now
+      # over-report a write — the fail-safe side of the no-silent-miss
+      # invariant.)
       - spec: ARCHIVE
         kind: positional
-        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: FILE
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -599,6 +697,21 @@ commands:
       - spec: "-F"
         kind: option
         effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      # Finding 24: the documented GNU long spelling of -i. `cpio --extract`
+      # with no operand writes the archive into the working directory.
+      - spec: "--extract"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      # Finding 66: `cpio --help`: "-D, --directory=DIR  Change to directory
+      # DIR" — the base the operation is resolved against. Declared as a read
+      # of its value (the fail-safe side: a base directory that keeps being a
+      # secret source rather than becoming a fabricated write target).
+      - spec: "-D"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--directory"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: PATTERN
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}

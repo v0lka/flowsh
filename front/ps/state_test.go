@@ -141,16 +141,20 @@ func TestStepPanicsWhenExhausted(t *testing.T) {
 // with more statements than the budget charges step() past the limit, and the
 // panic is converted into a ⊤ conclusion that keeps the conservative flag.
 func TestLowerBudgetExhaustion(t *testing.T) {
+	// The budget is driven through lowerWithBudget with a small program: a
+	// source large enough to exhaust defaultBudget by its statements alone would
+	// exceed the parser's structural bounds (front/ps/parse.go, maxSourceBytes)
+	// and degrade to ⊤ before lowering, so it could not exercise this path.
 	var b strings.Builder
 	b.WriteString("$seed = 'lit'\n")
-	for i := 0; i < defaultBudget+2000; i++ {
+	for i := 0; i < 12; i++ {
 		b.WriteString("$x = 1\n")
 	}
 	p := ParseTimeout("t", b.String(), 0) // disable the parse budget: this test targets the lowering budget
 	if p.Top {
 		t.Fatalf("parse unexpectedly top: %s", p.Reason)
 	}
-	r := LowerWith(p, Options{})
+	r := lowerWithBudget(p, Options{}, 10)
 	if !r.Conservative {
 		t.Fatal("an exhausted lowering budget must set Conservative")
 	}

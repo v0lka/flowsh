@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # Language runtimes and their ecosystem tooling: Node (node/npx/bun), Python
 # (python/uv/poetry), Ruby (ruby/bundle), Java (java/mvn/gradle), .NET
@@ -18,7 +18,9 @@ version: effect-kb/v2
 # Modelling.  A runtime that executes a program (node script.js, python -c …,
 # java -jar …, npx somebin) contributes CodeExec; a package/dependency
 # operation that writes a local store or manifest is FSWrite; one that reaches
-# a registry is NetEgress; a toolchain that spawns a child compiler/runner is
+# a registry is NetEgress — and an install/add/update that does both declares
+# both (the second effect in `also:`), since a single-effect declaration is
+# admitted by every deny rule keyed on the missing kind (Finding 86); a toolchain that spawns a child compiler/runner is
 # ProcSpawn; read-only inspection is FSRead; and version/help output is Stdio.
 #
 # Script runners (node, python, ruby, java, php, elixir) and the package
@@ -194,12 +196,24 @@ commands:
       - spec: sync
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: lock
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: add
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: remove
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -209,6 +223,10 @@ commands:
       - spec: tool
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: python
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
@@ -241,7 +259,7 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "--python"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "--index-url"
         kind: option
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
@@ -264,18 +282,34 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: add
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: remove
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: update
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: lock
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: build
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -368,12 +402,24 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: update
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: add
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: remove
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -389,6 +435,10 @@ commands:
       - spec: lock
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: check
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -484,6 +534,12 @@ commands:
         kind: option
         effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-javaagent"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
+      # Finding 31: `java --help` documents -agentpath:<pathname>[=<options>]
+      # beside -agentlib/-javaagent ("load native agent library by full
+      # pathname"); all three are attached-value spellings.
+      - spec: "-agentpath"
         kind: option
         effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "--add-opens"
@@ -644,9 +700,17 @@ commands:
       - spec: restore
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: add
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: remove
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -665,6 +729,10 @@ commands:
       - spec: tool
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: nuget
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
@@ -680,6 +748,10 @@ commands:
       - spec: workload
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: dev-certs
         kind: positional
         effect: {kind: CredAccess, mode: Direct, valueFrom: args}
@@ -769,12 +841,24 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: update
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: require
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: remove
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -1215,9 +1299,17 @@ commands:
       - spec: prepare
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: install
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: use
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -1261,12 +1353,20 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: uninstall
         kind: positional
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
       - spec: upgrade
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: lint
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -1356,7 +1456,7 @@ commands:
         effect: {kind: CodeExec, mode: Direct, valueFrom: args}
       - spec: "--exec"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-w"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
@@ -1416,9 +1516,17 @@ commands:
       - spec: "-c"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
       - spec: "--config"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
       - spec: "-o"
         kind: option
         effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
@@ -1447,9 +1555,17 @@ commands:
       - spec: "-c"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
       - spec: "--config"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
       - spec: "-o"
         kind: option
         effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
@@ -1474,6 +1590,13 @@ commands:
       - spec: "--help"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "--plugin"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
 
   - name: esbuild
     dialect: pkgmgr
@@ -1762,6 +1885,10 @@ commands:
       - spec: add
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: init
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -1784,6 +1911,10 @@ commands:
       - spec: "--gulpfile"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
       - spec: "--cwd"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
@@ -1793,6 +1924,11 @@ commands:
       - spec: "--help"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      # Finding 100: invoking gulp runs its project file, whose tasks
+      # are arbitrary code, so the bare form is code execution too.
+      - spec: gulp
+        kind: self
+        effect: {kind: CodeExec, mode: Direct, valueFrom: self}
 
   - name: grunt
     dialect: pkgmgr
@@ -1803,6 +1939,10 @@ commands:
       - spec: "--gruntfile"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CodeExec
+            mode: Direct
+            valueFrom: flagValue
       - spec: "--base"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
@@ -1812,6 +1952,11 @@ commands:
       - spec: "--help"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      # Finding 100: invoking grunt runs its project file, whose tasks
+      # are arbitrary code, so the bare form is code execution too.
+      - spec: grunt
+        kind: self
+        effect: {kind: CodeExec, mode: Direct, valueFrom: self}
 
   - name: pm2
     dialect: pkgmgr
@@ -1868,6 +2013,13 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: clean
         kind: positional
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
@@ -1907,7 +2059,7 @@ commands:
         effect: {kind: NetEgress, mode: Direct, valueFrom: flagValue}
       - spec: "--python"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "--version"
         kind: flag
         effect: {kind: Stdio, mode: Direct, valueFrom: args}
@@ -1921,18 +2073,34 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: uninstall
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: lock
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: sync
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: update
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: run
         kind: positional
         effect: {kind: CodeExec, mode: Direct, valueFrom: args}
@@ -1967,21 +2135,41 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: add
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: remove
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: update
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: lock
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: sync
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: build
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -2040,6 +2228,10 @@ commands:
       - spec: env
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: run
         kind: positional
         effect: {kind: CodeExec, mode: Direct, valueFrom: args}
@@ -2130,18 +2322,30 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: create
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
       - spec: update
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: remove
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: env
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: list
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -2188,18 +2392,30 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: create
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
       - spec: update
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: remove
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: env
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: list
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -2239,10 +2455,10 @@ commands:
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: "-p"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "--python"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "--clear"
         kind: flag
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
@@ -2259,15 +2475,27 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: uninstall
         kind: positional
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
       - spec: upgrade
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: reinstall
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: list
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
@@ -2277,6 +2505,10 @@ commands:
       - spec: inject
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: ensurepath
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -2434,9 +2666,11 @@ commands:
   - name: javac
     dialect: pkgmgr
     params:
+      # Finding 26: javac writes Hello.class beside the source when -d is
+      # absent (the default output root is the source's directory).
       - spec: SRC
         kind: positional
-        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+        effect: {kind: FSWrite, mode: Direct, valueFrom: cwd}
       - spec: "-d"
         kind: option
         effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
@@ -2768,6 +3002,40 @@ commands:
       - spec: "--help"
         kind: flag
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
+      - spec: "-srckeystore"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+        also:
+          - kind: CredAccess
+            mode: Direct
+            valueFrom: flagValue
+      - spec: "-destkeystore"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "-srcstorepass"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "-deststorepass"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "-srckeypass"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "-destkeypass"
+        kind: option
+        effect: {kind: CredAccess, mode: Direct, valueFrom: flagValue}
+      - spec: "-srcstoretype"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-deststoretype"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "-srcalias"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      - spec: "-destalias"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
 
   - name: scala
     dialect: pkgmgr
@@ -3157,6 +3425,10 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: app
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -3185,6 +3457,10 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: resolve
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
@@ -3302,6 +3578,10 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: deploy
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
@@ -3380,21 +3660,37 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: uninstall
         kind: positional
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
       - spec: update
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: toolchain
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: target
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: component
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: args}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: override
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -3607,10 +3903,10 @@ commands:
         effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
       - spec: "-x"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "--exec"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-s"
         kind: option
         effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
@@ -3793,6 +4089,10 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        also:
+          - kind: NetEgress
+            mode: Direct
+            valueFrom: args
       - spec: check
         kind: positional
         effect: {kind: FSRead, mode: Direct, valueFrom: args}

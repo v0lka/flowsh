@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # Container, orchestration and infrastructure tooling: Docker (docker,
 # docker-compose), Kubernetes (kubectl), Helm, Terraform and Ansible.
@@ -478,9 +478,11 @@ commands:
       - spec: attach
         kind: positional
         effect: {kind: ProcSpawn, mode: Direct, valueFrom: args}
+      # Finding 71: `kubectl cp SRC DEST` reads SRC locally and streams it to
+      # the pod; the source side is a read (the binder contributes the egress).
       - spec: cp
         kind: positional
-        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+        effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: config
         kind: positional
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -506,6 +508,18 @@ commands:
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "--filename"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      # Finding 93: `kubectl create secret generic|configmap --from-file=PATH`
+      # (and --from-env-file) reads a local file and sends its content to the
+      # cluster API. The row declared no such parameter, so the local read was
+      # invisible: `kubectl create secret generic x --from-file=/etc/shadow`
+      # reported `[NetEgress{⊤}]`/Critical with no FSRead and 0 exfiltration
+      # pairs, and an Exfiltration: Deny policy allowed the upload.
+      - spec: "--from-file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
+      - spec: "--from-env-file"
         kind: option
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "-o"
@@ -1015,6 +1029,10 @@ commands:
       - spec: install
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: env}
+        also:
+          - kind: FSWrite
+            mode: Direct
+            valueFrom: args
       - spec: search
         kind: positional
         effect: {kind: NetEgress, mode: Direct, valueFrom: env}

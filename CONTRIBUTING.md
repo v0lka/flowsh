@@ -98,6 +98,12 @@ go test ./...          # corpus gate (no-silent-miss) + latency + recall gates
 go vet ./...           # static checks
 gofmt -l .             # formatting check (must print nothing)
 golangci-lint run      # lint with the pinned .golangci.yml (see below)
+go mod verify          # the module graph matches go.sum
+
+# Supply-chain scan: no vulnerability reachable from this module. Pinned to the
+# version CI runs; it downloads the vulnerability database, so it needs network
+# access.
+go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 ```
 
 Run the CLI from source:
@@ -110,30 +116,38 @@ go run ./cmd/flowsh --lang bash --json 'rm -rf $HOME'
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and PR
 across a three-OS matrix (`ubuntu-latest`, `windows-latest`, and `macos-latest`),
-so the same steps run on all three runners:
+so the same steps run on all three runners — the `-race` step excepted, which
+runs on Linux only for the reason given in step 11:
 
 1. **gofmt** — the tree must be `gofmt`-clean.
 2. **build** — `go build ./...`.
 3. **vet** — `go vet ./...`.
-4. **lint** — `golangci-lint run` with the repository's pinned
+4. **module integrity** — `go mod verify`: the checked-out module graph must
+   match `go.sum`.
+5. **govulncheck** — `go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...`
+   must report no vulnerability reachable from this module; a reachable finding
+   exits non-zero and blocks the merge. Unlike the `-race` step it runs on every
+   runner, because the scanner resolves the call graph for the host
+   `GOOS`/`GOARCH` and the release matrix ships more than one platform.
+6. **lint** — `golangci-lint run` with the repository's pinned
    [`.golangci.yml`](.golangci.yml) (errcheck, govet, ineffassign, staticcheck,
    unused, misspell; gofmt/goimports as formatters).
-5. **deadcode** — `deadcode -test ./...` must print nothing: every symbol is
+7. **deadcode** — `deadcode -test ./...` must print nothing: every symbol is
    reachable from a command path or a test.
-6. **docs hygiene** — [SECURITY.md](SECURITY.md) carries no unresolved
+8. **docs hygiene** — [SECURITY.md](SECURITY.md) carries no unresolved
    placeholders, and every relative Markdown link in the README, `docs/` and
    `specs/` resolves (fenced code blocks and inline code are skipped).
-7. **corpus + latency/recall gates** — `go test ./... -count=1` (a latency or
+9. **corpus + latency/recall gates** — `go test ./... -count=1` (a latency or
    recall regression fails this step). This step also runs the **CLI smoke**
    test [`cmd/flowsh/smoke_test.go`](cmd/flowsh/smoke_test.go): it builds the
    binary and checks that it emits a valid JSON report for both dialects, from
    an argument and from stdin, plus `--version`, `--batch` (NDJSON),
    `--lang auto`, and the exit-code contract, across the process boundary.
-8. **bench smoke** — `go test ./engine/ -run '^$' -bench . -benchtime=50x`.
-9. **race** — `go test -race ./... -count=1`, run once on `ubuntu-latest` only
-   (the race detector instruments every memory access, so wall-clock latency
-   budgets are not meaningful under it; those timing tests skip under `-race`
-   and still run in step 7).
+10. **bench smoke** — `go test ./engine/ -run '^$' -bench . -benchtime=50x`.
+11. **race** — `go test -race ./... -count=1`, run once on `ubuntu-latest` only
+    (the race detector instruments every memory access, so wall-clock latency
+    budgets are not meaningful under it; those timing tests skip under `-race`
+    and still run in step 9).
 
 [`.gitattributes`](.gitattributes) pins `* text=auto eol=lf`, so all three
 runners check the tree out with LF line endings. Keep that file: Git for Windows
@@ -156,9 +170,9 @@ The push triggers [`.github/workflows/release.yml`](.github/workflows/release.ym
 which:
 
 1. validates the tag matches `vX.Y.Z` (a tag such as `v1.2` fails fast);
-2. re-runs the security-relevant gates (`go vet ./...`, `go test ./... -count=1`)
-   on the tagged commit — a tag can point at a commit that never went through
-   pull-request CI;
+2. re-runs the security-relevant gates (`go mod verify`, `go vet ./...`,
+   `go test ./... -count=1` and `govulncheck ./...`) on the tagged commit — a
+   tag can point at a commit that never went through pull-request CI;
 3. runs [GoReleaser](https://goreleaser.com) ([`.goreleaser.yaml`](.goreleaser.yaml))
    to cross-compile the supported matrix — `linux/amd64`, `linux/arm64`,
    `darwin/arm64`, `windows/amd64` — package each binary (`.tar.gz`, or `.zip`

@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # POSIX utilities and GNU coreutils extensions.
 #
@@ -43,6 +43,15 @@ commands:
   - name: cp
     dialect: posix
     params:
+      # `cp --help`: "-t, --target-directory=DIRECTORY  copy all SOURCE
+      # arguments into DIRECTORY" (Finding 33 — the documented long spelling
+      # must not bind as an ordinary read-only operand).
+      - spec: "-t"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      - spec: "--target-directory"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
       - spec: "-r"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -122,6 +131,13 @@ commands:
   - name: chmod
     dialect: posix
     params:
+      # Finding 100: the documented `--reference=FILE` spelling takes its mode
+      # from another file. Declaring it lets the option resolver bind it (and its
+      # unique-prefix form `--ref=`); the escalation itself is derived by the
+      # binder from the bound match, since it is a property of the *value*.
+      - spec: "--reference"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
       - spec: "-R"
         kind: flag
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
@@ -159,7 +175,7 @@ commands:
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
       - spec: "-f"
         kind: flag
-        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
       - spec: "-r"
         kind: flag
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
@@ -219,9 +235,17 @@ commands:
   - name: install
     dialect: gnu
     params:
+      # Finding 100: the mode is a metadata change of the destination. Whether it
+      # carries the set-user-ID/set-group-ID bit is decided from the literal
+      # value by the binder, which asserts PrivEsc over the files install writes
+      # (`-m 755` asserts nothing). The documented long spelling is declared too:
+      # an option the row omitted was silently inert.
       - spec: "-m"
         kind: option
-        effect: {kind: PrivEsc, mode: Conditional, valueFrom: flagValue}
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+      - spec: "--mode"
+        kind: option
+        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
       - spec: "-o"
         kind: option
         effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
@@ -233,7 +257,11 @@ commands:
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
       - spec: "-t"
         kind: option
-        effect: {kind: FSMeta, mode: Direct, valueFrom: flagValue}
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      # Finding 33: the documented long spelling of -t.
+      - spec: "--target-directory"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
       - spec: "-s"
         kind: flag
         effect: {kind: FSMeta, mode: Direct, valueFrom: args}
@@ -242,7 +270,7 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: args}
       - spec: DEST
         kind: positional
-        effect: {kind: FSMeta, mode: Direct, valueFrom: args}
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
 
   - name: truncate
     dialect: gnu
@@ -298,6 +326,15 @@ commands:
       - spec: "-o"
         kind: option
         effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      # Finding 33: `sort --output=FILE` is the documented long spelling of -o.
+      - spec: "--output"
+        kind: option
+        effect: {kind: FSWrite, mode: Direct, valueFrom: flagValue}
+      # Finding 30: `man sort`: "--compress-program=PROG  compress temporaries
+      # with PROG" — the program is executed over the caller's data.
+      - spec: "--compress-program"
+        kind: option
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-r"
         kind: flag
         effect: {kind: Stdio, mode: Direct, valueFrom: args}
@@ -339,10 +376,28 @@ commands:
       - spec: "-i"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      # Finding 33: `sed --in-place` is the documented long spelling of -i;
+      # `--file=SCRIPT` the long spelling of -f. A spelling choice must not
+      # turn an in-place rewrite into an unreported operation.
+      - spec: "--in-place"
+        kind: flag
+        effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      - spec: "--file"
+        kind: option
+        effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "-n"
         kind: flag
         effect: {kind: Stdio, mode: Direct, valueFrom: args}
       - spec: "-e"
+        kind: option
+        effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
+      # Finding 27: `--expression` is the documented long spelling of -e. It
+      # was absent from the row, so `--expression=SCRIPT` was an unknown long
+      # option: the token was dropped whole and the attached script — a `w`
+      # write or an `e` exec — never reached the script analyser (the separated
+      # spelling only worked by accident, because the orphaned script word
+      # became the SCRIPT operand).
+      - spec: "--expression"
         kind: option
         effect: {kind: Stdio, mode: Direct, valueFrom: flagValue}
       - spec: "-f"

@@ -4,8 +4,7 @@
 //
 //	flowsh [--lang bash|posix|posh|auto] [--json] [--windows] '<command>'
 //	echo '<command>' | flowsh [--lang bash|posix|posh|auto] [--json]
-//	flowsh --file <path> [--lang bash|posix|posh|auto] [--json]
-//	flowsh --batch [--lang bash|posix|posh|auto] [--file <path>]
+//	flowsh --batch [--lang bash|posix|posh|auto]
 //
 // The command is analysed by the same pipeline the library exposes: front/bash
 // or front/ps parse and lower it, bind resolves it against the embedded
@@ -19,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -31,17 +31,17 @@ const usage = `flowsh — effect report for a shell or PowerShell command
 usage:
   flowsh [--lang bash|posix|posh|auto] [--json] [--windows] '<command>'
   echo '<command>' | flowsh [--lang bash|posix|posh|auto] [--json] [--windows]
-  flowsh --file <path> [--lang bash|posix|posh|auto] [--json]
-  flowsh --batch [--lang bash|posix|posh|auto] [--file <path>] [--windows]
+  flowsh --batch [--lang bash|posix|posh|auto] [--windows]
 
 options:
   --lang bash|posix|posh|auto
                      dialect of the input (default: bash); "auto" sniffs the
                      input for PowerShell cmdlets/aliases and picks the dialect
-  --file PATH        read the command from PATH ("-" for stdin); the report's
-                     root names the file
-  --batch            read many commands (one per line) and write one JSON report
-                     per line (NDJSON) instead of a single report
+  --batch            read many commands (one per line) from stdin and write one
+                     JSON report per line (NDJSON) instead of a single report;
+                     a line that uses a variable an earlier line assigned is
+                     degraded to top/conservative (cross-line state is not
+                     modelled), so a script should be analysed as one command
   --json             emit the full JSON report instead of a summary
   --explain, --why   print the why-trace explaining each effect
   --windows[=bool]   enable PowerShell Registry semantics on any host OS
@@ -52,8 +52,8 @@ options:
 exit status:
   0  analysis produced a report
   1  analysis failed internally
-  2  usage error (bad flags, bad --lang, or conflicting sources)
-  3  input error (the source could not be read, or the command was empty)`
+  2  usage error (unknown flag or unknown --lang)
+  3  input error (stdin could not be read, or the command was empty)`
 
 // The stable exit-code contract. run returns exactly one of these; new error
 // classes must be mapped onto one of them rather than inventing ad-hoc codes.
@@ -61,7 +61,7 @@ const (
 	exitOK       = 0 // a report was produced (or --help / --version)
 	exitInternal = 1 // the analysis or the encoding failed internally
 	exitUsage    = 2 // the invocation was malformed (flags, language, no input)
-	exitInput    = 3 // the named input source could not be read, or was empty
+	exitInput    = 3 // stdin could not be read, or the command was empty
 )
 
 // buildVersion is the release build stamp, injected by the linker at release
@@ -74,7 +74,7 @@ var buildVersion string
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 // usageError marks an invocation error: it is the caller's mistake (a bad flag,
-// an unknown language, a missing value, conflicting sources) and maps to
+// an unknown language, a missing value) and maps to
 // exitUsage.
 type usageError struct{ err error }
 
@@ -125,8 +125,6 @@ type options struct {
 	windowsSet bool
 	help       bool
 	version    bool
-	file       string
-	fileSet    bool
 	command    string
 	commandSet bool
 	useStdin   bool
@@ -182,21 +180,19 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return exitOK
 	}
 
-	if auto {
-		lang = detectLang(src.src)
-	}
-
 	// --windows forces the PowerShell Registry provider on (or, with
 	// --windows=false, off) independently of the host; when the flag is absent
 	// the analysis keeps its host default (registry active only on Windows).
 	// Root names the source the command came from, so the report says whether
-	// it analysed a file, the positional argument, or stdin.
-	opts := api.Options{Root: src.root}
-	if o.windowsSet {
-		opts.Windows = api.Bool(o.windows)
+	// it analysed the positional argument or stdin.
+	opts := optsFor(o)
+	opts.Root = src.root
+	var rep *api.Report
+	if auto {
+		rep, err = analyzeAuto(src.src, opts)
+	} else {
+		rep, err = api.AnalyzeWith(lang, src.src, opts)
 	}
-
-	rep, err := api.AnalyzeWith(lang, src.src, opts)
 	if err != nil {
 		fprint(stderr, "%s\n", errorLine(err))
 		return exitInternal
@@ -256,19 +252,6 @@ func parseArgs(args []string) (options, error) {
 			o.lang = strings.TrimPrefix(a, "--lang=")
 		case strings.HasPrefix(a, "-lang="):
 			o.lang = strings.TrimPrefix(a, "-lang=")
-		case a == "--file" || a == "-file":
-			if i+1 >= len(args) {
-				return o, &usageError{fmt.Errorf("%s needs a value", a)}
-			}
-			i++
-			o.file = args[i]
-			o.fileSet = true
-		case strings.HasPrefix(a, "--file="):
-			o.file = strings.TrimPrefix(a, "--file=")
-			o.fileSet = true
-		case strings.HasPrefix(a, "-file="):
-			o.file = strings.TrimPrefix(a, "-file=")
-			o.fileSet = true
 		case a == "-":
 			o.useStdin = true
 		case strings.HasPrefix(a, "-") && a != "-":
@@ -280,12 +263,6 @@ func parseArgs(args []string) (options, error) {
 			o.command = a
 			o.commandSet = true
 		}
-	}
-	if o.fileSet && o.commandSet {
-		return o, &usageError{fmt.Errorf("--file and a positional command are mutually exclusive")}
-	}
-	if o.fileSet && o.useStdin {
-		return o, &usageError{fmt.Errorf("--file and the \"-\" stdin argument are mutually exclusive")}
 	}
 	if o.useStdin && o.commandSet {
 		return o, &usageError{fmt.Errorf("the \"-\" stdin argument and a positional command are mutually exclusive")}
@@ -307,29 +284,17 @@ type input struct {
 }
 
 // readInput returns the command to analyse and the name of its source. The
-// command comes from --file, else from the positional argument, else from
-// stdin (also when the argument is "-"). The root is the file path for --file,
-// and RootStdin / RootArgument otherwise — so the report names its source
-// distinctly for file, stdin and argument input. Failures to read the source
-// are inputError (exit 3), distinct from a usage error.
+// command comes from the positional argument, else from stdin (also when the
+// argument is "-"). The root is RootStdin or RootArgument, so the report names
+// its source distinctly. Failures to read the source are inputError (exit 3),
+// distinct from a usage error.
+//
+// The analyser reads no caller-named file: the input surface is the argument
+// and stdin only, so the CLI cannot be turned into an arbitrary-file-read
+// primitive by a wrapper that forwards untrusted paths (SECURITY.md Hard
+// Constraint 2).
 func readInput(o options, stdin io.Reader) (input, error) {
 	switch {
-	case o.fileSet && o.file == "-":
-		s, err := readStdin(stdin)
-		if err != nil {
-			return input{}, err
-		}
-		return input{src: s, root: api.RootStdin}, nil
-	case o.fileSet:
-		data, err := os.ReadFile(o.file)
-		if err != nil {
-			return input{}, &inputError{fmt.Errorf("read %s: %w", o.file, err)}
-		}
-		s := strings.TrimRight(string(data), "\r\n")
-		if strings.TrimSpace(s) == "" {
-			return input{}, &inputError{fmt.Errorf("%s: empty command", o.file)}
-		}
-		return input{src: s, root: o.file}, nil
 	case o.useStdin || !o.commandSet:
 		s, err := readStdin(stdin)
 		if err != nil {
@@ -368,19 +333,31 @@ func runBatch(o options, in input, lang api.Lang, auto bool, stdout io.Writer) e
 	if len(lines) == 0 {
 		return &inputError{fmt.Errorf("no commands in batch input")}
 	}
-	opts := api.Options{Root: in.root}
-	if o.windowsSet {
-		opts.Windows = api.Bool(o.windows)
-	}
+	opts := optsFor(o)
+	opts.Root = in.root
+	var state batchState
+	continued := false
 	for _, line := range lines {
-		l := lang
+		var rep *api.Report
+		var err error
 		if auto {
-			l = detectLang(line)
+			rep, err = analyzeAuto(line, opts)
+		} else {
+			rep, err = api.AnalyzeWith(lang, line, opts)
 		}
-		rep, err := api.AnalyzeWith(l, line, opts)
 		if err != nil {
 			return err
 		}
+		// A line that continues onto the next one (a trailing backslash, an
+		// open quote) is a fragment, and so is the line that follows it: neither
+		// is the command the report describes.
+		cont := lineContinues(line)
+		if continued || cont {
+			degrade(rep, "batch line is a fragment of a program that spans lines")
+		}
+		continued = cont
+		state.check(rep, line)
+		state.note(rep, line)
 		out, err := encodeCompact(rep)
 		if err != nil {
 			return fmt.Errorf("encode report: %w", err)
@@ -426,10 +403,10 @@ func fprintln(w io.Writer, args ...any) { _, _ = fmt.Fprintln(w, args...) }
 // writeText renders the human-readable summary.
 func writeText(w io.Writer, r *api.Report) {
 	fprint(w, "flowsh effect report\n")
-	fprint(w, "  lang:            %s\n", r.Lang)
+	fprint(w, "  lang:            %s\n", sanitize(r.Lang))
 	fprint(w, "  input:           %s\n", oneLine(r.Input))
 	if r.Root != "" {
-		fprint(w, "  root:            %s\n", r.Root)
+		fprint(w, "  root:            %s\n", sanitize(r.Root))
 	}
 	fprint(w, "  commands:        %d\n", r.Commands)
 	fprint(w, "  effects:         %d\n", len(r.Effects))
@@ -442,29 +419,30 @@ func writeText(w io.Writer, r *api.Report) {
 	fprint(w, "  exfil risk:      %s\n", r.Score.Exfil)
 	fprint(w, "  conservative:    %t\n", r.Conservative)
 	if r.Top {
-		fprint(w, "  top:             true (%s)\n", r.Reason)
+		fprint(w, "  top:             true (%s)\n", sanitize(r.Reason))
 	}
 	if r.Resolution.Kind != "" {
-		fprint(w, "  resolution:      %s %s", r.Resolution.Kind, r.Resolution.Invoked)
+		fprint(w, "  resolution:      %s %s", sanitize(string(r.Resolution.Kind)), sanitize(r.Resolution.Invoked))
 		if r.Resolution.Name != "" && r.Resolution.Name != r.Resolution.Invoked {
-			fprint(w, " → %s", r.Resolution.Name)
+			fprint(w, " → %s", sanitize(r.Resolution.Name))
 		}
 		if len(r.Resolution.AliasChain) > 0 {
-			fprint(w, " [alias chain: %s]", strings.Join(r.Resolution.AliasChain, " → "))
+			fprint(w, " [alias chain: %s]", sanitize(strings.Join(r.Resolution.AliasChain, " → ")))
 		}
 		fprintln(w)
 	}
 	for _, d := range r.Destructive {
-		fprint(w, "  destructive:     %s %s (class %s): %s\n", d.Command, d.Spec, d.Class, d.Reason)
+		fprint(w, "  destructive:     %s %s (class %s): %s\n",
+			sanitize(d.Command), sanitize(d.Spec), sanitize(string(d.Class)), sanitize(d.Reason))
 	}
 	for _, e := range r.Effects {
-		fprint(w, "    - %s\n", e.Key())
+		fprint(w, "    - %s\n", sanitize(e.Key()))
 	}
 	for _, p := range r.Score.ExfilPairs {
-		fprint(w, "  exfil: %s → %s\n", p.Source.Key(), p.Sink.Key())
+		fprint(w, "  exfil: %s → %s\n", sanitize(p.Source.Key()), sanitize(p.Sink.Key()))
 	}
 	for _, n := range r.Notes {
-		fprint(w, "  note: %s\n", n)
+		fprint(w, "  note: %s\n", sanitize(n))
 	}
 }
 
@@ -477,22 +455,251 @@ func writeWhy(w io.Writer, r *api.Report) {
 	}
 	fprint(w, "why:\n")
 	for _, t := range r.Why {
-		fprint(w, "  %s\n", t.Effect)
+		fprint(w, "  %s\n", sanitize(t.Effect))
 		for _, s := range t.Because {
 			loc := ""
 			if s.Loc != nil {
 				loc = fmt.Sprintf(" @%d:%d", s.Loc.Line, s.Loc.Col)
 			}
-			fprint(w, "    - %s(%s)%s\n", s.Rule, strings.Join(s.Premises, ", "), loc)
+			fprint(w, "    - %s(%s)%s\n", sanitize(s.Rule), sanitize(strings.Join(s.Premises, ", ")), loc)
 		}
 	}
 }
 
-// oneLine collapses newlines so the summary stays one line per input.
+// oneLine collapses newlines so the summary stays one line per input, then
+// strips the control characters sanitize removes.
 func oneLine(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
-	return strings.TrimSpace(s)
+	s = strings.ReplaceAll(s, "\r", " ")
+	return strings.TrimSpace(sanitize(s))
+}
+
+// sanitize neutralises terminal control characters in a report-derived string
+// so an analysed command cannot forge report lines or drive the terminal.
+// C0 controls (0x00–0x1F, including ESC and CR/LF), DEL (0x7F) and C1 controls
+// (0x80–0x9F) are dropped; a tab is rendered as the two characters "\t" so
+// indentation stays single-line and visible. Unicode bidi overrides
+// (U+202A–U+202E, U+2066–U+2069) are dropped as well, since they reorder the
+// rendered line without being control bytes.
+func sanitize(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\t':
+			b.WriteString(`\t`)
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
+			// drop C0/DEL/C1 control characters
+		case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
+			// drop bidi embedding/override controls
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// optsFor builds the analysis options shared by every call site: the CLI's
+// --windows override when given, otherwise the host default.
+func optsFor(o options) api.Options {
+	var opts api.Options
+	if o.windowsSet {
+		opts.Windows = api.Bool(o.windows)
+	}
+	return opts
+}
+
+// analyzeAuto analyses src under the sniffed dialect and, when that analysis
+// is uncovered (no effects, no ⊤, not conservative), re-analyses it under the
+// other dialect. The sniffer may choose the presentation, never the bound: a
+// dialect whose report says "nothing happened" is not allowed to hide an input
+// the other dialect reports on. When neither dialect covers the text the
+// report degrades to ⊤ instead of claiming the input is effect-free.
+func analyzeAuto(src string, opts api.Options) (*api.Report, error) {
+	sniffed := detectLang(src)
+	rep, err := api.AnalyzeWith(sniffed, src, opts)
+	if err != nil {
+		return nil, err
+	}
+	if rep.Covered() {
+		return rep, nil
+	}
+	alt := api.LangBash
+	if sniffed == api.LangBash {
+		alt = api.LangPowerShell
+	}
+	altRep, aerr := api.AnalyzeWith(alt, src, opts)
+	if aerr != nil {
+		return nil, aerr
+	}
+	if altRep.Covered() {
+		return altRep, nil
+	}
+	rep.Top = true
+	rep.Conservative = true
+	if rep.Reason == "" {
+		rep.Reason = "no dialect could bound the input"
+	}
+	return rep, nil
+}
+
+// batchState tracks the names earlier batch lines assigned. --batch analyses
+// one line per command, so a variable assigned on an earlier line is not in the
+// next line's Σ. Instead of silently analysing the later line against an empty
+// state (which turns "$T" into an unset empty word and can hide an exfiltration
+// pair), a line that references such a name is degraded to ⊤ / conservative.
+//
+// The set is derived from two sources so a spelling cannot slip past it:
+//
+//   - the report of the line itself: every concrete target of its EnvWrite
+//     effects is a name that analysis says the line assigned. This covers the
+//     forms whose assignment target the effect model carries — plain
+//     `T=$(…)`, `T+=…`, `T[0]=…`, `IFS= read -r T`, `printf -v T`,
+//     `read -r T`, `export/declare/local/typeset`, `mapfile`/`readarray` —
+//     without re-implementing the shell's grammar in a second place.
+//   - a source scan for the two assignment forms the effect model reports
+//     without a name (a loop variable has no EnvWrite target): `for`/`select`
+//     NAME in … and `getopts SPEC NAME`.
+//
+// A reference is matched as a *parameter expansion* (`$T`, `${T}`, `${!T}`,
+// `${#T}`, `${T[0]}`, `"$T"`), never as a substring: `$TOKEN` does not
+// reference T, and a name mentioned without `$` is not a reference at all.
+type batchState struct {
+	assigned   map[string]bool
+	positional bool
+}
+
+// assignTarget matches an assignment word's name, including the compound and
+// array spellings: `T=`, `T+=`, `T[0]=`.
+var assignTarget = regexp.MustCompile(`(?:^|[\s;|&(){}])([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?\+?=`)
+
+// loopVariable matches the assignment forms the effect model does not carry as
+// an EnvWrite target: `for NAME in …`, `select NAME in …` and `getopts SPEC NAME`.
+var loopVariable = regexp.MustCompile(`(?:^|[\s;|&(){}])(?:for|select)\s+([A-Za-z_][A-Za-z0-9_]*)\s+in(?:\s|$)|(?:^|[\s;|&(){}])getopts\s+\S+\s+([A-Za-z_][A-Za-z0-9_]*)`)
+
+// parameterRef matches a shell parameter reference and captures the name it
+// reads: `$T`, `${T}`, `${!T}`, `${#T}`, `${T[0]}`, `${T:-x}`, `"$T"`.
+var parameterRef = regexp.MustCompile(`\$(?:\{)?[!#]?([A-Za-z_][A-Za-z0-9_]*)`)
+
+// positionalSet matches the two forms that rebind the shell's positional
+// parameters: `set -- …` and `shift`. The positional channel carries a value
+// exactly as a named variable does, but it has no EnvWrite target and no
+// assignment word, so neither source above sees it (Finding 89).
+var positionalSet = regexp.MustCompile(`(?:^|[\s;|&(){}])(?:set\s+--|shift)(?:[\s;|&(){}]|$)`)
+
+// positionalRef matches a reference to a positional parameter or to the
+// positional list: `$1`, `${1}`, `${10}`, `$@`, `$*`, `"$@"`.
+var positionalRef = regexp.MustCompile(`\$(?:\{)?(?:[0-9]+|[@*])`)
+
+// add records one assigned name.
+func (s *batchState) add(name string) {
+	if name == "" {
+		return
+	}
+	if s.assigned == nil {
+		s.assigned = make(map[string]bool)
+	}
+	s.assigned[name] = true
+}
+
+// note records the names line assigns, from its own report and from the
+// assignment forms the report does not name.
+func (s *batchState) note(rep *api.Report, line string) {
+	if rep != nil {
+		for _, e := range rep.Effects {
+			if e.Kind != engine.KindEnvWrite {
+				continue
+			}
+			for _, t := range e.Target.Targets() {
+				s.add(t)
+			}
+		}
+	}
+	for _, m := range assignTarget.FindAllStringSubmatch(line, -1) {
+		s.add(m[1])
+	}
+	for _, m := range loopVariable.FindAllStringSubmatch(line, -1) {
+		if m[1] != "" {
+			s.add(m[1])
+		} else {
+			s.add(m[2])
+		}
+	}
+	if positionalSet.MatchString(line) {
+		s.positional = true
+	}
+}
+
+// check degrades rep when line references a name an earlier line assigned. The
+// whole line is degraded rather than the one word: the assignment it reads may
+// have carried any value, and a per-word recovery cannot know which of the
+// line's effects depended on it.
+func (s *batchState) check(rep *api.Report, line string) {
+	if rep == nil {
+		return
+	}
+	// The positional parameters are a cross-line channel too: `set -- $(cat
+	// /etc/shadow)` on one line and `curl -d "$1" …` on the next pairs as a
+	// single command and is denied, but the second line alone sees an unset
+	// $1, reports no pair, and the default policy allows it (Finding 89).
+	if s.positional && positionalRef.MatchString(line) {
+		degrade(rep, "cross-line state: the positional parameters were rebound on an earlier batch line")
+		return
+	}
+	if len(s.assigned) == 0 {
+		return
+	}
+	for _, m := range parameterRef.FindAllStringSubmatch(line, -1) {
+		if s.assigned[m[1]] {
+			degrade(rep, "cross-line state: $"+m[1]+" was assigned on an earlier batch line")
+			return
+		}
+	}
+}
+
+// degrade marks rep as ⊤/conservative with the given reason, unless it already
+// carries a reason (the first, most specific explanation wins).
+func degrade(rep *api.Report, reason string) {
+	if rep == nil {
+		return
+	}
+	rep.Top = true
+	rep.Conservative = true
+	if rep.Reason == "" {
+		rep.Reason = reason
+	}
+}
+
+// lineContinues reports whether a batch line is only the first fragment of a
+// command that spans lines: it ends in an unescaped backslash, or it leaves a
+// quote open. Such a line, and the fragment that follows it, are analysed as if
+// they were complete commands, so both are degraded instead (Finding 69's fix
+// (c): the one-command-per-line contract is enforced, not assumed).
+func lineContinues(line string) bool {
+	// An odd number of trailing backslashes is a line continuation.
+	slashes := 0
+	for i := len(line) - 1; i >= 0 && line[i] == '\\'; i-- {
+		slashes++
+	}
+	if slashes%2 == 1 {
+		return true
+	}
+	var inSingle, inDouble, esc bool
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case esc:
+			esc = false
+		case c == '\\' && !inSingle:
+			esc = true
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+		}
+	}
+	return inSingle || inDouble
 }
 
 // ---------------------------------------------------------------------------
@@ -557,7 +764,7 @@ var psSyntax = []string{
 }
 
 // shSyntax are substrings that only shell source uses.
-var shSyntax = []string{"2>&1", "&>/", "#!/", "<<", ";fi", ";do", "esac"}
+var shSyntax = []string{"2>&1", "&>/", "#!/", "<<", ";fi", ";do", "esac", "`"}
 
 // detectLang sniffs src and picks the dialect for --lang auto: PowerShell when
 // cmdlet/parameter/syntax markers dominate, shell (bash, which also covers

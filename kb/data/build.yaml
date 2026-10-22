@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # Build tooling (roadmap task B6): build drivers, compilers/linkers, binary
 # inspectors and debuggers.
@@ -52,6 +52,14 @@ commands:
       - spec: TARGET
         kind: positional
         effect: {kind: CodeExec, mode: Direct, valueFrom: args}
+
+      # Finding 99: a makefile's recipes are shell commands, so invoking make is
+      # code execution even when no TARGET is named. `make`, `make -j4` and
+      # `make -f evil.mk` reported only ProcSpawn/Medium while `make all`
+      # reported CodeExec/Critical for the same recipes.
+      - spec: make
+        kind: self
+        effect: {kind: CodeExec, mode: Direct, valueFrom: self}
 
   - name: cmake
     dialect: build
@@ -127,7 +135,7 @@ commands:
         effect: {kind: FSRead, mode: Direct, valueFrom: flagValue}
       - spec: "-wrapper"
         kind: option
-        effect: {kind: ProcSpawn, mode: Direct, valueFrom: flagValue}
+        effect: {kind: CodeExec, mode: Direct, valueFrom: flagValue}
       - spec: "-c"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
@@ -140,9 +148,17 @@ commands:
       - spec: "-save-temps"
         kind: flag
         effect: {kind: FSWrite, mode: Direct, valueFrom: args}
+      # Finding 26: a compile/link with no -o still writes its default
+      # artefact (a.out for gcc/as/ld, the source stem for rustc, the .class or
+      # .js sibling for javac/tsc) into the working directory, with content the
+      # command's author chooses. One effect per parameter cannot carry both
+      # the source read and the derived output name, and the schema has no
+      # operation-level default effect (kb/schema.go), so the write is declared
+      # and its target is the working directory; -o/--out-dir relocate it with
+      # a second, concrete write.
       - spec: SRC
         kind: positional
-        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+        effect: {kind: FSWrite, mode: Direct, valueFrom: cwd}
 
   - name: ld
     dialect: build
@@ -171,9 +187,11 @@ commands:
       - spec: "-M"
         kind: flag
         effect: {kind: Stdio, mode: Direct, valueFrom: args}
+      # Finding 26: the linker writes its default output (a.out) when -o is
+      # absent; see the gcc note above for the target convention.
       - spec: OBJ
         kind: positional
-        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+        effect: {kind: FSWrite, mode: Direct, valueFrom: cwd}
 
   - name: as
     dialect: build
@@ -189,7 +207,7 @@ commands:
         effect: {kind: Stdio, mode: Direct, valueFrom: args}
       - spec: SRC
         kind: positional
-        effect: {kind: FSRead, mode: Direct, valueFrom: args}
+        effect: {kind: FSWrite, mode: Direct, valueFrom: cwd}
 
   # --- Binary inspectors: nm, objdump, readelf, strings ----------------------
   - name: nm

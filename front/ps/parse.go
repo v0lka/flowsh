@@ -26,6 +26,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
@@ -42,6 +44,78 @@ import (
 // load, so Parse disables it there (see budget_race.go). ParseTimeout takes an
 // explicit budget in every build, so callers that want to pin one still can.
 const DefaultTimeoutMicros uint64 = 250_000
+
+// Structural bounds on a source handed to the PowerShell parser.
+//
+// The wall-clock budget alone is not an effective bound for this parser: the
+// generated PowerShell grammar costs *super-linearly* in two source shapes, and
+// the deadline is polled only on the parse loop's own schedule, so a recursive
+// tree-building path can run for seconds before the next poll notices it
+// (measured on an idle host: 8 KB of `(`-nesting 4.9 s, a 16 KB
+// `1+1+…` expression 2.0 s, a 32 KB `$a.a.a…` member chain 7.0 s, all reported
+// as *parsed*, never as ⊤). Termination was therefore guaranteed only by the
+// parser's own node/iteration limits, which are generous enough to be a
+// denial-of-service window — a 32 KB source could hold the guard for a minute.
+//
+// These bounds decide the same question *deterministically*, before the parser
+// runs, and degrade to ⊤ when a source is outside them. Each one is calibrated
+// against the measurements above, so the worst case inside the bounds stays far
+// below DefaultTimeoutMicros:
+//
+//   - nesting depth: the parse and the CST walk recurse once per level and cost
+//     O(depth²) — 256 levels ≈ 25 ms, 4000 levels ≈ 4.9 s;
+//   - longest physical line: the super-linear shapes above were all single
+//     token-dense lines — 4 KiB ≈ 60 ms, 32 KiB ≈ 7 s;
+//   - total size: the linear term — 64 KiB ≈ 60 ms for ordinary source, and it
+//     caps how many nested runs one source can carry.
+//
+// A source outside the bounds is not "too big to be analysed precisely" in the
+// sense of ADR-0006: it is a shape the analyser refuses by construction, and
+// the refusal is the sound outcome (⊤, never a narrower report). Ordinary
+// PowerShell — cmdlets, pipelines, script blocks, hashtables — is orders of
+// magnitude inside the bounds; the corpus and the knowledge base are far below
+// them.
+const (
+	// maxSourceBytes bounds the analysed source length.
+	maxSourceBytes = 64 * 1024
+	// maxSourceLine bounds one physical line of the source.
+	maxSourceLine = 4 * 1024
+	// maxNestingDepth bounds bracket nesting (`(`, `[`, `{`) of the source.
+	maxNestingDepth = 256
+)
+
+// sourceShapeTooComplex reports why src is outside the structural bounds above,
+// or "" when it is analysable. The check is a single linear scan over the bytes:
+// no parsing, no allocation, no I/O, so it cannot itself be a denial-of-service
+// vector. Brackets are counted everywhere in the source, including inside quotes
+// and comments, because the parser sees them too and because counting a bracket
+// the compiler would treat as text can only widen the nesting estimate — the
+// direction that degrades to ⊤ instead of under-reporting.
+func sourceShapeTooComplex(src string) string {
+	if len(src) > maxSourceBytes {
+		return fmt.Sprintf("source is %d bytes, above the %d-byte analysis bound", len(src), maxSourceBytes)
+	}
+	depth, line := 0, 0
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		if c == '\n' {
+			line = 0
+		} else if line++; line > maxSourceLine {
+			return fmt.Sprintf("a source line is longer than the %d-byte analysis bound", maxSourceLine)
+		}
+		switch c {
+		case '(', '[', '{':
+			if depth++; depth > maxNestingDepth {
+				return fmt.Sprintf("source nests brackets deeper than the %d-level analysis bound", maxNestingDepth)
+			}
+		case ')', ']', '}':
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+	return ""
+}
 
 // ===========================================================================
 // Positions
@@ -220,6 +294,10 @@ const (
 	KindLoop Kind = "loop"
 	// KindTry is a try/catch…/finally statement.
 	KindTry Kind = "try"
+	// KindRedirect is a pipeline-level redirection whose pipeline carries no
+	// command stage (`$x > f`, `(Get-Date) > f`): the statement lowers only its
+	// redirections, which write (or read) the target file.
+	KindRedirect Kind = "redirect"
 )
 
 // Branch is one conditional arm of an if statement.
@@ -279,6 +357,9 @@ type Stmt struct {
 	Loop   *LoopStmt `json:"loop,omitempty"`
 	Try    *TryStmt  `json:"try,omitempty"`
 	Reason string    `json:"reason,omitempty"` // KindTop only
+	// Redirs carries the redirections of a pipeline that has no command stage
+	// (KindRedirect), so `$x > f` still reports the file write.
+	Redirs []*Redirect `json:"redirs,omitempty"`
 	// Pipe is the pipeline group id shared by the stages of one PowerShell
 	// pipeline (0 when the statement is not part of a pipeline). The lowerer
 	// uses it to establish the value flow between stages — a network fetch
@@ -371,6 +452,13 @@ func ParseTimeout(name, src string, timeoutMicros uint64) (prog *Program) {
 		}
 	}()
 
+	// Deterministic structural bounds first: they decide the pathological
+	// shapes deterministically, without depending on how fast the host is (see
+	// maxSourceBytes and sourceShapeTooComplex).
+	if why := sourceShapeTooComplex(src); why != "" {
+		return topProgram(name, src, Pos{}, why+": treating source as ⊤")
+	}
+
 	lang := grammars.PowershellLanguage()
 	if lang == nil {
 		return topProgram(name, src, Pos{}, "powershell grammar unavailable")
@@ -378,7 +466,10 @@ func ParseTimeout(name, src string, timeoutMicros uint64) (prog *Program) {
 	parser := gotreesitter.NewParser(lang)
 	parser.SetTimeoutMicros(timeoutMicros)
 
-	tree, err := parser.Parse([]byte(src))
+	tree, err, timedOut := parseWithBudget(parser, []byte(src), timeoutMicros)
+	if timedOut {
+		return topProgram(name, src, Pos{}, fmt.Sprintf("parse exceeded its %d µs budget: treating source as ⊤", timeoutMicros))
+	}
 	if err != nil {
 		return topProgram(name, src, Pos{}, err.Error())
 	}
@@ -486,28 +577,6 @@ func hasDescendantType(n *gotreesitter.Node, lang *gotreesitter.Language, typ st
 	return false
 }
 
-// findDescendantType returns the first node of the given type among n's
-// descendants (nil when there is none). It is the searching counterpart of
-// hasDescendantType.
-func findDescendantType(n *gotreesitter.Node, lang *gotreesitter.Language, typ string) *gotreesitter.Node {
-	if n == nil {
-		return nil
-	}
-	for i := 0; i < n.ChildCount(); i++ {
-		ch := n.Child(i)
-		if ch == nil {
-			continue
-		}
-		if ch.Type(lang) == typ {
-			return ch
-		}
-		if hit := findDescendantType(ch, lang, typ); hit != nil {
-			return hit
-		}
-	}
-	return nil
-}
-
 // topProgram builds the ⊤ program: no statements, Top set, and a reason.
 func topProgram(name, src string, errPos Pos, reason string) *Program {
 	p := &Program{File: name, Source: src, Top: true, Reason: reason, Stmts: []*Stmt{}}
@@ -516,6 +585,54 @@ func topProgram(name, src string, errPos Pos, reason string) *Program {
 		p.ErrPos = &ep
 	}
 	return p
+}
+
+// parseWithBudget runs parser.Parse under a deadline the analyser itself
+// enforces.
+//
+// gotreesitter's SetTimeoutMicros is only *advisory* in practice: the deadline
+// is polled from the parse loop (every 1024 checks) and the recursive
+// tree-materialisation paths — exactly the ones a nested or long single-line
+// source drives — can run for seconds between polls. The parser does honour its
+// caller-owned cancellation flag in the same places, so the deadline is enforced
+// from the outside: the parse runs on its own goroutine, and when the deadline
+// expires the caller returns a timeout immediately *and* raises the cancellation
+// flag, so the abandoned parse stops at its next poll instead of running to the
+// limits of the grammar.
+//
+// timeoutMicros == 0 disables the enforcement (the race-detector build's
+// advisory budget; see budget_race.go), in which case the parse is called
+// in-line and the parser's deterministic node/iteration limits are the bound.
+//
+// The goroutine writes to a buffered channel, so an abandoned parse never
+// blocks and never leaks; the tree it eventually builds is simply dropped.
+func parseWithBudget(parser *gotreesitter.Parser, src []byte, timeoutMicros uint64) (tree *gotreesitter.Tree, err error, timedOut bool) {
+	if timeoutMicros == 0 {
+		tree, err = parser.Parse(src)
+		return tree, err, false
+	}
+	var cancel uint32
+	parser.SetCancellationFlag(&cancel)
+	type parseResult struct {
+		tree *gotreesitter.Tree
+		err  error
+	}
+	done := make(chan parseResult, 1)
+	go func() {
+		t, e := parser.Parse(src)
+		done <- parseResult{tree: t, err: e}
+	}()
+	timer := time.NewTimer(time.Duration(timeoutMicros) * time.Microsecond)
+	defer timer.Stop()
+	select {
+	case r := <-done:
+		return r.tree, r.err, false
+	case <-timer.C:
+		// Ask the abandoned parse to stop, then report the budget as exhausted.
+		// The flag is read by the parser with atomic.LoadUint32.
+		atomic.StoreUint32(&cancel, 1)
+		return nil, nil, true
+	}
 }
 
 // ===========================================================================
@@ -547,6 +664,11 @@ type walker struct {
 	// name is the whole range: it is an expression, not an invocation, and must
 	// not be lowered as an unknown command.
 	skipRange bool
+	// inExpr reports that the walker is descending through an expression
+	// statement's value (`@(1,2)`, `$(1)`, `(Get-Date)`), where a nested
+	// pipeline is part of the expression — not a statement — so its value is not
+	// written to the output pipeline and must not be treated as one.
+	inExpr bool
 }
 
 // emit appends a statement to the current collection target.
@@ -604,6 +726,15 @@ func (w *walker) walk(n *gotreesitter.Node) {
 		// producing nothing. The clauses are not descended into, so their
 		// (conditionally executed) bodies are not reported as if unconditional.
 		w.emit(&Stmt{Kind: KindTop, Pos: w.pos(n), Reason: w.switchReason(n)})
+		return
+	case "pipeline":
+		// A pipeline node owns the pipeline chain (the stages) *and* the
+		// redirections attached to the pipeline itself. Redirection is a
+		// property of the pipeline, not of a command (specs/domains/
+		// powershell-frontend.md): `$x > f` writes f although there is no
+		// command stage to hang the redirection on, so the pipeline node — not
+		// command() — is the place every redirection is collected.
+		w.pipeline(n)
 		return
 	case "pipeline_chain":
 		// A pipeline's stages share a group id so the lowerer can establish
@@ -672,18 +803,146 @@ func (w *walker) walk(n *gotreesitter.Node) {
 	}
 }
 
-// pipelineNode walks a pipeline's stages under a shared group id (stamped onto
-// the command statements by emit) so the lowerer can establish the value flow
-// between stages. A pipeline with fewer than two direct command stages carries
-// no flow and is walked transparently.
-func (w *walker) pipelineNode(n *gotreesitter.Node) {
-	if len(directChildren(n, "command", w.lang)) < 2 {
+// pipeline walks a `pipeline` node: the pipeline chain (the stages) plus the
+// redirections attached to the pipeline itself. A redirection is a property of
+// the pipeline, so `> f` on an expression pipeline — `$x > f`, `(Get-Date) > f`,
+// `"x" > f` — writes f even though no command stage exists to carry it.
+func (w *walker) pipeline(n *gotreesitter.Node) {
+	chain := findDirect(n, "pipeline_chain", w.lang)
+	redirs := append(w.pipelineRedirs(chain), w.pipelineRedirs(n)...)
+	if chain == nil {
+		// A redirection-only pipeline: nothing to lower but its redirections.
+		w.emitRedirect(redirs, w.pos(n))
+		for i := 0; i < n.ChildCount(); i++ {
+			if ch := n.Child(i); ch != nil && ch.Type(w.lang) != "redirections" {
+				w.walk(ch)
+			}
+		}
+		return
+	}
+	if len(directChildren(chain, "command", w.lang)) < 2 {
 		// Only a top-level pipeline is an expression statement whose value is
 		// written to the output pipeline. Inside an assignment's right-hand
 		// side, a control-flow header or an argument the value is consumed
-		// (bound, iterated, passed) — never printed — and a string literal
-		// there is merely a nested token of a larger construct, so the
-		// transparent walk must stay.
+		// (bound, iterated, passed) — never printed — so the transparent walk
+		// must stay there.
+		if w.stmts == nil && !w.inArg && !w.inExpr {
+			w.expressionStatement(chain, redirs)
+			return
+		}
+		for i := 0; i < n.ChildCount(); i++ {
+			if ch := n.Child(i); ch != nil && ch.Type(w.lang) != "redirections" {
+				w.walk(ch)
+			}
+		}
+		// A nested pipeline's redirection still writes (or reads) its file:
+		// `$x = Get-Date > f` and `if ($x > f) { … }` both act on f.
+		w.emitRedirect(redirs, w.pos(n))
+		return
+	}
+	w.pipeStages(chain)
+	// The pipeline's own redirection (its output stream) is lowered after the
+	// stages that produce that output.
+	w.emitRedirect(redirs, w.pos(n))
+}
+
+// expressionStatement lowers a statement that is a bare expression: its value
+// is written to the output pipeline and any redirection attached to the
+// pipeline writes (or reads) its file.
+//
+// Only an expression that is *provably* a string literal is normalised to
+// Write-Output; every other shape is either walked (so a command, an assignment
+// or a static .NET invocation inside it is lowered as usual) or, when it is a
+// shape the walker does not model, degraded to ⊤. An expression statement that
+// vanished instead would be a silent miss: `[IO.File]::Delete("C:\d")`,
+// `[Diagnostics.Process]::Start("cmd.exe")` and a method call on a variable all
+// execute arbitrary .NET code and must never report nothing (SECURITY.md
+// no-silent-miss invariant).
+func (w *walker) expressionStatement(chain *gotreesitter.Node, redirs []*Redirect) {
+	if c := w.literalOutput(chain); c != nil {
+		// A redirected literal never reaches stdout: the redirection carries it
+		// into the file, so the Write-Output stage keeps the redirs and the
+		// lowerer reports the write instead of the Stdio effect.
+		c.Redirs = redirs
+		w.emit(&Stmt{Kind: KindCommand, Pos: c.Pos, Cmd: c})
+		return
+	}
+	before := len(w.prog.Stmts)
+	prevExpr := w.inExpr
+	w.inExpr = true
+	for i := 0; i < chain.ChildCount(); i++ {
+		if ch := chain.Child(i); ch != nil && ch.Type(w.lang) != "redirections" {
+			w.walk(ch)
+		}
+	}
+	w.inExpr = prevExpr
+	if len(w.prog.Stmts) == before {
+		// Nothing modelled in the expression: the value it evaluates to decides
+		// whether it can run code. A branching or unknown shape is ⊤.
+		if val := pipelineValueNode(chain, w.lang); val == nil || !isInertExpression(val, w.lang, w.src) {
+			w.emit(&Stmt{Kind: KindTop, Pos: w.pos(chain),
+				Reason: "expression statement is not modelled: " + w.exprText(chain)})
+		}
+	}
+	w.emitRedirect(redirs, w.pos(chain))
+}
+
+// exprText renders an expression node's source text for a ⊤ reason, shortened
+// so a huge expression does not bloat the report.
+func (w *walker) exprText(n *gotreesitter.Node) string {
+	t := strings.TrimSpace(n.Text(w.src))
+	if len(t) > 80 {
+		t = t[:80] + "…"
+	}
+	return t
+}
+
+// pipelineRedirs collects the `redirection` nodes attached to a pipeline (its
+// `redirections` child). A redirection written inside a command's element list
+// belongs to that command and is collected by elements() instead.
+func (w *walker) pipelineRedirs(n *gotreesitter.Node) []*Redirect {
+	var out []*Redirect
+	for i := 0; i < n.ChildCount(); i++ {
+		ch := n.Child(i)
+		if ch == nil || ch.Type(w.lang) != "redirections" {
+			continue
+		}
+		for j := 0; j < ch.ChildCount(); j++ {
+			if r := ch.Child(j); r != nil && r.Type(w.lang) == "redirection" {
+				out = append(out, w.redirect(r))
+			}
+		}
+	}
+	return out
+}
+
+// emitRedirect records the redirections of a pipeline that carries no command
+// stage. The lowerer lowers them as their own statement: a write of the target
+// file, so the effect participates in scoring and policy like any other write.
+func (w *walker) emitRedirect(rs []*Redirect, pos Pos) {
+	if len(rs) == 0 {
+		return
+	}
+	w.emit(&Stmt{Kind: KindRedirect, Pos: pos, Redirs: rs})
+}
+
+// pipeStages walks a multi-stage pipeline under a shared group id.
+func (w *walker) pipeStages(chain *gotreesitter.Node) {
+	w.pipeSeq++
+	prevGroup, prevArg := w.pipeGroup, w.inArg
+	w.pipeGroup, w.inArg = w.pipeSeq, false
+	for i := 0; i < chain.ChildCount(); i++ {
+		w.walk(chain.Child(i))
+	}
+	w.pipeGroup, w.inArg = prevGroup, prevArg
+}
+
+// pipelineNode walks a pipeline chain's stages under a shared group id (stamped
+// onto the command statements by emit) so the lowerer can establish the value
+// flow between stages. A chain with fewer than two direct command stages carries
+// no flow and is walked transparently.
+func (w *walker) pipelineNode(n *gotreesitter.Node) {
+	if len(directChildren(n, "command", w.lang)) < 2 {
 		if w.stmts == nil && !w.inArg {
 			if c := w.literalOutput(n); c != nil {
 				w.emit(&Stmt{Kind: KindCommand, Pos: c.Pos, Cmd: c})
@@ -695,13 +954,7 @@ func (w *walker) pipelineNode(n *gotreesitter.Node) {
 		}
 		return
 	}
-	w.pipeSeq++
-	prevGroup, prevArg := w.pipeGroup, w.inArg
-	w.pipeGroup, w.inArg = w.pipeSeq, false
-	for i := 0; i < n.ChildCount(); i++ {
-		w.walk(n.Child(i))
-	}
-	w.pipeGroup, w.inArg = prevGroup, prevArg
+	w.pipeStages(n)
 }
 
 // literalOutput recognises a pipeline whose only content is a string literal
@@ -709,25 +962,29 @@ func (w *walker) pipelineNode(n *gotreesitter.Node) {
 // implemented…"). PowerShell writes such a statement's value to the output
 // pipeline — unconsumed at the top level, that is the host's stdout — so the
 // statement is normalized to its semantic equivalent, Write-Output <literal>,
-// and the lowerer reports the same Stdio effect it reports for echo. A nil
-// return means the pipeline is not a pure literal (it carries a command, an
-// expression or an expandable string): the transparent walk then still finds
-// any statements nested inside it, so nothing is lost.
-func (w *walker) literalOutput(n *gotreesitter.Node) *Command {
-	if hasDescendantType(n, w.lang, "command") {
+// and the lowerer reports the same Stdio effect it reports for echo.
+//
+// The proof is deliberately strict: the pipeline must *be* a string literal —
+// one named-child chain from the chain node down to the string_literal node —
+// not merely contain one. A pipeline that also carries an expression node
+// (`[IO.File]::Delete("C:\d")`, `[scriptblock]::Create("…")`, a method call)
+// returns nil, so the caller descends and the ⊤ of the static invocation is
+// reported instead of a fabricated Write-Output.
+func (w *walker) literalOutput(chain *gotreesitter.Node) *Command {
+	if hasDescendantType(chain, w.lang, "command") {
 		return nil
 	}
-	lit := findDescendantType(n, w.lang, "string_literal")
-	if lit == nil {
+	val := pipelineValueNode(chain, w.lang)
+	if val == nil || val.Type(w.lang) != "string_literal" {
 		return nil
 	}
-	text := lit.Text(w.src)
+	text := val.Text(w.src)
 	if strings.Contains(text, "$(") {
 		// An expandable string may embed subexpressions; keep the transparent
 		// walk so their inner statements are still recognised.
 		return nil
 	}
-	pos := w.pos(lit)
+	pos := w.pos(val)
 	return &Command{
 		Pos:      pos,
 		Text:     text,
@@ -735,6 +992,101 @@ func (w *walker) literalOutput(n *gotreesitter.Node) *Command {
 		NameWord: &Word{Pos: pos, Text: "Write-Output", Literal: true},
 		Args:     []*Word{{Pos: pos, Text: text, Literal: true}},
 	}
+}
+
+// valueChainTypes are the expression node types the grammar layers between a
+// pipeline chain and the value it evaluates to (`pipeline_chain` →
+// logical_expression → … → unary_expression → <value>). unwrapValue follows
+// them while each node has exactly one named child.
+var valueChainTypes = map[string]bool{
+	"pipeline":                  true,
+	"pipeline_chain":            true,
+	"logical_expression":        true,
+	"bitwise_expression":        true,
+	"comparison_expression":     true,
+	"additive_expression":       true,
+	"multiplicative_expression": true,
+	"format_expression":         true,
+	"range_expression":          true,
+	"array_literal_expression":  true,
+	"unary_expression":          true,
+}
+
+// pipelineValueNode returns the node that carries the value of a single-stage
+// expression pipeline: the chain is unwrapped through the grammar's operator
+// layer while every level has exactly one named child. A chain that branches
+// (a command, two operands, a nested pipeline) yields nil — the value is then
+// not a single expression and must not be collapsed into one.
+func pipelineValueNode(chain *gotreesitter.Node, lang *gotreesitter.Language) *gotreesitter.Node {
+	cur := chain
+	for cur != nil && valueChainTypes[cur.Type(lang)] {
+		var named []*gotreesitter.Node
+		for _, ch := range namedChildren(cur) {
+			if ch.Type(lang) == "redirections" {
+				continue // a redirection is not part of the value
+			}
+			named = append(named, ch)
+		}
+		if len(named) != 1 {
+			return nil
+		}
+		cur = named[0]
+	}
+	return cur
+}
+
+// inertExprTypes are the node types a top-level expression statement may be
+// built from without being able to execute code: the operator/structure layer
+// of the expression grammar, the value literals, and the value reads
+// (a variable, a property, an element). Every other node type — in particular
+// an invokation_expression, a method call on an object, a script block or an
+// unknown future shape — makes the statement ⊤, so an expression the walker
+// does not model can never disappear from the report.
+var inertExprTypes = map[string]bool{
+	// structure / operators
+	"program": true, "statement_list": true, "pipeline": true, "pipeline_chain": true,
+	"logical_expression": true, "bitwise_expression": true, "comparison_expression": true,
+	"additive_expression": true, "multiplicative_expression": true, "format_expression": true,
+	"range_expression": true, "array_literal_expression": true, "unary_expression": true,
+	"parenthesized_expression": true, "sub_expression": true, "array_expression": true,
+	"hash_literal_expression": true, "hash_literal_body": true, "hash_entry": true,
+	"key_expression": true, "cast_expression": true, "expression_with_unary_operator": true,
+	"type_literal": true, "type_spec": true, "type_name": true, "type_identifier": true,
+	// values
+	"string_literal": true, "expandable_string_literal": true,
+	"verbatim_string_characters": true, "verbatim_here_string_characters": true,
+	"expandable_here_string_characters": true,
+	"integer_literal":                   true, "hex_integer_literal": true, "real_literal": true,
+	"decimal_integer_literal": true, "variable": true,
+	// value reads that execute nothing
+	"member_access": true, "element_access": true, "simple_name": true,
+	"generic_token": true,
+}
+
+// isInertExpression reports whether n is built only from inertExprTypes, i.e.
+// evaluating it cannot run code. A string literal that embeds a subexpression
+// (`"$(Remove-Item C:\d)"`) is not inert: the subexpression is executed.
+func isInertExpression(n *gotreesitter.Node, lang *gotreesitter.Language, src []byte) bool {
+	if n == nil {
+		return true
+	}
+	if !n.IsNamed() {
+		return true
+	}
+	t := n.Type(lang)
+	if !inertExprTypes[t] {
+		return false
+	}
+	if (t == "expandable_string_literal" || t == "expandable_here_string_characters") &&
+		strings.Contains(n.Text(src), "$(") {
+		return false
+	}
+	for i := 0; i < n.ChildCount(); i++ {
+		if !isInertExpression(n.Child(i), lang, src) {
+			return false
+		}
+	}
+	return true
 }
 
 // isRangeExpr reports whether n is the grammar's encoding of a PowerShell range

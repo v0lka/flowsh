@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # Processes, services and system control: systemd, the SysV/LSB service
 # wrappers, job scheduling (crontab, at, batch) and terminal multiplexers
@@ -63,6 +63,34 @@ commands:
         kind: positional
         effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: "daemon-reload"
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      # Finding 54: reboot-surviving state that the row did not enumerate, so
+      # an invocation naming one of them fell through to the index-order
+      # positional binding and reported a fabricated ProcSignal instead.
+      #   set-default TARGET  the default boot target (the next boot's state)
+      #   link PATH           installs a unit file into the unit search path
+      #   preset / preset-all (re)applies the distribution's enable/disable policy
+      #   reenable            re-applies the enablement symlinks
+      - spec: "set-default"
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: "link"
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: "preset"
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: "preset-all"
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: "reenable"
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: "isolate"
+        kind: positional
+        effect: {kind: Persist, mode: Direct, valueFrom: args}
+      - spec: "switch-root"
         kind: positional
         effect: {kind: Persist, mode: Direct, valueFrom: args}
       - spec: "kill"
@@ -264,6 +292,14 @@ commands:
   - name: batch
     dialect: systemd
     params:
+      # Finding 53: `batch` with no option schedules the commands it reads from
+      # standard input — the job outlives the invocation. Nothing on the
+      # command line names the schedule (no TIME operand is required), so the
+      # operation's intrinsic effect must be declared rather than left to the
+      # bare-invocation fallback, which reported only ProcSpawn.
+      - spec: batch
+        kind: self
+        effect: {kind: Persist, mode: Direct, valueFrom: self}
       - spec: "-f"
         kind: option
         effect: {kind: Persist, mode: Direct, valueFrom: flagValue}

@@ -1,8 +1,6 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,7 +8,8 @@ import (
 )
 
 // TestRootDistinctPerInputSource is the acceptance criterion that the report
-// names its source distinctly for file, stdin and argument input.
+// names its source distinctly for stdin and argument input. The analyser has no
+// file input: the CLI surface is the argument and stdin only (Finding 1).
 func TestRootDistinctPerInputSource(t *testing.T) {
 	// Argument input.
 	code, out, errStr := exec(t, []string{"--json", "ls -la"}, "")
@@ -38,37 +37,12 @@ func TestRootDistinctPerInputSource(t *testing.T) {
 	if got := decodeJSON(t, out).Root; got != api.RootStdin {
 		t.Errorf("dash root = %q, want %q", got, api.RootStdin)
 	}
-
-	// File input: the root is the path.
-	path := filepath.Join(t.TempDir(), "script.sh")
-	if err := os.WriteFile(path, []byte("rm -rf /tmp/x\n"), 0o600); err != nil {
-		t.Fatalf("write script: %v", err)
-	}
-	code, out, errStr = exec(t, []string{"--json", "--file", path}, "")
-	if code != 0 {
-		t.Fatalf("file: exit %d, stderr=%s", code, errStr)
-	}
-	rep := decodeJSON(t, out)
-	if rep.Root != path {
-		t.Errorf("file root = %q, want %q", rep.Root, path)
-	}
-	if rep.Lang != string(api.LangBash) {
-		t.Errorf("file lang = %q, want bash", rep.Lang)
-	}
-	if len(rep.Effects) == 0 {
-		t.Errorf("file input produced no effects")
-	}
 }
 
-// TestFileInputPositions checks that a why-step for a command read from a file
-// is located against that file's path, and that --explain renders the position.
-func TestFileInputPositions(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "script.sh")
-	if err := os.WriteFile(path, []byte("rm -rf /tmp/x\n"), 0o600); err != nil {
-		t.Fatalf("write script: %v", err)
-	}
-
-	code, out, errStr := exec(t, []string{"--json", "--file", path}, "")
+// TestExplainPositions checks that a why-step carries a source position and
+// that --explain renders it, for the stdin and argument sources.
+func TestExplainPositions(t *testing.T) {
+	code, out, errStr := exec(t, []string{"--json", "rm -rf /tmp/x"}, "")
 	if code != 0 {
 		t.Fatalf("exit %d, stderr=%s", code, errStr)
 	}
@@ -80,52 +54,18 @@ func TestFileInputPositions(t *testing.T) {
 				continue
 			}
 			located = true
-			if s.Loc.File != path {
-				t.Errorf("why %s: loc file = %q, want %q", w.Effect, s.Loc.File, path)
-			}
 		}
 	}
 	if !located {
-		t.Fatal("no why step carries a source location for the file input")
+		t.Fatal("no why step carries a source location")
 	}
 
 	// The human --explain view renders the position as @line:col.
-	_, out, errStr = exec(t, []string{"--file", path, "--explain"}, "")
+	code, out, errStr = exec(t, []string{"rm -rf /tmp/x", "--explain"}, "")
 	if code != 0 {
 		t.Fatalf("explain: exit %d, stderr=%s", code, errStr)
 	}
 	if !strings.Contains(out, "@1:") {
 		t.Errorf("--explain output does not render a position:\n%s", out)
-	}
-}
-
-// TestFileFlagUsageErrors checks the --file flag's misuse paths: conflicting
-// sources and a missing value are usage errors (2), while an unreadable file is
-// an input error (3).
-func TestFileFlagUsageErrors(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "script.sh")
-	if err := os.WriteFile(path, []byte("ls\n"), 0o600); err != nil {
-		t.Fatalf("write script: %v", err)
-	}
-	cases := []struct {
-		name string
-		args []string
-		want int
-	}{
-		{"file and command", []string{"--file", path, "ls"}, 2},
-		{"file and dash", []string{"--file", path, "-"}, 2},
-		{"file needs value", []string{"--file"}, 2},
-		{"missing file", []string{"--file", filepath.Join(t.TempDir(), "nope.sh")}, 3},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			code, _, errStr := exec(t, tc.args, "")
-			if code != tc.want {
-				t.Errorf("exit = %d, want %d (stderr=%s)", code, tc.want, errStr)
-			}
-			if errStr == "" {
-				t.Errorf("no diagnostic on stderr")
-			}
-		})
 	}
 }

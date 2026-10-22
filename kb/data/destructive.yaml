@@ -1,4 +1,4 @@
-version: effect-kb/v2
+version: effect-kb/v3
 # ---------------------------------------------------------------------------
 # Destructive-flags table.
 #
@@ -34,9 +34,29 @@ destructive:
     spec: "of="
     class: E
     reason: raw write to the destination; a device target destroys the filesystem or disk
+  # F100: gated on the resolved mode value (value: suid), exactly like the chmod
+  # row below — `install -m 755` is an ordinary metadata change, while 4755/2755
+  # (and a mode the analysis cannot read) installs a set-user-ID program. Both
+  # documented spellings are declared.
   - command: install
     spec: "-m"
     class: E
+    value: suid
+    reason: mode 4755 or 2755 sets the SUID/SGID bits, enabling privilege escalation
+  - command: install
+    spec: "--mode"
+    class: E
+    value: suid
+    reason: mode 4755 or 2755 sets the SUID/SGID bits, enabling privilege escalation
+  # F100: the same operation spelled as a permission change. The row is gated on
+  # the resolved mode value (value: suid) because a row keyed on MODE alone
+  # would classify every chmod; the binder evaluates the predicate from the
+  # literal mode operand (octal 4755/2755/6755, symbolic u+s/g+s/a+s/+s/=s,
+  # and --reference, whose mode is unknown).
+  - command: chmod
+    spec: MODE
+    class: E
+    value: suid
     reason: mode 4755 or 2755 sets the SUID/SGID bits, enabling privilege escalation
   - command: truncate
     spec: "-s"
@@ -62,6 +82,37 @@ destructive:
     spec: "-C"
     class: E
     reason: changes directory before the operation; with -x it writes into an arbitrary tree
+  # Finding 24: the POSIX first-argument option bundle is the same extraction
+  # operation as -x, so it carries the same class (parity: `tar xf A` must not
+  # grade below `tar -xf A`).
+  - command: tar
+    spec: x
+    class: E
+    reason: extracts the archive over the filesystem and clobbers existing files
+  - command: tar
+    spec: xf
+    class: E
+    reason: extracts the named archive over the filesystem and clobbers existing files
+  - command: tar
+    spec: xzf
+    class: E
+    reason: decompresses and extracts the archive over the filesystem, clobbering existing files
+  - command: tar
+    spec: xvf
+    class: E
+    reason: extracts verbosely over the filesystem and clobbers existing files
+  - command: tar
+    spec: xjf
+    class: E
+    reason: decompresses and extracts the archive over the filesystem, clobbering existing files
+  - command: tar
+    spec: --extract
+    class: E
+    reason: extracts the archive over the filesystem and clobbers existing files
+  - command: tar
+    spec: --get
+    class: E
+    reason: extracts the archive over the filesystem and clobbers existing files
   - command: wipefs
     spec: "-a"
     class: E
@@ -86,6 +137,15 @@ destructive:
     spec: "--delete"
     class: E
     reason: deletes destination files that are absent from the source
+  # Finding 75: rimraf is "a deep deletion module for node (like rm -rf)" in its
+  # own published description, so its operand is destroyed with its whole
+  # subtree. Without this row the command reported FSWrite/High while every
+  # sibling deletion spelling reported Critical, so a grade-keyed policy allowed
+  # the delete it denied through `rm -rf`.
+  - command: rimraf
+    spec: PATH
+    class: E
+    reason: recursively deletes the operand and its whole subtree, with no recovery path
   - command: hg
     spec: strip
     class: E
@@ -103,6 +163,22 @@ destructive:
     spec: eraseDisk
     class: E
     reason: erases and reformats a whole disk, destroying every volume and its data
+  - command: diskutil
+    spec: zeroDisk
+    class: E
+    reason: overwrites every block of a whole disk with zeros, destroying all data on it
+  - command: diskutil
+    spec: randomDisk
+    class: E
+    reason: overwrites every block of a whole disk with random data, destroying all data on it
+  - command: diskutil
+    spec: secureErase
+    class: E
+    reason: securely erases a whole disk, destroying every volume and its data
+  - command: diskutil
+    spec: partitionDisk
+    class: E
+    reason: rewrites the partition table, orphaning every volume and its data
   - command: parted
     spec: rm
     class: E
@@ -315,6 +391,11 @@ destructive:
     reason: deletes members from the archive in place
   - command: cpio
     spec: "-i"
+    class: D
+    reason: extracts members over the filesystem, replacing existing files
+  # Finding 24: the GNU long spelling of -i.
+  - command: cpio
+    spec: "--extract"
     class: D
     reason: extracts members over the filesystem, replacing existing files
 

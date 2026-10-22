@@ -247,11 +247,11 @@ commands:
 
 	// A second document disagreeing with the first is rejected.
 	old := KnownVersions
-	KnownVersions = []string{SchemaVersion, "effect-kb/v3"}
+	KnownVersions = []string{SchemaVersion, "effect-kb/v4"}
 	defer func() { KnownVersions = old }()
 	if _, err := loadSrc(map[string]string{
-		"a.yaml": "version: effect-kb/v2\ncommands: []\n",
-		"b.yaml": "version: effect-kb/v3\ncommands: []\n",
+		"a.yaml": "version: effect-kb/v3\ncommands: []\n",
+		"b.yaml": "version: effect-kb/v4\ncommands: []\n",
 	}); err == nil || !strings.Contains(err.Error(), "conflicts") {
 		t.Errorf("expected a version-conflict error, got: %v", err)
 	}
@@ -481,7 +481,11 @@ func TestSpotCheckEntries(t *testing.T) {
 	check("rm", "-i", engine.KindFSWrite, engine.ModeConditional, ValueArgs)
 	check("dd", "of=", engine.KindFSWrite, engine.ModeDirect, ValueFlagValue)
 	check("dd", "if=", engine.KindFSRead, engine.ModeDirect, ValueFlagValue)
-	check("install", "-m", engine.KindPrivEsc, engine.ModeConditional, ValueFlagValue)
+	// F100: the mode is a metadata declaration; whether it sets the identity bit
+	// is decided from the literal value by the binder, which asserts PrivEsc over
+	// the files install writes.
+	check("install", "-m", engine.KindFSMeta, engine.ModeDirect, ValueFlagValue)
+	check("install", "--mode", engine.KindFSMeta, engine.ModeDirect, ValueFlagValue)
 	check("sed", "-i", engine.KindFSWrite, engine.ModeDirect, ValueArgs)
 	check("find", "-delete", engine.KindFSWrite, engine.ModeDirect, ValueArgs)
 	check("tar", "-C", engine.KindFSWrite, engine.ModeDirect, ValueFlagValue)
