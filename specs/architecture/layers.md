@@ -24,8 +24,8 @@ a responsibility belongs to exactly one layer.
 | Knowledge base | `kb/` | `engine` | Hold the hand-verified command/parameter→effect dataset and the destructive-flags table; lower a matched parameter to an `engine.Effect`. |
 | Shell frontend | `front/bash/` | `engine` | Parse shell source and abstractly execute it, emitting the effects the shell itself contributes and delegating ordinary commands through a resolver seam. |
 | PowerShell frontend | `front/ps/` | `engine` | Parse PowerShell source and lower it into the effect IR, using its own alias/cmdlet tables. |
-| JavaScript frontend | `front/js/` | `engine` | Parse/evaluate bounded JavaScript values and control flow; calls degrade until models exist. |
-| Binding | `bind/` | `engine`, `kb`, `front/bash` | Resolve an invoked name and bind its flags/operands against the knowledge base, producing `[]engine.Effect`. |
+| JavaScript frontend | `front/js/` | `engine` | Parse/evaluate bounded values/control flow and builtin identities; delegate typed calls through an injected resolver. |
+| Binding | `bind/` | `engine`, `kb`, `front/bash`, `front/js` | Resolve an invoked name and bind its flags/operands against the knowledge base, producing `[]engine.Effect`. |
 | Composition | `internal/analysis/` | `engine`, `bind`, `front/bash`, `front/ps`, `front/js` | Wire the frontends, the binder and the core into one deterministic `Report`; the single facade behind the CLI and the embedding API. |
 | Public API | `api/` | `internal/analysis` | Re-export the facade as an embeddable Go API — type aliases, copied constants and forwarding functions only; holds no behaviour of its own ([ADR-0010](../decisions/0010-public-embedding-api.md)). |
 | Policy | `policy/` | `api`, `engine` | Evaluate reports using caller-owned rules; return a decision without changing or executing the analysis ([ADR-0017](../decisions/0017-report-policy-package.md)). |
@@ -78,7 +78,10 @@ The JavaScript sibling follows the same downward edges:
 
 ```
 internal/analysis ──► front/js ──► engine
+                  └─► bind ──► kb ──► engine
 ```
+
+`bind.BindJS` consumes frontend-local typed values and the separate JS YAML namespace; frontend imports stay directed toward engine. See [ADR-0020](../decisions/0020-javascript-filesystem-models.md).
 
 Key properties of the graph:
 

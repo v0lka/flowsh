@@ -246,9 +246,6 @@ commands:
 	}
 
 	// A second document disagreeing with the first is rejected.
-	old := KnownVersions
-	KnownVersions = []string{SchemaVersion, "effect-kb/v4"}
-	defer func() { KnownVersions = old }()
 	if _, err := loadSrc(map[string]string{
 		"a.yaml": "version: effect-kb/v3\ncommands: []\n",
 		"b.yaml": "version: effect-kb/v4\ncommands: []\n",

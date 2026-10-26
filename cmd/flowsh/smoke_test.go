@@ -95,6 +95,7 @@ func TestSmoke(t *testing.T) {
 		{api.LangBash, "rm -rf $HOME"},
 		{api.LangPowerShell, "Remove-Item -Recurse -Force $HOME"},
 		{api.LangJavaScript, "unknown();"},
+		{api.LangJavaScript, `const fs=require('fs');fs.readFileSync('/etc/passwd','utf8')`},
 	} {
 		t.Run(string(tc.lang)+" JSON", func(t *testing.T) {
 			out, code := runSmoke(t, bin, "", "--lang", string(tc.lang), "--json", tc.src)
@@ -105,8 +106,13 @@ func TestSmoke(t *testing.T) {
 			if rep.Lang != string(tc.lang) || len(rep.Effects) == 0 || rep.ToolVersion != api.ToolVersion {
 				t.Fatalf("unexpected report: %+v", rep)
 			}
-			if tc.lang == api.LangJavaScript && (len(rep.Effects) != 1 || rep.Top || !rep.Conservative || !rep.HasTop()) {
+			if tc.src == "unknown();" && (len(rep.Effects) != 1 || rep.Top || !rep.Conservative || !rep.HasTop()) {
 				t.Fatalf("expected a JavaScript top report, got %+v", rep)
+			}
+			if strings.Contains(tc.src, "readFileSync") {
+				if rep.Conservative || rep.Top || len(rep.Effects) != 1 || rep.Effects[0].Kind != engine.KindFSRead || len(rep.CommandCalls) != 1 || rep.CommandCalls[0].Resolved != "fs.readFileSync" {
+					t.Fatalf("filesystem report lost precision/metadata: %+v", rep)
+				}
 			}
 		})
 	}

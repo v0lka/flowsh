@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`front/js` parses JavaScript targeting Node.js and evaluates a bounded statement/expression subset. It produces values and control flow; function invocation, module resolution, and Node API effect knowledge remain later milestones (#34 and #29–#32/#36). Unsupported execution degrades to the shared top effect.
+`front/js` parses JavaScript targeting Node.js and evaluates a bounded statement/expression subset. It produces values and control flow; builtin module identity and filesystem/path knowledge flow through an injected YAML-backed binder; general function invocation and the remaining Node families belong to later milestones. Unsupported execution degrades to the shared top effect.
 
 ## Key Files
 
@@ -10,6 +10,7 @@
 - `front/js/parse.go` — pinned tree-sitter parsing and position-preserving normalization.
 - `front/js/value.go` — typed values, immutable container snapshots, case-sensitive lexical state, joins, and taint.
 - `front/js/expr.go` — expressions, literals, destructuring inputs, and conservative calls.
+- `front/js/modules.go` — trusted module/import bindings and model work charging.
 - `front/js/exec.go` — statements, scope, hoisting, completion states, loops, switch, and exceptions.
 - `front/js/analyze_test.go` — semantic matrix, resolver witnesses, bounds, concurrency, and fuzz seeds.
 - `front/js/regressions_test.go` — reachable-call, signed-zero, key, and identifier regressions.
@@ -29,15 +30,19 @@ type Result struct {
 }
 
 type Call struct {
-    Callee string
-    Args   []Value
-    Loc    engine.SourceLoc
+    Kind, Module, Export, Callee string
+    Args []Value
+    ArgLocs []engine.SourceLoc
+    Loc engine.SourceLoc
+    Charge func(int) // context work, charged before model materialization
 }
 type Resolution struct {
     Handled     bool
     Value       Value
     Effects     []engine.Effect
     Derivations []engine.Derivation
+    MayThrow bool
+    Reason string
 }
 type Resolver func(Call) Resolution
 
@@ -45,7 +50,7 @@ func Analyze(src string) *Result
 func AnalyzeWith(name, src string, resolver Resolver) *Result
 ```
 
-`Value` is a frontend-local lattice, separate from the frozen effect IR. Its zero value is unknown; exact elements include strings, numbers, booleans, null, undefined, function bodies, and bounded plain objects/arrays. A join preserves equal primitive values or identical immutable snapshots; disagreement becomes unknown. Taint always joins, independently of knownness. Unknown is distinct from JavaScript `undefined`.
+`Value` is a frontend-local lattice, separate from the frozen effect IR. Its zero value is unknown; exact elements include strings, numbers, booleans, null, undefined, function bodies, bounded plain objects/arrays, builtin modules/exports, trusted modeled promises, opaque filesystem content, and unknown booleans. A join preserves equal primitive values or identical immutable snapshots; disagreement becomes unknown. Taint always joins, independently of knownness. Unknown is distinct from JavaScript `undefined`.
 
 Numeric lattice equivalence follows [ECMAScript SameValue](https://tc39.es/ecma262/multipage/ecmascript-data-types-and-values.html#sec-numeric-types-number-sameValue): signed zeros differ and NaNs agree. JavaScript strict equality still equates the zero signs and rejects NaN equality. Unsupported primitive update conversions return unknown for both the stored value and the postfix result, preserving taint, and emit a conservative top effect with a reason; numeric updates remain exact.
 
@@ -53,7 +58,7 @@ Escaped identifiers are explicitly unsupported during normalization. Their raw s
 
 Catch parameters and each lexical loop iteration predeclare their pattern names before defaults run, preserving the temporal dead zone. Catch-parameter initialization throws join the catch's throwing outcomes before its lexical frame is removed. Finalizers run on those outcomes before an enclosing catch observes their state.
 
-Import locals remain initialized unknown bindings; class names retain lexical initialization, and generator declarations retain their binding. These declarations preserve shadowing without adding module loading or invocation semantics. Array spread widens mutable state because an unmodelled iterator can execute user code.
+Builtin imports initialize exact reviewed module/export identities during predeclaration, including hoisted ESM locals. Unsupported imports retain initialized unknown bindings and conservative initialization effects. Unshadowed `require` and extracted loader aliases resolve reviewed module spellings through the injected resolver. Module/property lookup uses evaluated identity; export mutation and unknown execution invalidate identities conservatively. Classes retain lexical initialization, and generators retain their binding. Array spread widens mutable state because unmodeled iterators can execute user code.
 
 State stores case-sensitive bindings in lexical frames, with initialization and constness. `var` declarations hoist to the analyzed unit's variable frame; `let`/`const` are predeclared in their block. Reads before lexical initialization and invalid writes degrade rather than invent a value. Branch clones share immutable container snapshots; unmodelled calls/writes invalidate potentially mutable state.
 
@@ -67,7 +72,7 @@ and the unshadowed built-in `undefined` retain exact types.
 
 ```text
 explicit --lang js/javascript/node/nodejs
-    -> facade -> js.AnalyzeWith(source label, source, nil)
+    -> facade -> js.AnalyzeWith(source label, source, BindJS resolver)
     -> pinned JavascriptLanguage parser -> owned normalized tree
     -> bounded evaluator (values + state + completion paths)
     -> Result{effects, derivations, Top/Conservative/Reason}
@@ -92,10 +97,10 @@ explicit --lang js/javascript/node/nodejs
 | `switch` | Test expressions in order, snapshot each possible entry, preserve fallthrough and default; shared case lexical frame | `TestSwitchEntryStates`, `TestValuesAndStatements` |
 | `try`/`catch`/`finally`, `throw`, `return` | Distinct normal/break/continue/return/throw outcomes; catch consumes throws; finally runs on every outcome and can override it | `TestFinallyOverridesAbruptCompletion`, `TestFunctionBodiesUseStatementEvaluator` |
 | Function declarations/expressions and arrows | Retain bodies as values; declarations produce no body effects; the statement evaluator can evaluate bodies in an isolated supplied state | `TestFunctionBodiesUseStatementEvaluator` |
-| `import`/`export` | Evaluate local exported declarations; external initialization remains unmodelled and degrades; imported bindings remain unknown | `TestValuesAndStatements`, `TestDegradeRules` |
-| `async`/`await` | Preserve async function bodies; sequential primitive await; unknown thenables degrade | `TestValuesAndStatements`, `TestDegradeRules` |
+| `import`/`export` | Evaluate local exported declarations; reviewed builtin namespaces/exports retain identity; unsupported external initialization degrades and binds unknown names | `TestValuesAndStatements`, `TestDegradeRules` |
+| `async`/`await` | Preserve async function bodies; sequential primitive/modeled-promise await with possible rejection; unknown thenables degrade | `TestValuesAndStatements`, `TestDegradeRules` |
 
-Function **invocation** always remains conservative in this milestone. Parameter binding, caller return propagation, recursion, closures, module aliases, callback invocation, defaults, and IIFEs belong to #34. The production evaluator does not traverse a dormant function as though it ran. `return` handling is exercised through the same body evaluator without implementing calls.
+Function **invocation** always remains conservative in this milestone. Parameter binding, caller return propagation, recursion, closures, precise callback invocation, defaults, and IIFEs belong to #34. Builtin module aliases are implemented for the filesystem slice. The production evaluator does not traverse a dormant function as though it ran. `return` handling is exercised through the same body evaluator without implementing calls.
 
 ### Explicit degradation table
 
@@ -110,24 +115,24 @@ Function **invocation** always remains conservative in this milestone. Parameter
 | Labels beyond an empty labelled statement | Top; labelled abrupt completion is unsupported |
 | Unknown literal property keys | Unknown + top; containers, reads, destructured values, and rest objects lose precision; exact empty-string keys remain supported |
 | Computed property keys beyond literal member/index keys | Evaluate the key's expressions, then unknown + top |
-| Prototype-dependent property access, object spread, property writes | Unknown + top; mutable state invalidated |
-| Calls/constructors, including user functions and Node APIs | Evaluate callee/arguments, return unknown + top unless an injected trusted resolver handles the call |
+| Prototype-dependent property access, object spread, property writes/export mutation | Unknown + top; mutable state invalidated |
+| Unresolved calls/constructors, including user functions and unmodeled Node APIs | Evaluate callee/arguments, return unknown + top unless an injected trusted resolver handles the call |
 | Unknown-value/object coercion or await of an unknown thenable | Unknown + top; retain possible throw path |
 | External module initialization | Unknown imported names + top; no runtime file resolution |
 
-The public facade supplies no JS resolver yet. The function-valued seam accepts typed arguments and returns values/effects/derivations without importing `bind`/`kb` into `front/js`. Test resolvers witness evaluation order and provenance; they are not Node API knowledge tables. The later binder must provide call metadata with the first effect family.
+The public facade injects `BindJS`. The function-valued seam accepts module/property requests and typed calls, and returns values/effects/derivations, possible throws, and conservative reasons without importing bind/KB into front/js. Constructors remain unmodeled. Work is charged before model execution, including reused strings and option records. Models share the existing 1024 argument/effect/derivation limits. `Value.String`, Kind, Boolean, Number, Property, and Keys expose bounded read-only model inputs; constructors create exact strings/undefined, reviewed builtin identities, opaque content, unknown booleans, and modeled promises. Projection supplies bounded report arguments. See the [filesystem contract](javascript-filesystem.md) and [ADR-0020](../decisions/0020-javascript-filesystem-models.md).
 
 ### Console and asynchronous policy
 
 `console.log` stdout does **not** fold into expression values. The evaluator does not capture stdout, inspect a Node process, or execute logging. Until a data-driven model exists, `console.log` is an unmodelled call and degrades. This explicitly differs from Bash command-substitution stdout folding. No Node API is special-cased in Go.
 
-`await` uses sequential value semantics only. Event-loop ordering, scheduling, arbitrary thenables, and async callback execution are outside this milestone.
+`await` uses sequential value semantics and trusted modeled-promise fulfillment/rejection. Event-loop ordering, scheduling, arbitrary thenables, and async callback execution are outside this milestone.
 
 ### Report behavior
 
 An understood effect-free program (including empty library input, declarations, finite pure loops, and dormant functions) returns `effects: []`, no uncertainty flags, and no canonical form. It validates but `Covered()` is false; policy denies it with `uncovered_report`, matching existing benign Bash no-ops. The frontend manufactures neither an effect nor a conservative flag to satisfy coverage.
 
-Unsupported reached execution, literal decoding, and primitive coercions emit Direct `CodeExec(ScopeTop())`, certain and irreversible, with a fixed reason and a source-located derivation. `Conservative` is true; `Top` marks a whole-unit failure, not every local unknown call or value. Abstract unknowns produced by supported operations, such as joining different branch values, remain valid lattice results and do not by themselves imply unsupported analysis. Shared scoring supplies Critical severity for top. The facade preserves input/root and version tags. Command binding metadata remains empty because no JS effect binder is installed.
+Unsupported reached execution, literal decoding, and primitive coercions emit Direct `CodeExec(ScopeTop())`, certain and irreversible, with a fixed reason and a source-located derivation. `Conservative` is true; `Top` marks a whole-unit failure, not every local unknown call or value. Abstract unknowns produced by supported operations, such as joining different branch values, remain valid lattice results and do not by themselves imply unsupported analysis. Shared scoring supplies Critical severity for top. The facade preserves input/root and version tags. The facade carries filesystem binding metadata, destructive classes, source evidence, and bound-target canonical effects.
 
 Whole-unit failures without a parsed source location use the fixed `literal:js-opaque` marker without a location; the diagnostic stays in `reason`. Earlier derivations retain their source locations when evaluation exhausts its budget.
 
@@ -169,11 +174,11 @@ String decoding/concatenation and state copying also consume the step budget.
 Invalid UTF-8 source degrades before parsing. Bounds are compile-time constants,
 not source-controlled settings.
 
-`Options.Root` labels report/why locations. `Options.Vars` remains Bash/POSIX-only and `Options.Windows` remains PowerShell-only. JS reads no host environment, files, runtime state, or module contents. CLI `--lang auto` still chooses Bash or PowerShell only; existing input validation and batch splitting apply.
+`Options.Root` labels report/why locations. `Options.Vars` remains Bash/POSIX-only and `Options.Windows` remains PowerShell-only. `Options.JavaScript` supplies explicit POSIX Home/Cwd context; nil uses symbolic home `/root` and unknown cwd. JS reads no host environment, files, runtime state, or module contents. CLI `--lang auto` still chooses Bash or PowerShell only; existing input validation and batch splitting apply.
 
 ## Extension Points
 
-#34 adds invocation semantics over retained function bodies. #36 supplies YAML-backed call resolution through the seam; #29–#32 add Node effect families. Each first effect family carries its report metadata, provenance, and corpus witnesses. The core IR and report field shapes retain their existing versions.
+#34 adds invocation semantics over retained function bodies and precise callback flows. #36 grows the YAML namespace beyond the filesystem/path slice; #30–#32 add the remaining Node effect families. Each first effect family carries its report metadata, provenance, and corpus witnesses. The core IR and report field shapes retain their existing versions.
 
 ## Related Specs
 

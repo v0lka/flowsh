@@ -28,13 +28,15 @@ import (
 // extended in place. v3 adds the per-parameter `also` list of secondary
 // effects (the same token contributes two independent effects, e.g. a package
 // manager's install both reaches a registry and rewrites the local store); a
-// v2 reader would reject the key, so the version is bumped again.
-const SchemaVersion = "effect-kb/v3"
+// v2 reader would reject the key, so the version is bumped again. v4 adds
+// separate JS module/call namespaces, including property-only constant
+// namespaces; shell signatures remain independent.
+const SchemaVersion = "effect-kb/v4"
 
 // KnownVersions lists every schema version the loader accepts. Keeping this an
 // explicit list (rather than an inline string comparison) makes version
 // handling a checked decision that can be extended without a schema break.
-var KnownVersions = []string{"effect-kb/v2", SchemaVersion}
+var KnownVersions = []string{"effect-kb/v2", "effect-kb/v3", SchemaVersion}
 
 // Known reports whether v is an accepted schema version.
 func Known(v string) bool {
@@ -547,9 +549,13 @@ type KB struct {
 	Version     string
 	Commands    []Command     // sorted by Name
 	Destructive []Destructive // sorted by (Command, Spec)
+	JSModules   []JSModule
+	JSCalls     []JSCall
 
-	byName  map[string]*Command
-	byDestr map[string]*Destructive
+	byName    map[string]*Command
+	byDestr   map[string]*Destructive
+	jsModules map[string]*JSModule
+	jsCalls   map[string]*JSCall
 }
 
 // Command resolves a command by name or by any of its aliases.
@@ -599,7 +605,7 @@ func (k *KB) Validate() error {
 			return fmt.Errorf("kb: destructive[%d]: %s: spec %q is not declared on the command", i, d.Command, d.Spec)
 		}
 	}
-	return nil
+	return k.validateJS()
 }
 
 // setOf builds a membership set from a slice of comparable values.

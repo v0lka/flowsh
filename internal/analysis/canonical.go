@@ -14,6 +14,7 @@ package analysis
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/v0lka/flowsh/bind"
@@ -164,20 +165,25 @@ func normalizeBinary(name string, args []string) (string, []string) {
 // identity is a comparable key for a call: two abstract executions of the same
 // call site (name, normalized binary, arguments, redirections) produce the same
 // identity, so a repeated call — a loop body — contributes one report entry.
+// Lengths and collection counts preserve boundaries even for embedded NULs.
 func (c CommandCall) identity() string {
 	var b strings.Builder
-	b.WriteString(c.Invoked)
-	b.WriteByte(0)
-	b.WriteString(c.Resolved)
-	for _, a := range c.Args {
-		b.WriteByte(0)
-		b.WriteString(a)
+	write := func(value string) {
+		b.WriteString(strconv.Itoa(len(value)))
+		b.WriteByte(':')
+		b.WriteString(value)
 	}
+	write(c.Invoked)
+	write(c.Resolved)
+	write(strconv.Itoa(len(c.Args)))
+	for _, a := range c.Args {
+		write(a)
+	}
+	write(strconv.Itoa(len(c.Redirs)))
 	for _, r := range c.Redirs {
-		b.WriteByte(0)
-		b.WriteString(r.Op)
-		b.WriteByte('=')
-		b.WriteString(r.Target)
+		write(r.Op)
+		write(r.Target)
+		write(strconv.FormatBool(r.Known))
 	}
 	return b.String()
 }

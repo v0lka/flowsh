@@ -103,6 +103,8 @@ type document struct {
 	Version     string
 	Commands    []Command
 	Destructive []Destructive
+	JSModules   []JSModule
+	JSCalls     []JSCall
 }
 
 // merge folds a parsed document into the knowledge base, enforcing that the
@@ -121,6 +123,8 @@ func (k *KB) merge(doc *document, src string) error {
 	}
 	k.Commands = append(k.Commands, doc.Commands...)
 	k.Destructive = append(k.Destructive, doc.Destructive...)
+	k.JSModules = append(k.JSModules, doc.JSModules...)
+	k.JSCalls = append(k.JSCalls, doc.JSCalls...)
 	return nil
 }
 
@@ -162,7 +166,7 @@ func (k *KB) build() error {
 		}
 		k.byDestr[key] = d
 	}
-	return nil
+	return k.buildJS()
 }
 
 var (
@@ -212,9 +216,24 @@ func parseDocument(raw []byte, src string) (*document, error) {
 				return nil, err
 			}
 			doc.Destructive = ds
+		case "jsModules":
+			ms, err := decodeJSModules(v)
+			if err != nil {
+				return nil, fmt.Errorf("kb: %s: jsModules: %w", src, err)
+			}
+			doc.JSModules = ms
+		case "jsCalls":
+			cs, err := decodeJSCalls(v)
+			if err != nil {
+				return nil, fmt.Errorf("kb: %s: jsCalls: %w", src, err)
+			}
+			doc.JSCalls = cs
 		default:
 			return nil, fmt.Errorf("kb: %s: unknown top-level key %q", src, key)
 		}
+	}
+	if doc.Version != SchemaVersion && (root.fields["jsModules"] != nil || root.fields["jsCalls"] != nil) {
+		return nil, fmt.Errorf("kb: %s: JS fields require %s", src, SchemaVersion)
 	}
 	return doc, nil
 }

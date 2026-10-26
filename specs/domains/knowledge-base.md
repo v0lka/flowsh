@@ -2,11 +2,13 @@
 
 ## Purpose
 
-The knowledge base (`kb`) is the effect dataset of the analysis: a hand-verified mapping from a command's command-line parameters to the effects those parameters contribute, plus a separate destructive-flags table. It is authored as YAML under `kb/data/*.yaml`, compiled into the binary with `go:embed`, and parsed at start-up without ever touching the filesystem. The document schema is frozen and versioned (`effect-kb/v2`), so a data file authored against an unknown schema is rejected rather than silently mis-read.
+The knowledge base (`kb`) is the effect dataset of the analysis: a hand-verified mapping from a command's command-line parameters to the effects those parameters contribute, plus a separate destructive-flags table. It is authored as YAML under `kb/data/*.yaml`, compiled into the binary with `go:embed`, and parsed at start-up without ever touching the filesystem. The document schema is frozen and versioned (`effect-kb/v4`), so a data file authored against an unknown schema is rejected rather than silently mis-read.
 
 ## Key Files
 
 - `kb/schema.go` — the frozen document schema and its types: `SchemaVersion`, `KnownVersions`, `Dialect`, `ParamKind`, `ValueSource`, `Effect`, `Param`, `Command`, `DestructiveClass`, `Destructive`, `KB`, and the validation methods.
+- `kb/js.go`, `kb/js_decode.go`, `kb/js_test.go` — JS schema, validated decoding/indexing, and rejection tests.
+- `kb/data/js-filesystem.yaml`, `kb/data/js-path.yaml` — filesystem API shapes and offline path/home operations.
 - `kb/loader.go` — the loader: `go:embed data/*.yaml`, `Load`/`loadFS`/`documentNames`, `EmbeddedFiles` (the sorted names of the embedded documents), the decode/merge/build/validate pipeline, `Default`, and a dependency-free minimal YAML reader.
 
 The `kb/data/` directory holds one YAML document per command tradition (discovery is automatic, so the set grows by adding files):
@@ -182,6 +184,12 @@ type Destructive struct {
 
 `DestructiveClass.Severity()` maps the class onto `engine.Destructiveness`.
 
+### JavaScript models
+
+JS knowledge uses separate `JSModules` and `JSCalls` collections and indexes. `JSModule` declares a canonical namespace, aliases, properties referring to canonical modules, integer constants exposed as exact numbers, and an `internal` flag for property-only namespaces (such as `fs.constants`) that `require`/`import` never resolve. `JSCall` declares Module/Export, Style, Operation, Return, MinArgs/MaxArgs, Options/ModeArg/DataArg, OptionShape/OptionKeys, FlagOption/FlagDefault, Effects, and Destructive. Omitted selectors use -1. `JSEffect` selects a required positional argument and a path/prefix target; `JSDestructive` selects recursive/force and carries the shared A–E severity class. Return models are unknown, undefined, opaque content, or unknown boolean. Styles are sync, callback, promise, stream, and pure; operation names select filesystem or bounded POSIX path/home behavior. See [JavaScript Filesystem Models](javascript-filesystem.md) for the full API matrix and conservative boundaries.
+
+`JSModule(name)` and `JSCall(module, export)` return reviewed identities without adding shell commands. Load rejects unknown keys, duplicate identities/aliases, invalid selectors/options/operations/returns/styles, conflicting module properties/constants/exports, non-integer or inexact (beyond ±2^53) constants, internal modules that declare aliases or are not referenced by a property, and broken module references. v2/v3 shell-only documents remain readable; v4 JS fields require v4 even when their collections are empty. All documents in one load use the same version.
+
 ### KB
 
 ```go
@@ -189,6 +197,8 @@ type KB struct {
 	Version     string        // the single schema version shared by all documents
 	Commands    []Command     // sorted by Name
 	Destructive []Destructive // sorted by (Command, Spec)
+	JSModules []JSModule
+	JSCalls []JSCall
 
 	byName  map[string]*Command     // keyed by name and every alias
 	byDestr map[string]*Destructive // keyed by "command|spec"
@@ -246,8 +256,8 @@ kb/data/*.yaml  (embedded via //go:embed data/*.yaml)
 
 ## Configuration
 
-- `SchemaVersion` = `"effect-kb/v3"` — the value every data file declares (`version: effect-kb/v3`). v3 adds the per-parameter `also` list; v2 added `fileRef`.
-- `KnownVersions` = `[]string{"effect-kb/v2", SchemaVersion}` — the explicit list the loader accepts; extend it to add a version.
+- `SchemaVersion` = `"effect-kb/v4"` — the value every data file declares (`version: effect-kb/v4`). v4 adds the separate JS namespaces/call models; v3 added `also`, and v2 added `fileRef`.
+- `KnownVersions` = `[]string{"effect-kb/v2", "effect-kb/v3", SchemaVersion}` — the explicit list the loader accepts; extend it to add a version.
 - `dataDir` = `"data"` — the directory inside the embedded FS holding the schema documents.
 - Document discovery accepts `.yaml` and `.yml`; at least one document must exist.
 - Supported YAML subset (a strict, documented subset — anything else is an explicit error): block mappings, block sequences, single-line flow collections, plain/single/double-quoted scalars, and `#` comments. Anchors, aliases, tags, multi-line scalars and tab indentation are rejected.

@@ -1,0 +1,369 @@
+{
+  "name": "JavaScript filesystem slice",
+  "description": "Node filesystem API families, identity, paths, and conservative boundaries for #29. GuardFall letters denote evasion categories, independently of KB severity.",
+  "cases": [
+    {
+      "id": "js-fs-readfile-sync",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.readFileSync('/etc/passwd','utf8')",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-readfile-promise",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');await fs.promises.readFile('/etc/passwd','utf8')",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-readfile-callback",
+      "group": "guardfall",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.readFile('/etc/passwd','utf8',()=>{})",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34.",
+      "category": "E"
+    },
+    {
+      "id": "js-fs-writefile-sync",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.writeFileSync('/tmp/out','data')",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-writefile-promise",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');await fs.promises.writeFile('/tmp/out','data')",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-writefile-callback",
+      "group": "guardfall",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.writeFile('/tmp/out','data',()=>{})",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34.",
+      "category": "E"
+    },
+    {
+      "id": "js-fs-appendfile-sync",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.appendFileSync('/tmp/out','data')",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-appendfile-promise",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');await fs.promises.appendFile('/tmp/out','data')",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-appendfile-callback",
+      "group": "guardfall",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.appendFile('/tmp/out','data',()=>{})",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34.",
+      "category": "E"
+    },
+    {
+      "id": "js-fs-unlink-sync",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.unlinkSync('/tmp/out')",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-unlink-promise",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');await fs.promises.unlink('/tmp/out')",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-unlink-callback",
+      "group": "guardfall",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.unlink('/tmp/out',()=>{})",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34.",
+      "category": "E"
+    },
+    {
+      "id": "js-fs-rename-sync",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.renameSync('/tmp/from','/tmp/to')",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-rename-promise",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');await fs.promises.rename('/tmp/from','/tmp/to')",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-rename-callback",
+      "group": "guardfall",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.rename('/etc/shadow','/tmp/to',()=>{})",
+      "note": "Destination credential provenance is asserted by TestJavaScriptFilesystemTransferTaint; callback execution retains explicit top until #34.",
+      "category": "E"
+    },
+    {
+      "id": "js-fs-mkdir-sync",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.mkdirSync('/tmp/tree',{recursive:true})",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-mkdir-promise",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');await fs.promises.mkdir('/tmp/tree',{recursive:true})",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-mkdir-callback",
+      "group": "guardfall",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.mkdir('/tmp/tree',{recursive:true},()=>{})",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34.",
+      "category": "E"
+    },
+    {
+      "id": "js-fs-rmdir-sync",
+      "group": "destructive",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.rmdirSync('/tmp/tree',{recursive:true})",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-rmdir-promise",
+      "group": "destructive",
+      "lang": "js",
+      "input": "const fs=require('node:fs');await fs.promises.rmdir('/tmp/tree',{recursive:true})",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-rmdir-callback",
+      "group": "guardfall",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.rmdir('/tmp/tree',{recursive:true},()=>{})",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34.",
+      "category": "E"
+    },
+    {
+      "id": "js-fs-rm-sync",
+      "group": "destructive",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.rmSync('/tmp/tree',{recursive:true,force:true})",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-rm-promise",
+      "group": "destructive",
+      "lang": "js",
+      "input": "const fs=require('node:fs');await fs.promises.rm('/tmp/tree',{recursive:true,force:true})",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-rm-callback",
+      "group": "guardfall",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.rm('/tmp/tree',{recursive:true,force:true},()=>{})",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34.",
+      "category": "E"
+    },
+    {
+      "id": "js-fs-copyfile-sync",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.copyFileSync('/tmp/from','/tmp/to')",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-copyfile-promise",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');await fs.promises.copyFile('/tmp/from','/tmp/to')",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-copyfile-callback",
+      "group": "guardfall",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.copyFile('/etc/shadow','/tmp/to',()=>{})",
+      "note": "Destination credential provenance is asserted by TestJavaScriptFilesystemTransferTaint; callback execution retains explicit top until #34.",
+      "category": "E"
+    },
+    {
+      "id": "js-fs-chmod-sync",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.chmodSync('/tmp/file',0o644)",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-chmod-promise",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');await fs.promises.chmod('/tmp/file',0o644)",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-chmod-callback",
+      "group": "guardfall",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.chmod('/tmp/file',0o644,()=>{})",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34.",
+      "category": "E"
+    },
+    {
+      "id": "js-fs-stat-sync",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.statSync('/tmp/file')",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-stat-promise",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');await fs.promises.stat('/tmp/file')",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-stat-callback",
+      "group": "guardfall",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.stat('/tmp/file',()=>{})",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34.",
+      "category": "E"
+    },
+    {
+      "id": "js-fs-mkdtemp-sync",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.mkdtempSync('/tmp/prefix-' )",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-mkdtemp-promise",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('node:fs');await fs.promises.mkdtemp('/tmp/prefix-' )",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34."
+    },
+    {
+      "id": "js-fs-mkdtemp-callback",
+      "group": "guardfall",
+      "lang": "js",
+      "input": "const fs=require('node:fs');fs.mkdtemp('/tmp/prefix-' ,()=>{})",
+      "note": "Specific filesystem mapping is asserted by TestJavaScriptFilesystemMatrix; callbacks retain explicit top until #34.",
+      "category": "E"
+    },
+    {
+      "id": "js-fs-createreadstream",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('fs');fs.createReadStream('/tmp/file')"
+    },
+    {
+      "id": "js-fs-createwritestream",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('fs');fs.createWriteStream('/tmp/file')"
+    },
+    {
+      "id": "js-fs-existssync",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('fs');fs.existsSync('/tmp/file')"
+    },
+    {
+      "id": "js-fs-home-path",
+      "group": "benign",
+      "lang": "js",
+      "input": "const fs=require('fs'),path=require('path'),os=require('os');fs.readFileSync(path.join(os.homedir(),'.ssh','id_rsa'))"
+    },
+    {
+      "id": "js-fs-named-import",
+      "group": "resolution",
+      "lang": "js",
+      "input": "import {readFileSync as read} from 'node:fs';read('/etc/passwd')"
+    },
+    {
+      "id": "js-fs-unknown-delete-options",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "const fs=require('fs');fs.rmSync('/tmp/tree',{recursive:missing,force:true})"
+    },
+    {
+      "id": "js-fs-mutated-export",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "const fs=require('fs');fs.rmSync=unknown;fs.rmSync('/tmp/tree',{recursive:true})"
+    },
+    {
+      "id": "js-fs-callback-hidden-delete",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "const fs=require('fs');fs.readFile('/tmp/file',()=>fs.rmSync('/tmp/tree',{recursive:true}))"
+    },
+    {
+      "id": "js-fs-namespace-identity-delete",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "import fs from 'node:fs';import * as ns from 'fs';if(ns!==fs)fs.rmSync('/tmp/tree',{recursive:true})"
+    },
+    {
+      "id": "js-fs-namespace-coercion-delete",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "import fs from 'fs';import * as ns from 'fs';try{`${ns}`}catch(e){fs.rmSync('/tmp/tree',{recursive:true})}"
+    },
+    {
+      "id": "js-fs-loader-type-delete",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "import fs from 'fs';if(typeof require==='undefined')fs.rmSync('/tmp/tree',{recursive:true})"
+    },
+    {
+      "id": "js-fs-loader-reference-delete",
+      "group": "guardfall",
+      "category": "C",
+      "lang": "js",
+      "input": "import fs from 'fs';try{require}catch(e){fs.rmSync('/tmp/tree',{recursive:true})}"
+    },
+    {
+      "id": "js-fs-hoisted-import",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "import fs from 'node:fs';fs.readFileSync('/etc/passwd');throw 0;import './payload.js'"
+    },
+    {
+      "id": "js-fs-hoisted-export",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "import fs from 'node:fs';fs.readFileSync('/etc/passwd');throw 0;export * from './payload.js'"
+    },
+    {
+      "id": "js-fs-read-error-delete",
+      "group": "destructive",
+      "lang": "js",
+      "input": "const fs=require('fs');try{fs.readFileSync('/missing')}catch(e){fs.rmSync('/tmp/tree',{recursive:true,force:true})}"
+    }
+  ]
+}

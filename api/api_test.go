@@ -8,6 +8,7 @@ package api_test
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -35,6 +36,67 @@ var probe = []probeCase{
 	{"posh secret read", api.LangPowerShell, `Get-Content ~/.aws/credentials`},
 	{"posh write", api.LangPowerShell, `Set-Content x y`},
 	{"js unsupported call", api.LangJavaScript, `unknown();`},
+	{"js filesystem read", api.LangJavaScript, `const fs=require('fs');fs.readFileSync('/etc/passwd','utf8')`},
+}
+
+func TestJavaScriptFilesystemPublicContract(t *testing.T) {
+	src := `import fs from 'node:fs';import {readFile} from 'node:fs/promises';const data=await readFile('/etc/passwd','utf8');fs.writeFileSync('/tmp/copy',data)`
+	rep, err := api.AnalyzeWith(api.LangJavaScript, src, api.Options{Root: "filesystem.js"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Conservative || rep.Top || rep.Commands != 2 || len(rep.CommandCalls) != 2 || rep.CommandCalls[0].Resolved != "fs/promises.readFile" || rep.CommandCalls[1].Resolved != "fs.writeFileSync" || len(rep.Canonical.Effects) != 2 {
+		t.Fatalf("public filesystem metadata/precision: %+v", rep)
+	}
+	foundWrite := false
+	for _, effect := range rep.Effects {
+		if effect.Kind == engine.KindFSWrite {
+			foundWrite = true
+			if !strings.Contains(effect.Target.String(), "/tmp/copy") || !strings.Contains(effect.Taint.String(), engine.TaintFileSystem) {
+				t.Fatalf("filesystem data flow lost: %+v", effect)
+			}
+		}
+	}
+	if !foundWrite {
+		t.Fatal("missing modeled write")
+	}
+	encoded, err := rep.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back api.Report
+	if err := json.Unmarshal(encoded, &back); err != nil || !reflect.DeepEqual(back.CommandCalls, rep.CommandCalls) {
+		t.Fatalf("filesystem call metadata roundtrip: %+v / %v", back.CommandCalls, err)
+	}
+	rep, err = api.AnalyzeWith(api.LangJavaScript, `const fs=require('fs'),path=require('path');fs.readFileSync(path.resolve('input'))`, api.Options{JavaScript: &api.JavaScriptContext{Home: "/home/test", Cwd: "/workspace"}})
+	if err != nil || rep.Conservative || !strings.Contains(rep.Effects[0].Target.String(), "/workspace/input") {
+		t.Fatalf("public context lost: %+v / %v", rep, err)
+	}
+}
+
+func TestJavaScriptCallArgumentBoundaries(t *testing.T) {
+	src := `const fs=require('fs');fs.writeFileSync('/tmp/x','a\u0000utf8');fs.writeFileSync('/tmp/x','a','utf8');fs.writeFileSync('/tmp/x','a','utf8')`
+	rep, err := api.Analyze(api.LangJavaScript, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Conservative || rep.Top || rep.Commands != 3 || len(rep.CommandCalls) != 2 {
+		t.Fatalf("distinct arguments collapsed or identical calls failed to deduplicate: %+v", rep)
+	}
+	want := [][]string{{"/tmp/x", "a\x00utf8"}, {"/tmp/x", "a", "utf8"}}
+	for i, call := range rep.CommandCalls {
+		if !reflect.DeepEqual(call.Args, want[i]) {
+			t.Errorf("call %d arguments = %q, want %q", i, call.Args, want[i])
+		}
+	}
+	encoded, err := rep.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back api.Report
+	if err := json.Unmarshal(encoded, &back); err != nil || !reflect.DeepEqual(back.CommandCalls, rep.CommandCalls) {
+		t.Fatalf("call arguments changed during JSON roundtrip: %+v / %v", back.CommandCalls, err)
+	}
 }
 
 // TestExportedSurfaceAnalyze drives Analyze for bash, posix, posh and js

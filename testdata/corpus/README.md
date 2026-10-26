@@ -5,12 +5,15 @@ directory is a `{name, description, cases[]}` bundle (see
 [Analysis Facade](../../specs/domains/analysis-report.md)). This README is
 documentation, not data — the loader reads only `*.json`.
 
+The corpus has 445 cases. The filesystem slice adds 51 witnesses with specific effect/target/metadata assertions in `TestJavaScriptFilesystemMatrix` and module regressions, alongside the zero-miss gate.
+
 ## Bundles
 
 | File | Group(s) | Content |
 | ---- | -------- | ------- |
 | `guardfall_bash.json`, `guardfall_posix.json`, `guardfall_posh.json` | `guardfall` | guard-evading classes A–E, both dialect families |
 | `guardfall_js.json` | `guardfall` | JavaScript A–E examples plus #28 control-flow, TDZ, async-iterator, budget, and nineteen review regressions (inherited reads, shadowing, signed zero, catch defaults, escaped identifiers, postfix conversion, unknown keys, null-receiver exceptions, default TDZ, spread mutation, and unsupported declarations); the bounded evaluator asserts conservative coverage without Node API effect recognition. |
+| `filesystem_js.json` | `benign`, `destructive`, `resolution`, `guardfall` | 39 real filesystem API shapes plus path/home, named import, unknown options, export mutation, hidden callback effects, and read-failure/catch witnesses. Ordinary writes/metadata changes use the benign precision group; recursive deletions carry class E. Callback bodies remain explicit top pending #34. |
 | `destructive_bash.json` | `destructive` | canonical destructive/recall cases |
 | `benign_bash.json` | `benign` | precision control (no ⊤/conservative) |
 | `ps_cases.json` | `ps` | PowerShell-specific recall cases |
@@ -18,11 +21,7 @@ documentation, not data — the loader reads only `*.json`.
 | `sudo_bash.json` | `destructive`, `benign` | sudo wrapper elevation (the refined `-u` doctrine): Direct PrivEsc on elevating invocations (including the `#0` UID spelling), de-elevation on an explicit non-root target, the repeated `-u` over an unresolved target (specs/domains/binding.md), the unpeeled path-qualified wrapper and the flag-only `sudo --version`/`sudo -l` pinned as accepted ⊤ false positives (SECURITY.md, Known Risks), bare `-g` bound as the invoking user, and the privilege wrapper over a code-execution sink (`sudo sh -c …`) |
 | `external_bash.json`, `external_posh.json` | `external_malicious`, `external_benign` | balanced sample (26+26 bash, 54+54 PowerShell) drawn from public labeled datasets |
 
-The JavaScript examples are authored for this repository and use no external
-dataset. Class B uses string-fragment joining as the JS counterpart of shell
-separator construction. All cases must retain an effect or top under the
-existing gate. They make no benign-precision claim; real effect and precision
-cases grow with later JavaScript milestones.
+The JavaScript examples are authored for this repository and use no external dataset. Class B uses string-fragment joining as the JS counterpart of shell separator construction. All cases must retain an effect or top under the existing gate. The original `guardfall_js.json` cases make no benign-precision claim; `filesystem_js.json` adds specific model and precision witnesses.
 
 ## The external set (provenance & methodology)
 

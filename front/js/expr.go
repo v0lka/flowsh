@@ -47,6 +47,10 @@ func (e *evaluator) eval(n *node, s *state) Value {
 			if n.text == "undefined" {
 				return undefined()
 			}
+			if n.text == "require" && !s.poisoned && e.resolver != nil {
+				e.possibleThrow(s)
+				return Value{kind: "loader"}
+			}
 			e.possibleThrow(s)
 			return Value{}
 		}
@@ -82,7 +86,8 @@ func (e *evaluator) eval(n *node, s *state) Value {
 			default:
 				e.degrade(c, "unsupported JavaScript template component")
 			}
-			if part.kind == "object" || part.kind == "function" || part.kind == "" {
+			switch part.kind {
+			case "", "object", "function", "module", "builtin", "promise", "loader":
 				e.unmodelled(c, s, "JavaScript object-to-string conversion is unmodelled")
 			}
 			text, ok := part.primitiveString()
@@ -192,8 +197,20 @@ func (e *evaluator) eval(n *node, s *state) Value {
 				return v
 			}
 		case "typeof":
+			if value.kind == "content" || value.kind == "loader" {
+				return unknown(value.Taint)
+			}
 			if value.kind != "" {
 				kind := value.kind
+				if kind == "boolean-unknown" {
+					kind = "boolean"
+				}
+				if kind == "module" || kind == "promise" {
+					kind = "object"
+				}
+				if kind == "builtin" {
+					kind = "function"
+				}
 				if kind == "null" {
 					kind = "object"
 				}
@@ -225,6 +242,10 @@ func (e *evaluator) eval(n *node, s *state) Value {
 		return unknown(value.Taint)
 	case "await_expression":
 		value := e.eval(n.first(), s)
+		if value.kind == "promise" && value.settled != nil {
+			e.possibleThrow(s)
+			return *value.settled
+		}
 		if value.kind == "" || value.kind == "object" || value.kind == "function" {
 			e.unmodelled(n, s, "JavaScript await of an unknown thenable")
 			return unknown(value.Taint)
@@ -266,6 +287,12 @@ func (e *evaluator) propertyKey(n *node, s *state) (string, bool) {
 }
 
 func (e *evaluator) readProperty(n *node, s *state, v Value, key string) Value {
+	if v.kind == "module" && !s.poisoned && e.resolver != nil {
+		r := e.resolver(Call{Kind: "property", Module: v.module, Export: key, Loc: e.location(n)})
+		if r.Handled {
+			return r.Value
+		}
+	}
 	if v.object == nil {
 		e.unmodelled(n, s, "JavaScript property access on an unknown or unsupported receiver")
 		return unknown(v.Taint)
@@ -358,16 +385,33 @@ func (e *evaluator) call(n *node, s *state) Value {
 		callee = n.get("constructor")
 	}
 	value := e.eval(callee, s)
-	call := Call{Loc: e.location(n)}
+	call := Call{Loc: e.location(n), Charge: e.charge}
+	if value.kind == "builtin" && !s.poisoned {
+		call.Module, call.Export = value.module, value.export
+	}
 	if callee != nil {
+		e.charge(len(callee.text))
 		call.Callee = callee.text
 	}
 	taint := value.Taint
 	if args := n.get("arguments"); args != nil {
 		for _, arg := range args.namedChildren() {
+			if len(call.Args) >= maxRecorded {
+				panic(budgetExhausted{})
+			}
 			v := e.eval(arg, s)
 			call.Args = append(call.Args, v)
+			call.ArgLocs = append(call.ArgLocs, e.location(arg))
+			e.charge(modelWork(v))
 			taint = taint.Join(v.Taint)
+		}
+	}
+	if value.kind == "loader" && !s.poisoned && n.kind == "call_expression" && len(call.Args) == 1 {
+		if module, ok := call.Args[0].String(); ok {
+			r := e.resolver(Call{Kind: "module", Module: module, Loc: call.Loc})
+			if r.Handled && r.Value.kind == "module" {
+				return r.Value
+			}
 		}
 	}
 	if value.kind != "function" && n.kind == "call_expression" && e.resolver != nil {
@@ -394,6 +438,12 @@ func (e *evaluator) call(n *node, s *state) Value {
 					panic(budgetExhausted{})
 				}
 				e.result.Derivations = append(e.result.Derivations, d)
+			}
+			if r.MayThrow {
+				e.possibleThrow(s)
+			}
+			if r.Reason != "" {
+				e.unmodelled(n, s, r.Reason)
 			}
 			return r.Value
 		}
@@ -430,7 +480,7 @@ func (e *evaluator) logical(n *node, s *state, left Value, op string) Value {
 func (e *evaluator) binary(op string, a, b Value, n *node, s *state) Value {
 	taint := a.Taint.Join(b.Taint)
 	result := Value{}
-	if a.kind == "" || b.kind == "" {
+	if a.imprecise() || b.imprecise() {
 		if op != "===" && op != "!==" {
 			e.unmodelled(n, s, "JavaScript coercion of an unknown value is unmodelled")
 		}

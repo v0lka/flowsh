@@ -6,6 +6,7 @@
 
 ## Key Files
 
+- `internal/analysis/javascript.go` — bounded JS call metadata, injected YAML binding, abstract home/cwd context, severity, and bound-target canonical effects.
 - `internal/analysis/analyze.go` — the facade: `Lang`, `ParseLang`, `Report`, `DestructiveFinding`, `Analyzer`, `NewAnalyzer`, `defaultAnalyzer`, `Options` (incl. `Root`, `Windows`, `Vars`), `Bool`, `RootArgument`/`RootStdin`, `Analyze`, `AnalyzeWith`.
 - `internal/corpus/corpus.go` — the test-only corpus harness: `Case`, group constants, `GuardFallClasses`, `LoadCorpus`, `Filter`, `CorpusDir`, `CorpusDirFrom` (language resolution stays in `internal/analysis`).
 - `internal/analysis/corpus_test.go` — conformance tests over the corpus (GuardFall coverage, destructive recall, PowerShell recall, benign precision, why-trace coverage, external-sample malicious coverage + benign precision).
@@ -20,7 +21,7 @@
 - `internal/analysis/canonical_test.go` — the retry-splitting repros (npx vs `node_modules/.bin` binary path; staged write + `mv` vs `sed -i`), the normalization table, the staging-fold boundary rules and the ⊤-survival invariant.
 - `cmd/flowsh/main.go` — the CLI front-end that consumes this facade (see [CLI](cli.md)).
 - `api/api.go` — the public embedding surface: a thin type-alias re-export of this facade for external Go modules (see [Public Embedding Surface](#public-embedding-surface-api)).
-- `testdata/corpus/*.json` — the corpus documents loaded by `LoadCorpus` (`benign_bash.json`, `destructive_bash.json`, `guardfall_bash.json`, `guardfall_posix.json`, `guardfall_posh.json`, `guardfall_js.json`, `resolution_bash.json`, `ps_cases.json`, `sudo_bash.json`, `external_bash.json`, `external_posh.json`); `testdata/corpus/README.md` documents the external balanced sample's provenance, licenses, methodology and the per-case `windows` provider-profile flag.
+- `testdata/corpus/*.json` — the corpus documents loaded by `LoadCorpus` (`benign_bash.json`, `destructive_bash.json`, `guardfall_bash.json`, `guardfall_posix.json`, `guardfall_posh.json`, `guardfall_js.json`, `filesystem_js.json`, `resolution_bash.json`, `ps_cases.json`, `sudo_bash.json`, `external_bash.json`, `external_posh.json`); `testdata/corpus/README.md` documents the external balanced sample's provenance, licenses, methodology and the per-case `windows` provider-profile flag.
 - `engine/effect.go`, `engine/score.go`, `engine/report.go` — the frozen core types embedded in `Report`.
 
 ## Core Types
@@ -138,6 +139,7 @@ type Options struct {
 	Windows *bool             // tri-state Registry toggle: nil = host default
 	Root    string            // source name stamped into Report.Root; empty = unset
 	Vars    map[string]string // host-known shell variable bindings (bash/POSIX only)
+	JavaScript *JavaScriptContext // explicit offline Home/Cwd; nil uses symbolic defaults
 }
 
 func Bool(v bool) *bool // helper for the tri-state Options.Windows field
@@ -202,7 +204,7 @@ Analyze(lang, src)                       analyze.go (package func)
         │
         └─ (*Analyzer).Analyze(lang, src)
                  │
-                 ├─ lang == LangJavaScript ─► analyzeJS(src, opts.Root)
+                 ├─ lang == LangJavaScript ─► a.analyzeJS(src, opts)
                  │        js.AnalyzeWith → bounded evaluation → shared assembly
                  │
                  ├─ lang == LangPowerShell ──► analyzePS(src, opts.psOptions(), opts.Root)
@@ -222,7 +224,7 @@ Analyze(lang, src)                       analyze.go (package func)
 
 `Encode()` (CLI `--json`) validates and marshals the report with two-space indent.
 
-The [JavaScript evaluator](javascript-frontend.md) parses bounded values/control flow and returns effects plus source-located derivations. Calls and unsupported execution degrade to top; whole-unit parse/budget failures additionally set Top. Pure understood source returns no effects and remains uncovered under policy. Shared scoring/why/canonical helpers preserve the wire contract. Input/root are preserved; call binding metadata remains empty until the JS binder lands. `Options.Windows` and `Options.Vars` are ignored.
+The [JavaScript evaluator](javascript-frontend.md) supplies bounded values/control flow; the facade injects `BindJS` for YAML-backed module identity, filesystem operations, and path helpers. The facade aggregates canonical module/export resolution, distinct call locations, bounded argument projections, destructive findings/severity, notes, and source-located derivations. It builds JS canonical effects directly from bound targets, preserving literal filename characters. Unsupported execution retains canonical top and a reason; pure understood source remains uncovered under policy. `Options.JavaScript` supplies explicit offline Home/Cwd context; nil uses symbolic home `/root` and unknown cwd, matching Bash's home abstraction. Empty supplied fields are unknown. Windows and Vars remain ignored by JS. The report shape stays flowsh/v3. The corpus contains 445 cases, including 51 filesystem witnesses; the latency limits and zero-miss floor remain unchanged.
 
 ## Invariants
 
@@ -264,7 +266,7 @@ The facade is consumed by external Go programs through the sibling top-level pac
 
 | Kind | `api/` name | Alias of |
 | --- | --- | --- |
-| type | `Lang`, `Report`, `DestructiveFinding`, `Analyzer`, `Options` | the same `analysis` types (`=`) |
+| type | `Lang`, `Report`, `DestructiveFinding`, `Analyzer`, `Options`, `JavaScriptContext` | the same `analysis` types (`=`) |
 | var | `Langs` | `analysis.Langs` |
 | const | `ToolName`, `SchemaVersion`, `ToolVersion`, `RootArgument`, `RootStdin`, `LangBash`, `LangPOSIX`, `LangPowerShell`, `LangJavaScript` | the same `analysis` constants |
 | func | `ParseLang`, `Analyze`, `AnalyzeWith`, `NewAnalyzer`, `Bool` | one-line forwarders to `analysis` |

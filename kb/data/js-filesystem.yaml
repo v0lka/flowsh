@@ -1,0 +1,621 @@
+version: effect-kb/v4
+jsModules:
+  - name: fs
+    aliases: [node:fs]
+    properties:
+      promises: fs/promises
+      constants: fs.constants
+  - name: fs/promises
+    aliases: [node:fs/promises]
+  # fs.constants is a frozen property namespace, not a requireable module
+  # (`fs/constants` is MODULE_NOT_FOUND). Only platform-independent members
+  # are listed; O_CREAT-style values differ per platform and stay unknown.
+  - name: fs.constants
+    internal: true
+    constants:
+      F_OK: 0
+      R_OK: 4
+      W_OK: 2
+      X_OK: 1
+      O_RDONLY: 0
+      O_WRONLY: 1
+      O_RDWR: 2
+      COPYFILE_EXCL: 1
+      COPYFILE_FICLONE: 2
+      COPYFILE_FICLONE_FORCE: 4
+jsCalls:
+  - module: fs
+    export: readFile
+    style: callback
+    operation: filesystem
+    return: content
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: encoding
+    optionKeys: [encoding, flag, signal]
+    flagOption: flag
+    flagDefault: r
+    effects:
+      - kind: FSRead
+        arg: 0
+        target: path
+  - module: fs
+    export: readFileSync
+    style: sync
+    operation: filesystem
+    return: content
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: encoding
+    optionKeys: [encoding, flag, signal]
+    flagOption: flag
+    flagDefault: r
+    effects:
+      - kind: FSRead
+        arg: 0
+        target: path
+  - module: fs/promises
+    export: readFile
+    style: promise
+    operation: filesystem
+    return: content
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: encoding
+    optionKeys: [encoding, flag, signal]
+    flagOption: flag
+    flagDefault: r
+    effects:
+      - kind: FSRead
+        arg: 0
+        target: path
+  - module: fs
+    export: writeFile
+    style: callback
+    operation: filesystem
+    return: undefined
+    minArgs: 2
+    maxArgs: 3
+    dataArg: 1
+    options: 2
+    optionShape: encoding
+    optionKeys: [encoding, mode, flag, flush, signal]
+    flagOption: flag
+    flagDefault: w
+    effects:
+      - kind: FSWrite
+        arg: 0
+        target: path
+  - module: fs
+    export: writeFileSync
+    style: sync
+    operation: filesystem
+    return: undefined
+    minArgs: 2
+    maxArgs: 3
+    dataArg: 1
+    options: 2
+    optionShape: encoding
+    optionKeys: [encoding, mode, flag, flush, signal]
+    flagOption: flag
+    flagDefault: w
+    effects:
+      - kind: FSWrite
+        arg: 0
+        target: path
+  - module: fs/promises
+    export: writeFile
+    style: promise
+    operation: filesystem
+    return: undefined
+    minArgs: 2
+    maxArgs: 3
+    dataArg: 1
+    options: 2
+    optionShape: encoding
+    optionKeys: [encoding, mode, flag, flush, signal]
+    flagOption: flag
+    flagDefault: w
+    effects:
+      - kind: FSWrite
+        arg: 0
+        target: path
+  - module: fs
+    export: appendFile
+    style: callback
+    operation: filesystem
+    return: undefined
+    minArgs: 2
+    maxArgs: 3
+    dataArg: 1
+    options: 2
+    optionShape: encoding
+    optionKeys: [encoding, mode, flag, flush]
+    flagOption: flag
+    flagDefault: a
+    effects:
+      - kind: FSWrite
+        arg: 0
+        target: path
+  - module: fs
+    export: appendFileSync
+    style: sync
+    operation: filesystem
+    return: undefined
+    minArgs: 2
+    maxArgs: 3
+    dataArg: 1
+    options: 2
+    optionShape: encoding
+    optionKeys: [encoding, mode, flag, flush]
+    flagOption: flag
+    flagDefault: a
+    effects:
+      - kind: FSWrite
+        arg: 0
+        target: path
+  - module: fs/promises
+    export: appendFile
+    style: promise
+    operation: filesystem
+    return: undefined
+    minArgs: 2
+    maxArgs: 3
+    dataArg: 1
+    options: 2
+    optionShape: encoding
+    optionKeys: [encoding, mode, flag, flush]
+    flagOption: flag
+    flagDefault: a
+    effects:
+      - kind: FSWrite
+        arg: 0
+        target: path
+  - module: fs
+    export: unlink
+    style: callback
+    operation: filesystem
+    return: undefined
+    minArgs: 1
+    maxArgs: 1
+    effects:
+      - kind: FSWrite
+        arg: 0
+        target: path
+  - module: fs
+    export: unlinkSync
+    style: sync
+    operation: filesystem
+    return: undefined
+    minArgs: 1
+    maxArgs: 1
+    effects:
+      - kind: FSWrite
+        arg: 0
+        target: path
+  - module: fs/promises
+    export: unlink
+    style: promise
+    operation: filesystem
+    return: undefined
+    minArgs: 1
+    maxArgs: 1
+    effects:
+      - kind: FSWrite
+        arg: 0
+        target: path
+  - module: fs
+    export: rename
+    style: callback
+    operation: filesystem
+    return: undefined
+    minArgs: 2
+    maxArgs: 2
+    effects:
+      - kind: FSMeta
+        arg: 0
+        target: path
+      - kind: FSWrite
+        arg: 1
+        target: path
+  - module: fs
+    export: renameSync
+    style: sync
+    operation: filesystem
+    return: undefined
+    minArgs: 2
+    maxArgs: 2
+    effects:
+      - kind: FSMeta
+        arg: 0
+        target: path
+      - kind: FSWrite
+        arg: 1
+        target: path
+  - module: fs/promises
+    export: rename
+    style: promise
+    operation: filesystem
+    return: undefined
+    minArgs: 2
+    maxArgs: 2
+    effects:
+      - kind: FSMeta
+        arg: 0
+        target: path
+      - kind: FSWrite
+        arg: 1
+        target: path
+  - module: fs
+    export: mkdir
+    style: callback
+    operation: filesystem
+    return: unknown
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: mode
+    optionKeys: [mode, recursive]
+    effects:
+      - kind: FSMeta
+        arg: 0
+        target: path
+  - module: fs
+    export: mkdirSync
+    style: sync
+    operation: filesystem
+    return: unknown
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: mode
+    optionKeys: [mode, recursive]
+    effects:
+      - kind: FSMeta
+        arg: 0
+        target: path
+  - module: fs/promises
+    export: mkdir
+    style: promise
+    operation: filesystem
+    return: unknown
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: mode
+    optionKeys: [mode, recursive]
+    effects:
+      - kind: FSMeta
+        arg: 0
+        target: path
+  - module: fs
+    export: rmdir
+    style: callback
+    operation: filesystem
+    return: undefined
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: record
+    optionKeys: [recursive, maxRetries, retryDelay]
+    effects:
+      - kind: FSMeta
+        arg: 0
+        target: path
+    destructive:
+      - option: recursive
+        class: E
+        reason: recursively removes a directory tree
+  - module: fs
+    export: rmdirSync
+    style: sync
+    operation: filesystem
+    return: undefined
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: record
+    optionKeys: [recursive, maxRetries, retryDelay]
+    effects:
+      - kind: FSMeta
+        arg: 0
+        target: path
+    destructive:
+      - option: recursive
+        class: E
+        reason: recursively removes a directory tree
+  - module: fs/promises
+    export: rmdir
+    style: promise
+    operation: filesystem
+    return: undefined
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: record
+    optionKeys: [recursive, maxRetries, retryDelay]
+    effects:
+      - kind: FSMeta
+        arg: 0
+        target: path
+    destructive:
+      - option: recursive
+        class: E
+        reason: recursively removes a directory tree
+  - module: fs
+    export: rm
+    style: callback
+    operation: filesystem
+    return: undefined
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: record
+    optionKeys: [recursive, force, maxRetries, retryDelay]
+    effects:
+      - kind: FSWrite
+        arg: 0
+        target: path
+    destructive:
+      - option: recursive
+        class: E
+        reason: recursively removes a directory tree
+      - option: force
+        class: E
+        reason: forced deletion suppresses missing-file errors
+  - module: fs
+    export: rmSync
+    style: sync
+    operation: filesystem
+    return: undefined
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: record
+    optionKeys: [recursive, force, maxRetries, retryDelay]
+    effects:
+      - kind: FSWrite
+        arg: 0
+        target: path
+    destructive:
+      - option: recursive
+        class: E
+        reason: recursively removes a directory tree
+      - option: force
+        class: E
+        reason: forced deletion suppresses missing-file errors
+  - module: fs/promises
+    export: rm
+    style: promise
+    operation: filesystem
+    return: undefined
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: record
+    optionKeys: [recursive, force, maxRetries, retryDelay]
+    effects:
+      - kind: FSWrite
+        arg: 0
+        target: path
+    destructive:
+      - option: recursive
+        class: E
+        reason: recursively removes a directory tree
+      - option: force
+        class: E
+        reason: forced deletion suppresses missing-file errors
+  - module: fs
+    export: copyFile
+    style: callback
+    operation: filesystem
+    return: undefined
+    minArgs: 2
+    maxArgs: 3
+    options: 2
+    optionShape: number
+    effects:
+      - kind: FSRead
+        arg: 0
+        target: path
+      - kind: FSWrite
+        arg: 1
+        target: path
+  - module: fs
+    export: copyFileSync
+    style: sync
+    operation: filesystem
+    return: undefined
+    minArgs: 2
+    maxArgs: 3
+    options: 2
+    optionShape: number
+    effects:
+      - kind: FSRead
+        arg: 0
+        target: path
+      - kind: FSWrite
+        arg: 1
+        target: path
+  - module: fs/promises
+    export: copyFile
+    style: promise
+    operation: filesystem
+    return: undefined
+    minArgs: 2
+    maxArgs: 3
+    options: 2
+    optionShape: number
+    effects:
+      - kind: FSRead
+        arg: 0
+        target: path
+      - kind: FSWrite
+        arg: 1
+        target: path
+  - module: fs
+    export: chmod
+    style: callback
+    operation: filesystem
+    return: undefined
+    minArgs: 2
+    maxArgs: 2
+    modeArg: 1
+    effects:
+      - kind: FSMeta
+        arg: 0
+        target: path
+  - module: fs
+    export: chmodSync
+    style: sync
+    operation: filesystem
+    return: undefined
+    minArgs: 2
+    maxArgs: 2
+    modeArg: 1
+    effects:
+      - kind: FSMeta
+        arg: 0
+        target: path
+  - module: fs/promises
+    export: chmod
+    style: promise
+    operation: filesystem
+    return: undefined
+    minArgs: 2
+    maxArgs: 2
+    modeArg: 1
+    effects:
+      - kind: FSMeta
+        arg: 0
+        target: path
+  - module: fs
+    export: stat
+    style: callback
+    operation: filesystem
+    return: unknown
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: record
+    optionKeys: [bigint, throwIfNoEntry]
+    effects:
+      - kind: FSRead
+        arg: 0
+        target: path
+  - module: fs
+    export: statSync
+    style: sync
+    operation: filesystem
+    return: unknown
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: record
+    optionKeys: [bigint, throwIfNoEntry]
+    effects:
+      - kind: FSRead
+        arg: 0
+        target: path
+  - module: fs/promises
+    export: stat
+    style: promise
+    operation: filesystem
+    return: unknown
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: record
+    optionKeys: [bigint, throwIfNoEntry]
+    effects:
+      - kind: FSRead
+        arg: 0
+        target: path
+  - module: fs
+    export: mkdtemp
+    style: callback
+    operation: filesystem
+    return: unknown
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: encoding
+    optionKeys: [encoding]
+    effects:
+      - kind: FSWrite
+        arg: 0
+        target: prefix
+  - module: fs
+    export: mkdtempSync
+    style: sync
+    operation: filesystem
+    return: unknown
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: encoding
+    optionKeys: [encoding]
+    effects:
+      - kind: FSWrite
+        arg: 0
+        target: prefix
+  - module: fs/promises
+    export: mkdtemp
+    style: promise
+    operation: filesystem
+    return: unknown
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: encoding
+    optionKeys: [encoding]
+    effects:
+      - kind: FSWrite
+        arg: 0
+        target: prefix
+  - module: fs
+    export: existsSync
+    style: sync
+    operation: filesystem
+    return: boolean
+    minArgs: 1
+    maxArgs: 1
+    effects:
+      - kind: FSRead
+        arg: 0
+        target: path
+  - module: fs
+    export: createReadStream
+    style: stream
+    operation: filesystem
+    return: unknown
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: encoding
+    optionKeys: [encoding, flags, mode, fd, fs, autoClose, emitClose, start, end, highWaterMark, signal, flush]
+    flagOption: flags
+    flagDefault: r
+    effects:
+      - kind: FSRead
+        arg: 0
+        target: path
+  - module: fs
+    export: createWriteStream
+    style: stream
+    operation: filesystem
+    return: unknown
+    minArgs: 1
+    maxArgs: 2
+    options: 1
+    optionShape: encoding
+    optionKeys: [encoding, flags, mode, fd, fs, autoClose, emitClose, start, end, highWaterMark, signal, flush]
+    flagOption: flags
+    flagDefault: w
+    effects:
+      - kind: FSWrite
+        arg: 0
+        target: path

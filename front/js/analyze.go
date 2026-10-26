@@ -14,9 +14,15 @@ const (
 
 // Call is a reached call site with abstract arguments.
 type Call struct {
-	Callee string
-	Args   []Value
-	Loc    engine.SourceLoc
+	Kind    string // module, property, or call (empty also means call)
+	Module  string
+	Export  string
+	Callee  string
+	Args    []Value
+	ArgLocs []engine.SourceLoc
+	Loc     engine.SourceLoc
+	// Charge spends the work budget before modeling context.
+	Charge func(int)
 }
 
 // Resolution supplies trusted effects and an abstract return value.
@@ -26,6 +32,8 @@ type Resolution struct {
 	Value       Value
 	Effects     []engine.Effect
 	Derivations []engine.Derivation
+	MayThrow    bool
+	Reason      string
 }
 
 // Resolver models calls without importing bind or the KB.

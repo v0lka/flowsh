@@ -17,11 +17,7 @@ never executes, fetches, or writes anything it analyses. Its value is as a
 **safety guardrail** that a human operator, a CI gate, or an agent runtime
 consults before deciding whether a command is safe to run.
 
-JavaScript source is also accepted through the bounded `front/js` evaluator.
-Unmodelled execution emits `CodeExec(⊤)` with `conservative` true; parser and
-analysis-bound failures also set `top`. Pure understood programs may produce
-empty-effect reports, which remain uncovered and deny under report policy.
-Function invocation and Node API effect models remain outside this milestone.
+JavaScript source is also accepted through the bounded `front/js` evaluator. Unmodelled execution emits `CodeExec(⊤)` with `conservative` true; parser and analysis-bound failures also set `top`. Pure understood programs may produce empty-effect reports, which remain uncovered and deny under report policy. Reviewed builtin filesystem/path models are interpreted through an injected YAML-backed binder; callback execution and general function invocation remain conservative. Home/cwd use explicit abstract context, with no host-state reads.
 
 ## Supported Versions
 
@@ -703,8 +699,8 @@ repository:
 | [.github/workflows/release.yml](.github/workflows/release.yml) | Release pipeline, triggered by a `vX.Y.Z` tag: validates the tag shape, re-runs `go mod verify`, `govulncheck`, `go vet` and the test gates on the tagged commit, then GoReleaser publishes a GitHub Release (OS/arch archives + `checksums.txt`); a second job attests SLSA build provenance (`actions/attest-build-provenance`). Least privilege: the workflow pins `permissions: contents: read` and widens per job (`contents: write` to publish; `id-token`/`attestations` to attest). |
 | [.goreleaser.yaml](.goreleaser.yaml) | GoReleaser release configuration: cross-build matrix, `-ldflags` build stamp, archive naming, SHA-256 checksums and changelog generation. |
 | [go.mod](go.mod) / [go.sum](go.sum) | Dependency graph and exact-version pinning (hash verification). |
-| [kb/data/](kb/data) (`kb/data/*.yaml` — 23 reviewed documents: `archive`, `bsd`, `build`, `builtins`, `cloud`, `codehost`, `containers`, `coreutils`, `datatools`, `destructive`, `findutils`, `gnu`, `linting`, `net`, `pkgmgr`, `plumbing`, `procps`, `remote`, `security`, `systemd`, `toolchain`, `util-linux`, `vcs`) | Embedded, reviewed knowledge-base dataset — security-sensitive to change. |
-| [kb/schema.go](kb/schema.go) | Frozen, versioned knowledge-base document schema (`effect-kb/v2`). |
+| [kb/data/](kb/data) (`kb/data/*.yaml` — 25 reviewed documents: `archive`, `bsd`, `build`, `builtins`, `cloud`, `codehost`, `containers`, `coreutils`, `datatools`, `destructive`, `findutils`, `gnu`, `linting`, `net`, `pkgmgr`, `plumbing`, `procps`, `remote`, `security`, `systemd`, `toolchain`, `util-linux`, `vcs`, `js-filesystem`, `js-path`) | Embedded, reviewed knowledge-base dataset — security-sensitive to change. |
+| [kb/schema.go](kb/schema.go) | Frozen, versioned knowledge-base document schema (`effect-kb/v4`). |
 | [testdata/corpus/](testdata/corpus) | Conformance corpus (GuardFall A–E, destructive, benign, PS) — the no-silent-miss gate. |
 | [AGENTS.md](AGENTS.md) | Instructions for AI coding agents; points to this policy. |
 | [specs/](specs) | System specifications and ADRs that fix the invariants this policy protects. |
