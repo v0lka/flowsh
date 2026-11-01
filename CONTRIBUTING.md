@@ -120,7 +120,7 @@ go run ./cmd/flowsh --lang bash --json 'rm -rf $HOME'
 ### CI gates
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and PR
-across a three-OS matrix (`ubuntu-latest`, `windows-latest`, and `macos-latest`),
+across a three-OS matrix (`ubuntu-latest`, `windows-latest`, and `macos-15`),
 so the same steps run on all three runners — the `-race` step excepted, which
 runs on Linux only for the reason given in step 11:
 

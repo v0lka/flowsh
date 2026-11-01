@@ -14,7 +14,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # macOS is pinned to the oldest supported image, not the floating
+        # macos-latest label: that label migrated to macOS 26 in June 2026
+        # and will drift again, silently re-timing the latency gates below.
+        # macos-14 images were retired on 2026-11-02, so macos-15 is the
+        # floor (see specs/decisions/0019 for a prior macOS-runner trip).
+        os: [ubuntu-latest, windows-latest, macos-15]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     # The POSIX shell (bash) is selected explicitly so the same steps run

@@ -313,7 +313,7 @@ The report deliberately embeds attacker-controlled text. Requirements:
   unresolved placeholders in this policy; all relative Markdown links resolve),
   the corpus + latency/recall gates (which include the CLI smoke test
   `cmd/flowsh/smoke_test.go`), and `go test -race` on a three-OS matrix
-  (`ubuntu-latest`, `windows-latest`, `macos-latest`; the `-race` step runs on
+  (`ubuntu-latest`, `windows-latest`, `macos-15`; the `-race` step runs on
   Linux only, while the vulnerability scan runs on every runner because
   `govulncheck` resolves the call graph for the host `GOOS`/`GOARCH`), and MUST
   operate with least privilege (the workflow pins `permissions: contents: read`)
@@ -699,7 +699,7 @@ repository:
 
 | File | Purpose |
 | ---- | ------- |
-| [.github/workflows/ci.yml](.github/workflows/ci.yml) | CI gate (matrix: `ubuntu-latest`, `windows-latest`, `macos-latest`): `gofmt`, `go build`, `go vet`, `go mod verify`, `govulncheck` (every runner — the scanner resolves the call graph per `GOOS`/`GOARCH`), `golangci-lint`, `deadcode -test`, docs hygiene (no unresolved placeholders in [SECURITY.md](SECURITY.md); links resolve), corpus + latency/recall tests (incl. the CLI smoke test [`cmd/flowsh/smoke_test.go`](cmd/flowsh/smoke_test.go)), bench smoke, `go test -race` (Linux only); pins `permissions: contents: read`. |
+| [.github/workflows/ci.yml](.github/workflows/ci.yml) | CI gate (matrix: `ubuntu-latest`, `windows-latest`, `macos-15`): `gofmt`, `go build`, `go vet`, `go mod verify`, `govulncheck` (every runner — the scanner resolves the call graph per `GOOS`/`GOARCH`), `golangci-lint`, `deadcode -test`, docs hygiene (no unresolved placeholders in [SECURITY.md](SECURITY.md); links resolve), corpus + latency/recall tests (incl. the CLI smoke test [`cmd/flowsh/smoke_test.go`](cmd/flowsh/smoke_test.go)), bench smoke, `go test -race` (Linux only); pins `permissions: contents: read`. |
 | [.github/workflows/release.yml](.github/workflows/release.yml) | Release pipeline, triggered by a `vX.Y.Z` tag: validates the tag shape, re-runs `go mod verify`, `govulncheck`, `go vet` and the test gates on the tagged commit, then GoReleaser publishes a GitHub Release (OS/arch archives + `checksums.txt`); a second job attests SLSA build provenance (`actions/attest-build-provenance`). Least privilege: the workflow pins `permissions: contents: read` and widens per job (`contents: write` to publish; `id-token`/`attestations` to attest). |
 | [.goreleaser.yaml](.goreleaser.yaml) | GoReleaser release configuration: cross-build matrix, `-ldflags` build stamp, archive naming, SHA-256 checksums and changelog generation. |
 | [go.mod](go.mod) / [go.sum](go.sum) | Dependency graph and exact-version pinning (hash verification). |
