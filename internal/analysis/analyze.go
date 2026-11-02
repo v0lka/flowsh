@@ -19,8 +19,8 @@ import (
 	"github.com/v0lka/flowsh/bind"
 	"github.com/v0lka/flowsh/engine"
 	"github.com/v0lka/flowsh/front/bash"
-	"github.com/v0lka/flowsh/front/js"
 	"github.com/v0lka/flowsh/front/ps"
+	"github.com/v0lka/flowsh/kb"
 )
 
 const (
@@ -111,26 +111,11 @@ type Report struct {
 	Top             bool                   `json:"top"`
 	Reason          string                 `json:"reason,omitempty"`
 	Commands        int                    `json:"commands"`
-	// Resolution is the aggregated name-resolution outcome across the program's
-	// calls: which command the invocation(s) actually named. It is the zero
-	// value (empty Kind) when no call reached the binder — e.g. on the
-	// PowerShell path, which resolves through its own alias/cmdlet tables, and
-	// on the JavaScript path, which has no effect binder yet.
+	// Resolution summarizes calls that reached the binder.
 	Resolution bind.Resolution `json:"resolution"`
-	// CommandCalls is the per-command resolution view: every distinct call the
-	// binder saw, with its invoked name, its normalized binary (basename,
-	// node_modules/.bin stripped, package runners consumed), its argument
-	// values and its statement's resolved redirections. It is the
-	// per-command companion of the aggregated Resolution, giving a signature
-	// the data to recognize a retried invocation that differs in form but not
-	// in effect. A call site reached many times (a loop body) contributes one
-	// entry. It is omitted when no call reached the binder.
+	// CommandCalls records distinct calls, arguments, and resolution.
 	CommandCalls []CommandCall `json:"commandCalls,omitempty"`
-	// Canonical is the effect-based canonical form of the program: the effect
-	// set normalized for signature comparison (staged temp writes folded onto
-	// the destination of the trailing mv; non-path operand targets dropped)
-	// plus the deterministic key derived from it. It is present whenever the
-	// report has effects.
+	// Canonical holds normalized effects and their comparison key.
 	Canonical *Canonical `json:"canonical,omitempty"`
 	// Destructive lists the destructive-flags entries the program's calls
 	// matched, de-duplicated and sorted. It is omitted when no call matched one.
@@ -199,6 +184,18 @@ func resolutionRank(k bind.ResolveKind) int {
 	default: // ResolveUnknown and the zero kind
 		return 0
 	}
+}
+
+// destructiveFindings converts the binder's matched entries.
+func destructiveFindings(ds []kb.Destructive) []DestructiveFinding {
+	if len(ds) == 0 {
+		return nil
+	}
+	out := make([]DestructiveFinding, len(ds))
+	for i, d := range ds {
+		out[i] = DestructiveFinding{Command: d.Command, Spec: d.Spec, Class: string(d.Class), Reason: d.Reason}
+	}
+	return out
 }
 
 // normalizeDestructive de-duplicates destructive findings by (command, spec) and
@@ -347,7 +344,14 @@ type Options struct {
 	// seeded and unknown variables stay ⊤. Only the bash/POSIX frontends
 	// consume the table; the PowerShell and JavaScript paths ignore it.
 	Vars map[string]string
+
+	// JavaScript supplies offline paths; nil uses home /root.
+	// Empty fields and the default cwd are unknown.
+	JavaScript *JavaScriptContext
 }
+
+// JavaScriptContext holds caller-supplied POSIX paths.
+type JavaScriptContext struct{ Home, Cwd string }
 
 // psOptions resolves o into the PowerShell frontend's provider options. When
 // Windows is unset it falls back to the host default (registry active only on
@@ -396,7 +400,7 @@ func (a *Analyzer) Analyze(lang Lang, src string) *Report {
 func (a *Analyzer) AnalyzeWith(lang Lang, src string, opts Options) *Report {
 	switch lang {
 	case LangJavaScript:
-		return analyzeJS(src, opts.Root)
+		return a.analyzeJS(src, opts)
 	case LangPowerShell:
 		return analyzePS(src, opts.psOptions(), opts.Root)
 	case LangPOSIX:
@@ -446,20 +450,9 @@ func (a *Analyzer) analyzeBash(v bash.Variant, lang Lang, src, root string, vars
 			// site. Keep one entry per distinct call (identity) so the view
 			// stays a bounded, per-command resolution view rather than an
 			// uncapped per-execution trace.
-			cc := commandCallOf(cmd, br.Resolution)
-			if key := cc.identity(); !seenCalls[key] {
-				seenCalls[key] = true
-				calls = append(calls, cc)
-			}
+			calls = appendCall(calls, seenCalls, commandCallOf(cmd, br.Resolution))
 			kbDestruct = kbDestruct.Join(br.Destructiveness)
-			for _, d := range br.Destructive {
-				destructive = append(destructive, DestructiveFinding{
-					Command: d.Command,
-					Spec:    d.Spec,
-					Class:   string(d.Class),
-					Reason:  d.Reason,
-				})
-			}
+			destructive = append(destructive, destructiveFindings(br.Destructive)...)
 			binderNotes = append(binderNotes, br.Notes...)
 			return bash.Resolution{Effects: br.Effects, Derivations: br.Derivations}
 		}, vars)
@@ -545,23 +538,6 @@ func analyzePS(src string, opts ps.Options, root string) *Report {
 	// its own tables), so it derives from the effects alone: no staging folds,
 	// only the target-shape normalization. It is present only when the report
 	// has effects, matching its documented conditional presence.
-	if len(rep.Effects) > 0 {
-		rep.Canonical = buildCanonical(rep.Effects, nil)
-	}
-	return rep
-}
-
-// analyzeJS assembles a report from bounded JavaScript evaluation.
-func analyzeJS(src, root string) *Report {
-	res := js.AnalyzeWith(sourceName(root, "script"), src, nil)
-	rep := newReport(LangJavaScript, src, root)
-	rep.Effects = normalizeEffects(res.Effects)
-	rep.Score = engine.ScoreEffects(rep.Effects)
-	rep.Destructiveness = rep.Score.Destructiveness
-	rep.Why = buildWhy(rep.Effects, res.Derivations, engine.Atom{Kind: engine.AtomLiteral, Text: "js-opaque"})
-	rep.Top = res.Top
-	rep.Conservative = res.Conservative
-	rep.Reason = res.Reason
 	if len(rep.Effects) > 0 {
 		rep.Canonical = buildCanonical(rep.Effects, nil)
 	}
@@ -678,15 +654,27 @@ func psFallbackName(p *ps.Program) string {
 	return ""
 }
 
-// dedupAtoms removes duplicate atoms (same kind and text), preserving order.
+// atomKey identifies an atom by kind, text, and source site.
+type atomKey struct {
+	kind    engine.AtomKind
+	text    string
+	loc     engine.SourceLoc
+	located bool
+}
+
+// dedupAtoms removes duplicate atoms, preserving order and
+// keeping equal text at distinct source sites.
 func dedupAtoms(xs []engine.Atom) []engine.Atom {
 	if len(xs) == 0 {
 		return nil
 	}
-	seen := make(map[string]bool, len(xs))
+	seen := make(map[atomKey]bool, len(xs))
 	out := make([]engine.Atom, 0, len(xs))
 	for _, x := range xs {
-		k := string(x.Kind) + "\x00" + x.Text
+		k := atomKey{kind: x.Kind, text: x.Text}
+		if x.Loc != nil {
+			k.loc, k.located = *x.Loc, true
+		}
 		if seen[k] {
 			continue
 		}

@@ -331,6 +331,25 @@ func TestCommandCallRedirs(t *testing.T) {
 	}
 }
 
+func TestCommandCallIdentityPreservesBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		left, right CommandCall
+	}{
+		{"embedded NUL", CommandCall{Args: []string{"a\x00b"}}, CommandCall{Args: []string{"a", "b"}}},
+		{"empty argument", CommandCall{}, CommandCall{Args: []string{""}}},
+		{"argument versus redirect", CommandCall{Args: []string{">=/tmp/x"}}, CommandCall{Redirs: []CallRedirect{{Op: ">", Target: "/tmp/x"}}}},
+		{"redirect fields", CommandCall{Redirs: []CallRedirect{{Op: ">=", Target: "x"}}}, CommandCall{Redirs: []CallRedirect{{Op: ">", Target: "=x"}}}},
+		{"redirect certainty", CommandCall{Redirs: []CallRedirect{{Op: ">", Target: "x"}}}, CommandCall{Redirs: []CallRedirect{{Op: ">", Target: "x", Known: true}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.left.identity() == tc.right.identity() {
+				t.Fatalf("distinct call views have the same identity: %+v / %+v", tc.left, tc.right)
+			}
+		})
+	}
+}
+
 // AnalyzeOrDie runs the facade and fails the test on error.
 func AnalyzeOrDie(t *testing.T, lang Lang, src string) *Report {
 	t.Helper()

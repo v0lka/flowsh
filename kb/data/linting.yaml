@@ -1,4 +1,4 @@
-version: effect-kb/v3
+version: effect-kb/v4
 # ---------------------------------------------------------------------------
 # Build, test and lint drivers across the JS/TS, Go, Python, Rust and shell
 # toolchains: the TypeScript compiler (tsc), the JavaScript linters/formatters

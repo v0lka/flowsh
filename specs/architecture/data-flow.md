@@ -2,16 +2,7 @@
 
 ## Context
 
-All registered dialects end in the same place — a `analysis.Report` whose
-`effects` are the frozen `engine.Effect` IR and whose `score` is the composite
-`engine.Score` — but they reach it along three frontend paths. Bash is analysed by
-*abstract execution*: the frontend walks the syntax tree with an abstract state
-and interprets control flow, pipelines and redirections, asking the binding layer
-for the effects of ordinary commands. PowerShell is analysed by *lowering*: the
-frontend folds a normalized AST directly into effects, with no abstract state and
-no binder. This document traces all three paths end to end, then the shared
-resolution, scoring, facade and CLI stages. JavaScript adds a third bounded parsing/evaluation path: pure values and control
-flow are evaluated; calls and unmodelled execution degrade to top.
+All registered dialects end in the same place — a `analysis.Report` whose `effects` are the frozen `engine.Effect` IR and whose `score` is the composite `engine.Score` — but they reach it along three frontend paths. Bash is analysed by *abstract execution*: the frontend walks the syntax tree with an abstract state and interprets control flow, pipelines and redirections, asking the binding layer for the effects of ordinary commands. PowerShell is analysed by *lowering*: the frontend folds a normalized AST directly into effects, with no abstract state and no binder. This document traces all three paths end to end, then the shared resolution, scoring, facade and CLI stages. JavaScript adds a third bounded parsing/evaluation path: pure values and control flow are evaluated; reviewed filesystem calls bind through YAML, and unsupported execution degrades to top.
 
 ## Bash path: parse → normalize / abstract-exec → bind
 
@@ -139,12 +130,7 @@ JavaScript source -> pinned parser -> owned normalized nodes
                  -> analyzeJS -> shared normalization/scoring/why/canonical
 ```
 
-Calls and unsupported execution remain top; pure understood input can have
-zero effects and stays uncovered under policy. Whole-unit parse/budget failures
-set Top. Function bodies are retained without invocation. Input/root are
-preserved; Vars and Windows are ignored; command binding metadata remains empty
-until the binder milestone.
-See [JavaScript Frontend](../domains/javascript-frontend.md).
+The facade injects BindJS for reviewed module/property/call identities and typed arguments. The binder interprets the separate JS YAML namespace and offline POSIX Home/Cwd context, producing values, effects, possible throws/promise rejections, destructive classes, notes, and source-located derivations. The facade aggregates bounded call metadata and builds canonical effects from bound targets without shell filtering. Unsupported execution and callback invocation retain top; pure understood input remains uncovered under policy. Whole-unit parse/budget failures additionally set Top. Function bodies remain dormant until invocation semantics arrive. See [JavaScript Frontend](../domains/javascript-frontend.md) and [Filesystem Models](../domains/javascript-filesystem.md).
 
 ## Shared resolution and binding (`bind`)
 
@@ -217,13 +203,7 @@ the language:
                      └──────────────► analysis.Report ◄─────────┘
 ```
 
-`normalizeEffects` (`internal/analysis/analyze.go`) re-runs
-`engine.Report.Normalize` (`engine/report.go`), which merges effects sharing
-`(Kind, Mode)` and sorts them — so two reports built from the same effects
-normalise to byte-identical JSON. `analyzePS` is a free function (no binder
-needed); `analyzeJS` is also a free function and scores the bounded evaluator result
-without command tokens. `analyzeBash` uses the process-wide `bind.Binder` memoised by
-`defaultAnalyzer`.
+`normalizeEffects` (`internal/analysis/analyze.go`) re-runs `engine.Report.Normalize` (`engine/report.go`), which merges effects sharing `(Kind, Mode)` and sorts them — so two reports built from the same effects normalise to byte-identical JSON. `analyzePS` is a free function (no binder needed); `analyzeJS` is an Analyzer method in `javascript.go`, injects BindJS, and joins the bound destructive severity into the shared score without shell command tokens. `analyzeBash` uses the process-wide `bind.Binder` memoised by `defaultAnalyzer`.
 
 ## CLI (`cmd/flowsh`)
 

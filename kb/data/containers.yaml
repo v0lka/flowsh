@@ -1,4 +1,4 @@
-version: effect-kb/v3
+version: effect-kb/v4
 # ---------------------------------------------------------------------------
 # Container, orchestration and infrastructure tooling: Docker (docker,
 # docker-compose), Kubernetes (kubectl), Helm, Terraform and Ansible.

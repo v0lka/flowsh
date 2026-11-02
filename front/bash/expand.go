@@ -3,6 +3,7 @@ package bash
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -60,6 +61,9 @@ type Var struct {
 	// degrading the target to ⊤ (see numericConfinedDir). An assignment
 	// replaces the value wholesale and clears the class.
 	Numeric bool `json:"numeric,omitempty"`
+	// Assumed marks a host default (HOME, USER, …): its value
+	// names paths but must not decide control flow.
+	Assumed bool `json:"assumed,omitzero"`
 }
 
 // State is Σ. The zero value is not usable; build one with NewState.
@@ -119,7 +123,7 @@ func NewState() *State {
 		Aliases: map[string]string{},
 	}
 	for k, v := range defaultVars {
-		s.Vars[k] = &Var{Value: v, Set: true, Known: true, Taint: engine.TaintBottom()}
+		s.Vars[k] = &Var{Value: v, Set: true, Known: true, Assumed: k != "IFS", Taint: engine.TaintBottom()}
 	}
 	for name := range numericVars {
 		readonly := name == "?" || name == "PIPESTATUS" || name == "#" || name == "UID" || name == "EUID" || name == "PPID"
@@ -184,7 +188,14 @@ func (s *State) SetKnown(name, value string, taint engine.Taint) {
 	if v.Readonly {
 		return
 	}
-	v.Value, v.Set, v.Known, v.Taint, v.Numeric = value, true, true, taint, false
+	v.Value, v.Set, v.Known, v.Taint, v.Numeric, v.Assumed = value, true, true, taint, false, false
+}
+
+// markAssumed flags a known name as derived from a host default.
+func (s *State) markAssumed(name string, assumed bool) {
+	if v := s.Get(name); assumed && v != nil && v.Known {
+		v.Assumed = true
+	}
 }
 
 // SetUnknown assigns a value whose content is not statically known: reads of it
@@ -201,7 +212,7 @@ func (s *State) SetUnknown(name string, taint engine.Taint) {
 	if v.Readonly {
 		return
 	}
-	v.Value, v.Set, v.Known, v.Taint, v.Numeric = "", true, false, taint, false
+	v.Value, v.Set, v.Known, v.Taint, v.Numeric, v.Assumed = "", true, false, taint, false, false
 }
 
 // MarkInteger records that name carries the integer attribute (declare -i).
@@ -316,7 +327,7 @@ func joinStates(a, b *State) *State {
 		case !av.Set || !bv.Set || !av.Known || !bv.Known || av.Value != bv.Value:
 			out.Vars[n] = &Var{Set: true, Known: false, Numeric: av.Numeric && bv.Numeric, Taint: av.Taint.Join(bv.Taint)}
 		default:
-			out.Vars[n] = &Var{Set: true, Known: true, Value: av.Value,
+			out.Vars[n] = &Var{Set: true, Known: true, Value: av.Value, Assumed: av.Assumed || bv.Assumed,
 				Taint: av.Taint.Join(bv.Taint), Export: av.Export, Readonly: av.Readonly}
 		}
 	}
@@ -818,6 +829,27 @@ func (it *interp) wordKnown(w *syntax.Word) bool {
 		}
 	}
 	return true
+}
+
+// wordAssumed reports whether w reads a host-assumed default.
+func (it *interp) wordAssumed(w *syntax.Word) bool {
+	return w != nil && slices.ContainsFunc(w.Parts, it.partAssumed)
+}
+
+func (it *interp) partAssumed(p syntax.WordPart) bool {
+	switch p := p.(type) {
+	case *syntax.DblQuoted:
+		return slices.ContainsFunc(p.Parts, it.partAssumed)
+	case *syntax.ParamExp:
+		if v := it.state.Get(p.Param.Value); v != nil && v.Assumed {
+			return true
+		}
+		if p.Exp != nil && it.wordAssumed(p.Exp.Word) {
+			return true
+		}
+		return p.Repl != nil && (it.wordAssumed(p.Repl.Orig) || it.wordAssumed(p.Repl.With))
+	}
+	return false
 }
 
 // partKnown reports whether one word part is statically known. quoted says

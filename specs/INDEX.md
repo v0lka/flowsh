@@ -11,6 +11,7 @@ For formats and update rules, see [META.md](META.md). For how to use the system,
 | Add a command or parameter to the knowledge base | [Knowledge Base](domains/knowledge-base.md), [bind <-> kb Contract](contracts/bind-kb.md) |
 | Add or change a destructive flag/class | [Knowledge Base](domains/knowledge-base.md) |
 | Add an effect kind or mode | [Effect IR](domains/engine/effect-ir.md), [frontend <-> engine Contract](contracts/frontend-engine.md), [ADR-0001](decisions/0001-frozen-effect-ir.md) |
+| Add or change JavaScript filesystem APIs, builtin aliases, or path/home helpers | [Filesystem Models](domains/javascript-filesystem.md), [ADR-0020](decisions/0020-javascript-filesystem-models.md), [JS Frontend](domains/javascript-frontend.md), [Binding](domains/binding.md) |
 | Add or change a value lattice | [Lattices](domains/engine/lattices.md), [ADR-0007](decisions/0007-lattice-based-effect-model.md) |
 | Tweak scoring / destructiveness / exfil | [Scoring](domains/engine/scoring.md), [Report Contract](contracts/report-json.md) |
 | Add a frontend (new language) | [Layer Architecture](architecture/layers.md), [frontend <-> engine Contract](contracts/frontend-engine.md), [Analysis Facade](domains/analysis-report.md) |
@@ -30,7 +31,7 @@ For formats and update rules, see [META.md](META.md). For how to use the system,
 | Understand the end-to-end pipeline | [Data Flow](architecture/data-flow.md) |
 | Understand the layering / import rules | [Layer Architecture](architecture/layers.md) |
 | Understand degrade-to-⊤ semantics | [Conservatism](architecture/conservatism.md) |
-| Understand why the IR is frozen / the KB is embedded / ⊤ is used / one module / the tool is named `flowsh` / public analysis and policy packages exist | [Decisions](decisions/_template.md) (ADR-0001 … ADR-0019) |
+| Understand why the IR is frozen / the KB is embedded / ⊤ is used / one module / the tool is named `flowsh` / public analysis and policy packages exist | [Decisions](decisions/_template.md) (ADR-0001 … ADR-0020) |
 | Add a new spec document | [META.md](META.md), [WORKFLOW.md](WORKFLOW.md) |
 
 ## Dependency Graph
@@ -104,6 +105,7 @@ specs/
 │   │   ├── README.md                          bash frontend (domain overview)
 │   │   ├── parse-normalize.md                 parse + normalize detail
 │   │   └── abstract-exec.md                   abstract execution detail
+│   ├── javascript-filesystem.md               filesystem API acceptance matrix
 │   ├── javascript-frontend.md                 Bounded JavaScript values/control flow (front/js)
 │   ├── powershell-frontend.md                 PowerShell parse (tree-sitter) + Σ lowering
 │   ├── analysis-report.md                     composition facade + report + corpus
@@ -136,7 +138,8 @@ specs/
     ├── 0016-kb-load-budget-release-headroom.md
     ├── 0017-report-policy-package.md
     ├── 0018-javascript-semantic-kernel.md
-    └── 0019-determinism-gate-parse-budget-trip.md
+    ├── 0019-determinism-gate-parse-budget-trip.md
+    └── 0020-javascript-filesystem-models.md
 ```
 
 ## Full File List
@@ -153,6 +156,7 @@ Every spec file, by path relative to `specs/`:
 - `contracts/exec-resolver.md`
 - `contracts/frontend-engine.md`
 - `contracts/report-json.md`
+- `decisions/0020-javascript-filesystem-models.md`
 - `decisions/_template.md`
 - `decisions/0001-frozen-effect-ir.md`
 - `decisions/0002-one-way-dependency.md`
@@ -183,6 +187,7 @@ Every spec file, by path relative to `specs/`:
 - `domains/engine/effect-ir.md`
 - `domains/engine/lattices.md`
 - `domains/engine/scoring.md`
+- `domains/javascript-filesystem.md`
 - `domains/javascript-frontend.md`
 - `domains/knowledge-base.md`
 - `domains/policy.md`

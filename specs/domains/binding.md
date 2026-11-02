@@ -4,8 +4,11 @@
 
 `bind` turns a normalized command invocation into the set of effects it implies. It resolves the invoked name (alias → function → builtin → PATH, then two invocation-form links that map a spelling onto a knowledge-base command: a path-qualified basename and a package runner's operand) and binds that command's flags, options and operands against the effect knowledge base. It is the join of the two lower layers — a frontend's normalized call on one side, the KB's command/flag signatures on the other — producing `[]engine.Effect`. Where the analysis cannot see (a dynamically-named command, or a name matching nothing), it degrades to the top element ⊤ (`CodeExec` over the any-target scope) rather than to "no effect".
 
+`BindJS` interprets exact evaluated Node identities and typed arguments through the separate JS YAML namespace. It shares the existing effect kinds and destructive classes while retaining a language-specific binding path.
+
 ## Key Files
 
+- `bind/js.go`, `bind/js_options.go`, `bind/js_path.go` — injected JS identity resolution, typed options/open flags, offline POSIX paths, effects, and metadata.
 - `bind/bind.go` — the binder: `Bind`, `BindBash`, `bindCommand`, `parseArgs` (flag/operand binding), `lowerParam` and `fileRefPath` (the `@file` convention), `taintFor`, `argsTaint`, `taintEgress`, `wrapperElevation`/`declaresPrivEsc` (refined -u wrapper elevation), `FromBash` (the frontend bridge).
 - `bind/resolve.go` — name resolution: `ResolveKind`, `Resolution`, `resolved`, the `resolve` chain (alias → function → builtin → PATH, then the path-basename and package-runner links), `expandAliases` and `tokenizeAlias`.
 - `bind/runner.go` — package-runner and project-local bin-path resolution: `IsPackageRunner`, `StripBinaryPath`, `NormalizeBinaryName` (the runner/path vocabulary the binder and the canonical form share) and the runner consumption (`runnerBinaryArgs`, `runnerBinary`).
@@ -217,9 +220,13 @@ The same gate applies at the two frontend-side egress creation points: the bash 
 
 `taintEgress` carries the provenance of everything a single command reads (or is fed on standard input) into its egress effects. The join is per command, never per script: an outbound request that ships data (an upload `-T`, a form field `-F`, a body read from a file or a pipeline) becomes a tainted egress, while an egress that merely accompanies an unrelated read elsewhere is left untainted.
 
+### JavaScript binding
+
+`BindJS(js.Call, JSContext) JSResult` resolves module/property requests and canonical module/export calls through `KB.JSModule`/`JSCall`. `JSResult.Resolution` supplies frontend values/effects/derivations, possible-throw status, and an optional degradation reason; `JSResult.Binding` carries the existing resolution, destructive entries/severity, notes, and effect provenance. JSContext holds explicit Home/Cwd strings; empty fields are unknown. Unknown paths/options, unsupported descriptors/custom stream implementations, unsupported data iterables, and security-significant permission modes retain canonical top diagnostics. Callback calls emit the modeled outer effect and explicit top while #34 owns callback execution. Promise models retain rejection for sequential await. Filesystem classes join severity through the existing raise-only mechanism. See the [filesystem contract](javascript-filesystem.md) for API shapes and path policy.
+
 ## Invariants
 
-- `bind` imports `engine`, `kb` and `front/bash`; **none** of those imports `bind`. `bind` is a sibling of `engine` precisely because the core must not import a frontend (`TestCoreDoesNotImportFrontends` enforces it) and `engine` cannot import `kb` (since `kb` already imports `engine`).
+- `bind` imports `engine`, `kb`, `front/bash` and `front/js`; **none** of those imports `bind`. `bind` is a sibling of `engine` precisely because the core must not import a frontend (`TestCoreDoesNotImportFrontends` enforces it) and `engine` cannot import `kb` (since `kb` already imports `engine`).
 - `Bind` is total and deterministic: it never returns nil and never panics on a well-formed `Call`.
 - A name that is not statically known (`NameOK == false`) resolves to `ResolveUnknown` → `⊤`.
 - A name matching neither a builtin, a function, an alias, nor a KB command degrades to ⊤ (`CodeExec`), never to "no effect".

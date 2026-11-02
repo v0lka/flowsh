@@ -68,6 +68,9 @@ type Analyzer = analysis.Analyzer
 // historical host-default behaviour. It is an alias of analysis.Options.
 type Options = analysis.Options
 
+// JavaScriptContext supplies offline POSIX home/cwd paths.
+type JavaScriptContext = analysis.JavaScriptContext
+
 const (
 	// ToolName is the tool identifier stamped into every report ("flowsh").
 	ToolName = analysis.ToolName

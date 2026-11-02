@@ -1,4 +1,4 @@
-version: effect-kb/v3
+version: effect-kb/v4
 # ---------------------------------------------------------------------------
 # Build tooling (roadmap task B6): build drivers, compilers/linkers, binary
 # inspectors and debuggers.

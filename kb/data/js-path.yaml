@@ -1,0 +1,44 @@
+version: effect-kb/v4
+jsModules:
+  - name: path
+    aliases: [node:path]
+    properties:
+      posix: path
+  - name: os
+    aliases: [node:os]
+jsCalls:
+  - module: path
+    export: join
+    style: pure
+    operation: join
+    return: unknown
+    minArgs: 0
+    maxArgs: 1024
+  - module: path
+    export: resolve
+    style: pure
+    operation: resolve
+    return: unknown
+    minArgs: 0
+    maxArgs: 1024
+  - module: path
+    export: dirname
+    style: pure
+    operation: dirname
+    return: unknown
+    minArgs: 1
+    maxArgs: 1
+  - module: path
+    export: basename
+    style: pure
+    operation: basename
+    return: unknown
+    minArgs: 1
+    maxArgs: 2
+  - module: os
+    export: homedir
+    style: pure
+    operation: homedir
+    return: unknown
+    minArgs: 0
+    maxArgs: 0

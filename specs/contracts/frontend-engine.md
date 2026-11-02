@@ -16,20 +16,14 @@ A frontend (`front/bash`, `front/ps`, `front/js`) may import the core (`engine`)
 | `engine.Derivation`, `engine.Atom` | `engine` | frontends | the concrete source facts (nodes/flags) a reported effect rests on — the why-trace vocabulary |
 | `bash.Resolver` (`func(*Command, *Program) bash.Resolution`) | `front/bash` | `bind`, via the facade | injected seam for ordinary-command effects and their `Derivation`s |
 | `ps.Result` | `front/ps` | `internal/analysis` | lowering outcome (mirrors `bind.Result`) |
-| `js.Resolver` (`func(js.Call) js.Resolution`) | `front/js` | composition/test models | injected typed call boundary; the facade currently passes nil |
+| `js.Resolver` (`func(js.Call) js.Resolution`) | `front/js` | bind, via composition/test models | injected typed module/property/call boundary |
 | `js.Result` | `front/js` | `internal/analysis` | bounded JS effects/derivations and Top/Conservative/Reason |
 
 ## Initialization
 
 The core has no initialization. A frontend is constructed per analysis: `bash.ExecBash(src, resolver)` or `ps.Parse` + `ps.Lower(prog)`. The bash `Resolver` is supplied by the composition layer (the facade passes a closure that calls `binder.BindBash`); passing `nil` disables command binding while the shell's own intrinsic effects are still emitted.
 
-`js.AnalyzeWith(name, src, resolver)` parses and evaluates a bounded subset.
-The facade passes nil for the resolver: calls and unsupported execution yield
-`CodeExec(ScopeTop())`; understood pure programs may have no effects. Whole-unit
-parse/budget failures set Top; local degradation sets Conservative. Derivations
-carry source locations into the shared explanation builder. The typed
-`js.Resolver` seam returns values/effects/derivations without a frontend import
-of bind/KB; Node API models and invocation semantics remain later work.
+`js.AnalyzeWith(name, src, resolver)` parses and evaluates a bounded subset. The facade injects `bind.Binder.BindJS`; module and property requests carry exact identities, and call requests carry canonical module/export identity, typed values, argument locations, and the invoked spelling. `js.Resolution` returns Handled, Value, Effects, Derivations, MayThrow, and Reason. Handled distinguishes a pure modeled call from an unresolved one; Reason requests canonical degradation beside any known effects. Trusted modeled promises retain rejection at await. The evaluator charges model arguments/options before resolution and applies the existing work, string, and record limits. Frontend imports remain directed toward engine, with bind/KB injected above it. See the [filesystem contract](../domains/javascript-filesystem.md).
 
 ## Data Flow Across Boundary
 

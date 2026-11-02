@@ -31,6 +31,8 @@ type evaluator struct {
 	budget, depth int
 	hasTop        bool
 	throws        *state
+	// Hoisted statements; an import not seen here degrades.
+	predeclared map[*node]bool
 }
 
 func (e *evaluator) step() {
@@ -45,7 +47,7 @@ func (e *evaluator) charge(work int) {
 }
 
 func (e *evaluator) clone(s *state) *state {
-	out := &state{scopes: make([]map[string]binding, len(s.scopes))}
+	out := &state{scopes: make([]map[string]binding, len(s.scopes)), poisoned: s.poisoned}
 	for i, scope := range s.scopes {
 		e.step()
 		out.scopes[i] = make(map[string]binding, len(scope))
@@ -145,6 +147,10 @@ func (e *evaluator) statement(n *node, s *state) flows {
 		return out
 	case "comment", "hash_bang_line", "empty_statement", "function_declaration":
 		return single(normal, s, undefined())
+	case "import_statement":
+		if !e.predeclared[n] {
+			e.unmodelled(n, s, "JavaScript module initialization is unmodelled")
+		}
 	case "lexical_declaration", "variable_declaration":
 		kind := declarationKind(n)
 		for _, decl := range n.namedChildren() {
@@ -196,17 +202,15 @@ func (e *evaluator) statement(n *node, s *state) flows {
 	case "throw_statement":
 		return single(throwing, s, e.eval(n.first(), s))
 	case "export_statement":
+		if n.get("source") != nil && !e.predeclared[n] {
+			e.unmodelled(n, s, "external JavaScript module initialization is unmodelled")
+		}
 		if decl := n.get("declaration"); decl != nil {
 			return e.exec(decl, s)
 		}
 		if value := n.get("value"); value != nil {
 			e.eval(value, s)
 		}
-		if n.get("source") != nil {
-			e.unmodelled(n, s, "external JavaScript module initialization is unmodelled")
-		}
-	case "import_statement":
-		e.unmodelled(n, s, "JavaScript module initialization is unmodelled")
 	case "class_declaration":
 		e.unmodelled(n, s, "unsupported JavaScript statement: "+n.kind)
 		e.bindName(n.get("name"), Value{}, s, "let")
@@ -278,10 +282,19 @@ func (e *evaluator) hoistVars(n *node, s *state) {
 }
 
 func (e *evaluator) predeclare(nodes []*node, s *state) {
+	if e.predeclared == nil {
+		e.predeclared = map[*node]bool{}
+	}
 	for _, n := range nodes {
 		e.step()
-		if n.kind == "export_statement" && n.get("declaration") != nil {
-			n = n.get("declaration")
+		e.predeclared[n] = true
+		if n.kind == "export_statement" {
+			if n.get("source") != nil {
+				e.unmodelled(n, s, "external JavaScript module initialization is unmodelled")
+			}
+			if declaration := n.get("declaration"); declaration != nil {
+				n = declaration
+			}
 		}
 		switch n.kind {
 		case "lexical_declaration":
@@ -293,34 +306,16 @@ func (e *evaluator) predeclare(nodes []*node, s *state) {
 				e.predeclarePattern(name, s, false)
 			}
 		case "import_statement":
-			e.predeclareImport(n, s)
+			module := e.importValue(n, s)
+			e.bindImport(n, module, s)
+			if module.kind != "module" {
+				e.unmodelled(n, s, "JavaScript module initialization is unmodelled")
+			}
 		case "function_declaration", "generator_function_declaration":
 			if name := n.get("name"); name != nil {
 				scope := s.scopes[len(s.scopes)-1]
 				scope[name.text] = binding{value: Value{kind: "function", body: n.get("body")}, initialized: true}
 			}
-		}
-	}
-}
-
-func (e *evaluator) predeclareImport(n *node, s *state) {
-	e.step()
-	switch n.kind {
-	case "identifier":
-		s.scopes[len(s.scopes)-1][n.text] = binding{
-			value: Value{}, constant: true, initialized: true,
-		}
-	case "import_specifier":
-		name := n.get("alias")
-		if name == nil {
-			name = n.get("name")
-		}
-		if name != nil {
-			e.predeclareImport(name, s)
-		}
-	case "import_statement", "import_clause", "named_imports", "namespace_import":
-		for _, child := range n.namedChildren() {
-			e.predeclareImport(child, s)
 		}
 	}
 }
@@ -391,7 +386,7 @@ func (e *evaluator) bindPattern(n *node, v Value, s *state, kind string) {
 		}
 		e.bindPattern(n.get("left"), v, s, kind)
 	case "object_pattern":
-		if v.object == nil {
+		if v.object == nil && v.kind != "module" {
 			e.unmodelled(n, s, "JavaScript destructuring of an unknown receiver")
 		}
 		used := map[string]bool{}
@@ -644,7 +639,8 @@ func (e *evaluator) switchStmt(n *node, s *state) flows {
 			continue
 		}
 		test := e.eval(c.get("value"), s)
-		known := value.kind != "" && test.kind != "" && value.kind != "function" && test.kind != "function"
+		known := !value.imprecise() && !test.imprecise() && !value.symbolic && !test.symbolic &&
+			value.kind != "function" && test.kind != "function"
 		eq := strictEqual(value, test)
 		if !known || eq {
 			entries = append(entries, entry{i, e.clone(s)})

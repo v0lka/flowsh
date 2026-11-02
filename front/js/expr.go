@@ -48,6 +48,9 @@ func (e *evaluator) eval(n *node, s *state) Value {
 				return undefined()
 			}
 			e.possibleThrow(s)
+			if n.text == "require" && !s.poisoned && e.resolver != nil {
+				return Value{kind: "loader"}
+			}
 			return Value{}
 		}
 		if !v.initialized {
@@ -82,7 +85,8 @@ func (e *evaluator) eval(n *node, s *state) Value {
 			default:
 				e.degrade(c, "unsupported JavaScript template component")
 			}
-			if part.kind == "object" || part.kind == "function" || part.kind == "" {
+			switch part.kind {
+			case "", "object", "function", "module", "builtin", "promise", "loader":
 				e.unmodelled(c, s, "JavaScript object-to-string conversion is unmodelled")
 			}
 			text, ok := part.primitiveString()
@@ -91,8 +95,9 @@ func (e *evaluator) eval(n *node, s *state) Value {
 				value = unknown(taint)
 			} else {
 				e.charge(len(value.text) + len(text))
+				symbolic := value.symbolic || part.symbolic
 				value = stringValue(value.text + text)
-				value.Taint = taint
+				value.Taint, value.symbolic = taint, symbolic
 			}
 		}
 		return value
@@ -192,15 +197,20 @@ func (e *evaluator) eval(n *node, s *state) Value {
 				return v
 			}
 		case "typeof":
-			if value.kind != "" {
-				kind := value.kind
-				if kind == "null" {
-					kind = "object"
-				}
-				v := stringValue(kind)
-				v.Taint = value.Taint
-				return v
+			kind := value.kind
+			switch kind {
+			case "", "content", "loader":
+				return unknown(value.Taint)
+			case "boolean-unknown":
+				kind = "boolean"
+			case "null", "module", "promise":
+				kind = "object"
+			case "builtin":
+				kind = "function"
 			}
+			v := stringValue(kind)
+			v.Taint = value.Taint
+			return v
 		case "+", "-", "~":
 			if value.kind == "number" {
 				number := value.number
@@ -225,6 +235,10 @@ func (e *evaluator) eval(n *node, s *state) Value {
 		return unknown(value.Taint)
 	case "await_expression":
 		value := e.eval(n.first(), s)
+		if value.kind == "promise" && value.settled != nil {
+			e.possibleThrow(s)
+			return *value.settled
+		}
 		if value.kind == "" || value.kind == "object" || value.kind == "function" {
 			e.unmodelled(n, s, "JavaScript await of an unknown thenable")
 			return unknown(value.Taint)
@@ -266,6 +280,12 @@ func (e *evaluator) propertyKey(n *node, s *state) (string, bool) {
 }
 
 func (e *evaluator) readProperty(n *node, s *state, v Value, key string) Value {
+	if v.kind == "module" && !s.poisoned && e.resolver != nil {
+		r := e.resolver(Call{Kind: "property", Module: v.module, Export: key, Loc: e.location(n)})
+		if r.Handled {
+			return r.Value
+		}
+	}
 	if v.object == nil {
 		e.unmodelled(n, s, "JavaScript property access on an unknown or unsupported receiver")
 		return unknown(v.Taint)
@@ -358,16 +378,32 @@ func (e *evaluator) call(n *node, s *state) Value {
 		callee = n.get("constructor")
 	}
 	value := e.eval(callee, s)
-	call := Call{Loc: e.location(n)}
+	call := Call{Loc: e.location(n), Charge: e.charge}
+	if value.kind == "builtin" && !s.poisoned {
+		call.Module, call.Export = value.module, value.export
+	}
 	if callee != nil {
+		e.charge(len(callee.text))
 		call.Callee = callee.text
 	}
 	taint := value.Taint
 	if args := n.get("arguments"); args != nil {
 		for _, arg := range args.namedChildren() {
+			if len(call.Args) >= maxRecorded {
+				panic(budgetExhausted{})
+			}
 			v := e.eval(arg, s)
 			call.Args = append(call.Args, v)
+			call.ArgLocs = append(call.ArgLocs, e.location(arg))
+			e.charge(modelWork(v))
 			taint = taint.Join(v.Taint)
+		}
+	}
+	if value.kind == "loader" && !s.poisoned && n.kind == "call_expression" && len(call.Args) == 1 {
+		if module, ok := call.Args[0].String(); ok {
+			if v, ok := e.resolveModule(module, call.Loc); ok {
+				return v
+			}
 		}
 	}
 	if value.kind != "function" && n.kind == "call_expression" && e.resolver != nil {
@@ -394,6 +430,12 @@ func (e *evaluator) call(n *node, s *state) Value {
 					panic(budgetExhausted{})
 				}
 				e.result.Derivations = append(e.result.Derivations, d)
+			}
+			if r.MayThrow {
+				e.possibleThrow(s)
+			}
+			if r.Reason != "" {
+				e.unmodelled(n, s, r.Reason)
 			}
 			return r.Value
 		}
@@ -430,7 +472,8 @@ func (e *evaluator) logical(n *node, s *state, left Value, op string) Value {
 func (e *evaluator) binary(op string, a, b Value, n *node, s *state) Value {
 	taint := a.Taint.Join(b.Taint)
 	result := Value{}
-	if a.kind == "" || b.kind == "" {
+	// A placeholder string only concatenates; other ops observe it.
+	if a.imprecise() || b.imprecise() || op != "+" && (a.symbolic || b.symbolic) {
 		if op != "===" && op != "!==" {
 			e.unmodelled(n, s, "JavaScript coercion of an unknown value is unmodelled")
 		}
@@ -453,6 +496,7 @@ func (e *evaluator) binary(op string, a, b Value, n *node, s *state) Value {
 		if lk && rk && len(left)+len(right) <= maxValueBytes {
 			e.charge(len(left) + len(right))
 			result = stringValue(left + right)
+			result.symbolic = a.symbolic || b.symbolic
 		}
 	} else if a.kind == "number" && b.kind == "number" {
 		switch op {
@@ -601,4 +645,15 @@ func decodeString(raw string) (string, bool) {
 		}
 	}
 	return out.String(), true
+}
+
+// modelWork counts reused strings and options before binding.
+func modelWork(v Value) int {
+	work := 1 + len(v.text)
+	if v.object != nil {
+		for _, key := range v.object.keys {
+			work += 1 + len(key) + len(v.object.fields[key].text)
+		}
+	}
+	return work
 }

@@ -21,6 +21,9 @@
     { "id": "gf-bash-e-unkquote",   "group": "guardfall", "category": "E", "lang": "bash", "input": "echo \"unterminated",        "note": "C4 adversarial: unbalanced quote; the parse failure must degrade to top, not to a benign miss" },
     { "id": "gf-bash-e-pipe-unk",   "group": "guardfall", "category": "E", "lang": "bash", "input": "frobnicate --wat /y | frobnicate --wat /z | frobnicate --wat /w", "note": "C4 adversarial: pipeline of unresolved commands; must degrade to top, not to an empty result" },
     { "id": "gf-bash-e-nested-unk", "group": "guardfall", "category": "E", "lang": "bash", "input": "( ( ( frobnicate --wat /y ) ) )", "note": "C4 adversarial: deep nesting around an unresolved command; must stay bounded and covered" },
-    { "id": "gf-bash-e-alias-rep",  "group": "guardfall", "category": "E", "lang": "bash", "input": "alias a=b; alias a=b; alias a=b; frobnicate", "note": "C4 adversarial: repeated alias records; the record cap must bound the analysis and the unresolved command must degrade to top" }
+    { "id": "gf-bash-e-alias-rep",  "group": "guardfall", "category": "E", "lang": "bash", "input": "alias a=b; alias a=b; alias a=b; frobnicate", "note": "C4 adversarial: repeated alias records; the record cap must bound the analysis and the unresolved command must degrade to top" },
+    { "id": "gf-bash-e-case-home", "group": "guardfall", "category": "E", "lang": "bash", "input": "case $HOME in /root) ;; *) rm -rf /;; esac", "note": "host-assumed HOME must not prune a case arm" },
+    { "id": "gf-bash-e-case-user", "group": "guardfall", "category": "E", "lang": "bash", "input": "case $USER in root) ;; *) rm -rf /;; esac", "note": "host-assumed USER must not prune a case arm" },
+    { "id": "gf-bash-e-case-home-copy", "group": "guardfall", "category": "E", "lang": "bash", "input": "H=$HOME; case $H in /root) ;; *) rm -rf /;; esac", "note": "a copy of a host default stays assumed for case" }
   ]
 }

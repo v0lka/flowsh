@@ -66,7 +66,7 @@ The right-hand side runs only when the left-hand side's exit status makes it rea
 - `execIf`: if the condition's status is known, run the taken branch; otherwise run **both** branches (effects accumulate) and join the two resulting states (`joinStates`) — the least upper bound, where a variable keeps its value only when both branches agree.
 - `execWhile`: iterate while the (statically decidable) condition holds; a non-decidable condition runs the body once and yields a ⊤ note. `until` inverts the test.
 - `execFor`: over a statically-known word list it iterates exactly; over a dynamic list or over positional parameters it runs the body once and yields ⊤. A C-style loop is treated like an unknown bound (iterate until the budget stops it).
-- `execCase`: a known subject selects the first matching pattern (glob `path.Match`); a non-decidable subject runs every arm and yields ⊤.
+- `execCase`: a known subject selects the first matching pattern (glob `path.Match`); a non-decidable subject, or one reading an `Assumed` host default (`case $HOME in …`), runs every arm and yields ⊤. A pattern reading an assumed default is non-decidable.
 - `execFuncDecl` records the body; `callFunc` binds positional parameters (`0`, `#`, `@`, `*`, `1..n`) in a **fresh clone** of Σ and executes the body, with a recursion limit.
 - `execDecl` applies the state component of `declare`/`local`/`export`/`readonly` and asks the resolver for the declaration's own effects.
 
