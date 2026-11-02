@@ -1,7 +1,7 @@
 package js
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"math"
 	"slices"
 	"strconv"
@@ -158,7 +158,7 @@ func (v Value) Projection() string {
 				fields[key] = "<" + field.kind + ">"
 			}
 		}
-		if encoded, err := json.Marshal(fields); err == nil && len(encoded) <= maxProjection {
+		if encoded, err := json.Marshal(fields, json.Deterministic(true)); err == nil && len(encoded) <= maxProjection {
 			return string(encoded)
 		}
 	}

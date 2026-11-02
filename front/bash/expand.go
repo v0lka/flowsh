@@ -63,7 +63,7 @@ type Var struct {
 	Numeric bool `json:"numeric,omitempty"`
 	// Assumed marks a host default (HOME, USER, …): its value
 	// names paths but must not decide control flow.
-	Assumed bool `json:"assumed,omitempty"`
+	Assumed bool `json:"assumed,omitzero"`
 }
 
 // State is Σ. The zero value is not usable; build one with NewState.

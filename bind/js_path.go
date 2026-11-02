@@ -105,23 +105,26 @@ func jsPathValue(operation string, args []js.Value, context JSContext) js.Value 
 			}
 			break
 		}
-		index := strings.LastIndexByte(text[:end], '/')
+		before, _, found := strings.CutLast(text[:end], "/")
 		switch {
-		case index < 0:
+		case !found:
 			result = "."
-		case index == 0:
+		case before == "":
 			result = "/"
-		case index == 1 && strings.HasPrefix(text, "//"):
+		case before == "/": // a leading "//" is kept
 			result = "//"
 		default:
-			result = text[:index]
+			result = before
 		}
 	case "basename":
 		if len(parts) < 1 || len(parts) > 2 {
 			return unknown
 		}
 		text := strings.TrimRight(parts[0], "/")
-		result = text[strings.LastIndexByte(text, '/')+1:]
+		result = text
+		if _, after, found := strings.CutLast(text, "/"); found {
+			result = after
+		}
 		if len(parts) == 2 && parts[1] != "" {
 			suffix := parts[1]
 			switch {
