@@ -9,22 +9,19 @@ import (
 	"github.com/v0lka/flowsh/kb"
 )
 
+// jsOptionsValid reports whether value fits model's option shape.
 func jsOptionsValid(value js.Value, model *kb.JSCall) bool {
 	if value.Kind() == "undefined" || value.Kind() == "null" {
 		return true
 	}
-	if text, ok := value.String(); ok {
-		if model.OptionShape == "encoding" {
-			return true
-		}
-		_, valid := jsOctalMode(text)
-		return model.OptionShape == "mode" && valid
+	if _, ok := value.String(); ok {
+		return model.OptionShape == "encoding" || model.OptionShape == "mode" && jsModeValid(value)
 	}
 	if number, ok := value.Number(); ok {
 		if model.OptionShape == "number" {
-			return number >= 0 && number <= 7 && math.Trunc(number) == number
+			return jsUint(number, 7)
 		}
-		return model.OptionShape == "mode" && number >= 0 && number <= 0777 && math.Trunc(number) == number
+		return model.OptionShape == "mode" && jsUint(number, 0o777)
 	}
 	keys, ok := value.Keys()
 	if !ok || model.OptionShape == "number" {
@@ -56,21 +53,32 @@ func jsOptionsValid(value js.Value, model *kb.JSCall) bool {
 				return false
 			}
 		case "mode":
-			number, known := field.Number()
-			if text, ok := field.String(); ok {
-				number, known = jsOctalMode(text)
-			}
-			if !known || number < 0 || number > 0777 || math.Trunc(number) != number {
+			if !jsModeValid(field) {
 				return false
 			}
 		default:
 			number, known := field.Number()
-			if !known || number < 0 || number > 1<<53 || math.Trunc(number) != number {
+			if !known || !jsUint(number, 1<<53) {
 				return false
 			}
 		}
 	}
 	return true
+}
+
+// jsModeValid reports whether value is a mode in 0..0o777,
+// given as a number or an octal string.
+func jsModeValid(value js.Value) bool {
+	mode, known := value.Number()
+	if text, ok := value.String(); ok {
+		mode, known = jsOctalMode(text)
+	}
+	return known && jsUint(mode, 0o777)
+}
+
+// jsUint reports whether n is an integer in 0..limit.
+func jsUint(n, limit float64) bool {
+	return n >= 0 && n <= limit && math.Trunc(n) == n
 }
 
 func jsOctalMode(text string) (float64, bool) {
@@ -91,7 +99,7 @@ func jsOpenFlags(value js.Value) (read, write, known bool) {
 			return true, true, false
 		}
 	}
-	// Numeric access modes follow the POSIX model.
+	// Numeric access modes: O_RDONLY, O_WRONLY, O_RDWR.
 	if number, ok := value.Number(); ok {
 		switch number {
 		case 0:

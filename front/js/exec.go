@@ -31,6 +31,8 @@ type evaluator struct {
 	budget, depth int
 	hasTop        bool
 	throws        *state
+	// Hoisted statements; an import not seen here degrades.
+	predeclared map[*node]bool
 }
 
 func (e *evaluator) step() {
@@ -143,8 +145,12 @@ func (e *evaluator) statement(n *node, s *state) flows {
 		out := e.sequence(n.namedChildren(), s)
 		popScope(out)
 		return out
-	case "comment", "hash_bang_line", "empty_statement", "function_declaration", "import_statement":
+	case "comment", "hash_bang_line", "empty_statement", "function_declaration":
 		return single(normal, s, undefined())
+	case "import_statement":
+		if !e.predeclared[n] {
+			e.unmodelled(n, s, "JavaScript module initialization is unmodelled")
+		}
 	case "lexical_declaration", "variable_declaration":
 		kind := declarationKind(n)
 		for _, decl := range n.namedChildren() {
@@ -196,6 +202,9 @@ func (e *evaluator) statement(n *node, s *state) flows {
 	case "throw_statement":
 		return single(throwing, s, e.eval(n.first(), s))
 	case "export_statement":
+		if n.get("source") != nil && !e.predeclared[n] {
+			e.unmodelled(n, s, "external JavaScript module initialization is unmodelled")
+		}
 		if decl := n.get("declaration"); decl != nil {
 			return e.exec(decl, s)
 		}
@@ -273,8 +282,12 @@ func (e *evaluator) hoistVars(n *node, s *state) {
 }
 
 func (e *evaluator) predeclare(nodes []*node, s *state) {
+	if e.predeclared == nil {
+		e.predeclared = map[*node]bool{}
+	}
 	for _, n := range nodes {
 		e.step()
+		e.predeclared[n] = true
 		if n.kind == "export_statement" {
 			if n.get("source") != nil {
 				e.unmodelled(n, s, "external JavaScript module initialization is unmodelled")
@@ -626,7 +639,8 @@ func (e *evaluator) switchStmt(n *node, s *state) flows {
 			continue
 		}
 		test := e.eval(c.get("value"), s)
-		known := !value.imprecise() && !test.imprecise() && value.kind != "function" && test.kind != "function"
+		known := !value.imprecise() && !test.imprecise() && !value.symbolic && !test.symbolic &&
+			value.kind != "function" && test.kind != "function"
 		eq := strictEqual(value, test)
 		if !known || eq {
 			entries = append(entries, entry{i, e.clone(s)})

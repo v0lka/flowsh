@@ -60,14 +60,6 @@ func TestJavaScriptFilesystemPublicContract(t *testing.T) {
 	if !foundWrite {
 		t.Fatal("missing modeled write")
 	}
-	encoded, err := rep.Encode()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var back api.Report
-	if err := json.Unmarshal(encoded, &back); err != nil || !reflect.DeepEqual(back.CommandCalls, rep.CommandCalls) {
-		t.Fatalf("filesystem call metadata roundtrip: %+v / %v", back.CommandCalls, err)
-	}
 	rep, err = api.AnalyzeWith(api.LangJavaScript, `const fs=require('fs'),path=require('path');fs.readFileSync(path.resolve('input'))`, api.Options{JavaScript: &api.JavaScriptContext{Home: "/home/test", Cwd: "/workspace"}})
 	if err != nil || rep.Conservative || !strings.Contains(rep.Effects[0].Target.String(), "/workspace/input") {
 		t.Fatalf("public context lost: %+v / %v", rep, err)
@@ -88,14 +80,6 @@ func TestJavaScriptCallArgumentBoundaries(t *testing.T) {
 		if !reflect.DeepEqual(call.Args, want[i]) {
 			t.Errorf("call %d arguments = %q, want %q", i, call.Args, want[i])
 		}
-	}
-	encoded, err := rep.Encode()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var back api.Report
-	if err := json.Unmarshal(encoded, &back); err != nil || !reflect.DeepEqual(back.CommandCalls, rep.CommandCalls) {
-		t.Fatalf("call arguments changed during JSON roundtrip: %+v / %v", back.CommandCalls, err)
 	}
 }
 

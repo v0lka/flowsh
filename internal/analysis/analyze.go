@@ -20,6 +20,7 @@ import (
 	"github.com/v0lka/flowsh/engine"
 	"github.com/v0lka/flowsh/front/bash"
 	"github.com/v0lka/flowsh/front/ps"
+	"github.com/v0lka/flowsh/kb"
 )
 
 const (
@@ -183,6 +184,18 @@ func resolutionRank(k bind.ResolveKind) int {
 	default: // ResolveUnknown and the zero kind
 		return 0
 	}
+}
+
+// destructiveFindings converts the binder's matched entries.
+func destructiveFindings(ds []kb.Destructive) []DestructiveFinding {
+	if len(ds) == 0 {
+		return nil
+	}
+	out := make([]DestructiveFinding, len(ds))
+	for i, d := range ds {
+		out[i] = DestructiveFinding{Command: d.Command, Spec: d.Spec, Class: string(d.Class), Reason: d.Reason}
+	}
+	return out
 }
 
 // normalizeDestructive de-duplicates destructive findings by (command, spec) and
@@ -437,20 +450,9 @@ func (a *Analyzer) analyzeBash(v bash.Variant, lang Lang, src, root string, vars
 			// site. Keep one entry per distinct call (identity) so the view
 			// stays a bounded, per-command resolution view rather than an
 			// uncapped per-execution trace.
-			cc := commandCallOf(cmd, br.Resolution)
-			if key := cc.identity(); !seenCalls[key] {
-				seenCalls[key] = true
-				calls = append(calls, cc)
-			}
+			calls = appendCall(calls, seenCalls, commandCallOf(cmd, br.Resolution))
 			kbDestruct = kbDestruct.Join(br.Destructiveness)
-			for _, d := range br.Destructive {
-				destructive = append(destructive, DestructiveFinding{
-					Command: d.Command,
-					Spec:    d.Spec,
-					Class:   string(d.Class),
-					Reason:  d.Reason,
-				})
-			}
+			destructive = append(destructive, destructiveFindings(br.Destructive)...)
 			binderNotes = append(binderNotes, br.Notes...)
 			return bash.Resolution{Effects: br.Effects, Derivations: br.Derivations}
 		}, vars)
@@ -652,15 +654,27 @@ func psFallbackName(p *ps.Program) string {
 	return ""
 }
 
-// dedupAtoms removes duplicates while preserving source sites.
+// atomKey identifies an atom by kind, text, and source site.
+type atomKey struct {
+	kind    engine.AtomKind
+	text    string
+	loc     engine.SourceLoc
+	located bool
+}
+
+// dedupAtoms removes duplicate atoms, preserving order and
+// keeping equal text at distinct source sites.
 func dedupAtoms(xs []engine.Atom) []engine.Atom {
 	if len(xs) == 0 {
 		return nil
 	}
-	seen := make(map[string]bool, len(xs))
+	seen := make(map[atomKey]bool, len(xs))
 	out := make([]engine.Atom, 0, len(xs))
 	for _, x := range xs {
-		k := atomIdentity(x)
+		k := atomKey{kind: x.Kind, text: x.Text}
+		if x.Loc != nil {
+			k.loc, k.located = *x.Loc, true
+		}
 		if seen[k] {
 			continue
 		}
@@ -745,12 +759,4 @@ func dedupSorted(xs []string) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// atomIdentity retains equal token text at distinct source locations.
-func atomIdentity(atom engine.Atom) string {
-	if atom.Loc == nil {
-		return string(atom.Kind) + "\x00" + atom.Text
-	}
-	return fmt.Sprintf("%s\x00%s\x00%s:%d:%d", atom.Kind, atom.Text, atom.Loc.File, atom.Loc.Line, atom.Loc.Col)
 }

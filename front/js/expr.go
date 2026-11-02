@@ -47,11 +47,10 @@ func (e *evaluator) eval(n *node, s *state) Value {
 			if n.text == "undefined" {
 				return undefined()
 			}
+			e.possibleThrow(s)
 			if n.text == "require" && !s.poisoned && e.resolver != nil {
-				e.possibleThrow(s)
 				return Value{kind: "loader"}
 			}
-			e.possibleThrow(s)
 			return Value{}
 		}
 		if !v.initialized {
@@ -96,8 +95,9 @@ func (e *evaluator) eval(n *node, s *state) Value {
 				value = unknown(taint)
 			} else {
 				e.charge(len(value.text) + len(text))
+				symbolic := value.symbolic || part.symbolic
 				value = stringValue(value.text + text)
-				value.Taint = taint
+				value.Taint, value.symbolic = taint, symbolic
 			}
 		}
 		return value
@@ -197,27 +197,20 @@ func (e *evaluator) eval(n *node, s *state) Value {
 				return v
 			}
 		case "typeof":
-			if value.kind == "content" || value.kind == "loader" {
+			kind := value.kind
+			switch kind {
+			case "", "content", "loader":
 				return unknown(value.Taint)
+			case "boolean-unknown":
+				kind = "boolean"
+			case "null", "module", "promise":
+				kind = "object"
+			case "builtin":
+				kind = "function"
 			}
-			if value.kind != "" {
-				kind := value.kind
-				if kind == "boolean-unknown" {
-					kind = "boolean"
-				}
-				if kind == "module" || kind == "promise" {
-					kind = "object"
-				}
-				if kind == "builtin" {
-					kind = "function"
-				}
-				if kind == "null" {
-					kind = "object"
-				}
-				v := stringValue(kind)
-				v.Taint = value.Taint
-				return v
-			}
+			v := stringValue(kind)
+			v.Taint = value.Taint
+			return v
 		case "+", "-", "~":
 			if value.kind == "number" {
 				number := value.number
@@ -408,9 +401,8 @@ func (e *evaluator) call(n *node, s *state) Value {
 	}
 	if value.kind == "loader" && !s.poisoned && n.kind == "call_expression" && len(call.Args) == 1 {
 		if module, ok := call.Args[0].String(); ok {
-			r := e.resolver(Call{Kind: "module", Module: module, Loc: call.Loc})
-			if r.Handled && r.Value.kind == "module" {
-				return r.Value
+			if v, ok := e.resolveModule(module, call.Loc); ok {
+				return v
 			}
 		}
 	}
@@ -480,7 +472,8 @@ func (e *evaluator) logical(n *node, s *state, left Value, op string) Value {
 func (e *evaluator) binary(op string, a, b Value, n *node, s *state) Value {
 	taint := a.Taint.Join(b.Taint)
 	result := Value{}
-	if a.imprecise() || b.imprecise() {
+	// A placeholder string only concatenates; other ops observe it.
+	if a.imprecise() || b.imprecise() || op != "+" && (a.symbolic || b.symbolic) {
 		if op != "===" && op != "!==" {
 			e.unmodelled(n, s, "JavaScript coercion of an unknown value is unmodelled")
 		}
@@ -503,6 +496,7 @@ func (e *evaluator) binary(op string, a, b Value, n *node, s *state) Value {
 		if lk && rk && len(left)+len(right) <= maxValueBytes {
 			e.charge(len(left) + len(right))
 			result = stringValue(left + right)
+			result.symbolic = a.symbolic || b.symbolic
 		}
 	} else if a.kind == "number" && b.kind == "number" {
 		switch op {
@@ -651,4 +645,15 @@ func decodeString(raw string) (string, bool) {
 		}
 	}
 	return out.String(), true
+}
+
+// modelWork counts reused strings and options before binding.
+func modelWork(v Value) int {
+	work := 1 + len(v.text)
+	if v.object != nil {
+		for _, key := range v.object.keys {
+			work += 1 + len(key) + len(v.object.fields[key].text)
+		}
+	}
+	return work
 }

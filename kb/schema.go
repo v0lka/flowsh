@@ -29,8 +29,7 @@ import (
 // effects (the same token contributes two independent effects, e.g. a package
 // manager's install both reaches a registry and rewrites the local store); a
 // v2 reader would reject the key, so the version is bumped again. v4 adds
-// separate JS module/call namespaces, including property-only constant
-// namespaces; shell signatures remain independent.
+// the JS-only `jsModules`/`jsCalls` sections, allowed only in v4 documents.
 const SchemaVersion = "effect-kb/v4"
 
 // KnownVersions lists every schema version the loader accepts. Keeping this an

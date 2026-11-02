@@ -96,17 +96,9 @@ rep, err := api.Analyze(lang, src)
 `api.Langs` lists every supported dialect in canonical order; the constants are
 `api.LangBash`, `api.LangPOSIX`, `api.LangPowerShell`, and `api.LangJavaScript`.
 
-`api.LangJavaScript` (`"js"`) evaluates a bounded statement/expression subset.
-Pure understood source (including empty library source) returns `effects: []`
-without uncertainty flags: it validates, but `Covered()` is false and policy
-denies it with `uncovered_report`. Unmodelled calls and execution return
-`CodeExec(⊤)` with `Conservative` true; parse/budget failures also set `Top`.
-The report uses shared scoring and source-located explanations. Call-specific
-metadata remains empty until the JS binder lands. Uncertainty still denies by
-default and can require Review, never Allow. No Node API effects or function
-invocation semantics are implemented.
+`api.LangJavaScript` (`"js"`) evaluates a bounded statement/expression subset. Modeled Node filesystem/path calls produce precise effects and populate `commandCalls` and `resolution` with the canonical builtin identity (`kind: "builtin"`). Callback execution and general function invocation remain conservative: unmodelled calls and execution return `CodeExec(⊤)` with `Conservative` true; parse/budget failures also set `Top`. Pure understood source (including empty library source) returns `effects: []` without uncertainty flags: it validates, but `Covered()` is false and policy denies it with `uncovered_report`. The report uses shared scoring and source-located explanations. Uncertainty still denies by default and can require Review, never Allow.
 
-## Options: source marker and provider selection
+## Options: source marker, providers, and JavaScript context
 
 `api.AnalyzeWith(lang, src, opts)` is `Analyze` with explicit
 `api.Options`. The zero `Options` is identical to `Analyze`:
@@ -124,9 +116,9 @@ rep, err := api.AnalyzeWith(api.LangPowerShell, src, api.Options{
 - `Options.Windows` is tri-state: `nil` (default) lets the host OS decide,
   `api.Bool(true)`/`api.Bool(false)` forces the Registry provider on/off
   regardless of the host.
+- `Options.JavaScript` accepts `*api.JavaScriptContext` with explicit offline POSIX `Home` and `Cwd` paths. A nil context uses symbolic home `/root` (it names path targets but never decides a branch) and unknown cwd; empty fields in a supplied context are unknown. JavaScript analysis reads no host home directory, cwd, environment, or module contents.
 
-`Options.Root` is honored for JavaScript. `Options.Windows` remains
-PowerShell-only and `Options.Vars` remains bash/POSIX-only; JS ignores both.
+`Options.Root` is honored for every dialect. `Options.Windows` remains PowerShell-only and `Options.Vars` remains bash/POSIX-only; JS ignores both. `Options.JavaScript` is JavaScript-only and is ignored by bash/POSIX and PowerShell.
 
 ## Exported surface
 
@@ -136,7 +128,7 @@ own, so an embedding caller sees exactly the CLI's report contract.
 
 | Kind | Symbols |
 | ---- | ------- |
-| Types (aliases) | `Lang`, `Report`, `DestructiveFinding`, `Analyzer`, `Options` |
+| Types (aliases) | `Lang`, `Report`, `DestructiveFinding`, `Analyzer`, `Options`, `JavaScriptContext` |
 | Constants | `ToolName`, `SchemaVersion`, `ToolVersion`, `RootArgument`, `RootStdin`, `LangBash`, `LangPOSIX`, `LangPowerShell`, `LangJavaScript` |
 | Variables | `Langs` |
 | Functions | `ParseLang`, `Analyze`, `AnalyzeWith`, `NewAnalyzer`, `Bool` |

@@ -14,7 +14,7 @@ const (
 
 // Call is a reached call site with abstract arguments.
 type Call struct {
-	Kind    string // module, property, or call (empty also means call)
+	Kind    string // "module", "property", or "" for a call
 	Module  string
 	Export  string
 	Callee  string

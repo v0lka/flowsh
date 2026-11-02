@@ -1282,7 +1282,9 @@ func (it *interp) execFor(c *syntax.ForClause) {
 		}
 		var vals []string
 		known := true
+		assumed := false
 		for _, w := range loop.Items {
+			assumed = assumed || it.wordAssumed(w)
 			ew := it.expandFields(w)
 			if !ew.known {
 				known = false
@@ -1300,6 +1302,7 @@ func (it *interp) execFor(c *syntax.ForClause) {
 			it.step()
 			if name != "" {
 				it.state.SetKnown(name, v, engine.TaintBottom())
+				it.state.markAssumed(name, assumed)
 			}
 			it.execStmts(c.Do)
 			if it.handleLoopCtl() {
@@ -1356,6 +1359,7 @@ func (it *interp) execCase(c *syntax.CaseClause) {
 	known := true
 	if c.Word != nil {
 		subj, known, _ = it.expandLiteral(c.Word)
+		known = known && !it.wordAssumed(c.Word)
 	}
 	if !known {
 		for _, item := range c.Items {
@@ -1427,7 +1431,7 @@ func (it *interp) execCase(c *syntax.CaseClause) {
 func (it *interp) caseMatch(subj string, pats []*syntax.Word) (matched, unknown bool) {
 	for _, p := range pats {
 		pat, ok := it.casePattern(p)
-		if !ok {
+		if !ok || it.wordAssumed(p) {
 			return false, true
 		}
 		m, ok := globMatch(pat, subj)
@@ -1631,6 +1635,7 @@ func (it *interp) execDecl(c *syntax.DeclClause) {
 		default:
 			it.state.SetUnknown(name, taint)
 		}
+		it.state.markAssumed(name, it.wordAssumed(a.Value))
 		if v := it.state.Get(name); v != nil {
 			switch variant {
 			case "export":
@@ -1776,12 +1781,14 @@ func (it *interp) execCall(c *syntax.CallExpr) {
 			it.derive(e, engine.Atom{Kind: engine.AtomLiteral, Text: name, Loc: sourceLoc(as.Pos, it.prog.File)})
 		}
 		if len(c.Args) == 0 {
+			assumed := it.wordAssumed(a.Value)
 			switch {
 			case a.Array != nil || a.Index != nil:
 				it.state.SetUnknown(name, taint)
 			case a.Append:
 				// name+=value appends to the existing value.
 				if prev := it.state.Get(name); prev != nil && prev.Set && prev.Known {
+					assumed = assumed || prev.Assumed
 					it.state.SetKnown(name, prev.Value+val, taint.Join(prev.Taint))
 				} else if prev := it.state.Get(name); prev != nil && prev.Set {
 					it.state.SetUnknown(name, taint)
@@ -1798,6 +1805,7 @@ func (it *interp) execCall(c *syntax.CallExpr) {
 			default:
 				it.state.SetUnknown(name, taint)
 			}
+			it.state.markAssumed(name, assumed)
 		}
 	}
 

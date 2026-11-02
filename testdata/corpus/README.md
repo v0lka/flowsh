@@ -5,7 +5,7 @@ directory is a `{name, description, cases[]}` bundle (see
 [Analysis Facade](../../specs/domains/analysis-report.md)). This README is
 documentation, not data — the loader reads only `*.json`.
 
-The corpus has 445 cases. The filesystem slice adds 51 witnesses with specific effect/target/metadata assertions in `TestJavaScriptFilesystemMatrix` and module regressions, alongside the zero-miss gate.
+The corpus has 460 cases. The filesystem slice adds 51 witnesses with specific effect/target/metadata assertions in `TestJavaScriptFilesystemMatrix` and module regressions, alongside the zero-miss gate.
 
 ## Bundles
 

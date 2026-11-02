@@ -1,5 +1,12 @@
 package js
 
+import (
+	"cmp"
+
+	"github.com/v0lka/flowsh/engine"
+)
+
+// importValue resolves a static import source, or ⊤.
 func (e *evaluator) importValue(n *node, s *state) Value {
 	if s.poisoned || e.resolver == nil {
 		return Value{}
@@ -13,13 +20,20 @@ func (e *evaluator) importValue(n *node, s *state) Value {
 		return Value{}
 	}
 	e.charge(len(module))
-	r := e.resolver(Call{Kind: "module", Module: module, Loc: e.location(n)})
-	if r.Handled && r.Value.kind == "module" {
-		return r.Value
-	}
-	return Value{}
+	v, _ := e.resolveModule(module, e.location(n))
+	return v
 }
 
+// resolveModule returns a reviewed module identity, or ⊤.
+func (e *evaluator) resolveModule(module string, loc engine.SourceLoc) (Value, bool) {
+	r := e.resolver(Call{Kind: "module", Module: module, Loc: loc})
+	if r.Handled && r.Value.kind == "module" {
+		return r.Value, true
+	}
+	return Value{}, false
+}
+
+// bindImport binds every local name an import declares.
 func (e *evaluator) bindImport(n *node, module Value, s *state) {
 	e.step()
 	if n.kind == "namespace_import" {
@@ -29,11 +43,8 @@ func (e *evaluator) bindImport(n *node, module Value, s *state) {
 	case "identifier":
 		s.scopes[len(s.scopes)-1][n.text] = binding{value: module, constant: true, initialized: true}
 	case "import_specifier":
-		target := n.get("alias")
-		if target == nil {
-			target = n.get("name")
-		}
 		imported := n.get("name")
+		target := cmp.Or(n.get("alias"), imported)
 		value := Value{}
 		if module.kind == "module" && imported != nil {
 			value = module
@@ -49,15 +60,4 @@ func (e *evaluator) bindImport(n *node, module Value, s *state) {
 			e.bindImport(child, module, s)
 		}
 	}
-}
-
-// modelWork counts reused strings and options before binding.
-func modelWork(v Value) int {
-	work := 1 + len(v.text)
-	if v.object != nil {
-		for _, key := range v.object.keys {
-			work += 1 + len(key) + len(v.object.fields[key].text)
-		}
-	}
-	return work
 }

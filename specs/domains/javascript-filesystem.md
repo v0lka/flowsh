@@ -12,7 +12,7 @@ Define the source-to-report acceptance contract for issue #29 and its filesystem
 
 ## Behavior
 
-The compatibility baseline is Node 22/24 POSIX filesystem semantics. Deprecated recursive `rmdir` is included conservatively for older programs; Node 25 removed the option. Default `path` and `path.posix` use explicit POSIX semantics on every analyzer host. `path.win32` remains unsupported. No host filesystem, environment, cwd, or module code is consulted. Home is the symbolic `/root` report context used by Bash; cwd is unknown unless an absolute segment makes it unnecessary. Literal JavaScript `~/` and `$HOME/` names remain literal evidence and targets; effects additionally include the home-normalized report abstraction. Helpers do not perform shell expansion.
+The compatibility baseline is Node 22/24 POSIX filesystem semantics. Deprecated recursive `rmdir` is included conservatively for older programs; Node 25 removed the option. Default `path` and `path.posix` use explicit POSIX semantics on every analyzer host. `path.win32` remains unsupported. No host filesystem, environment, cwd, or module code is consulted. Home is the symbolic `/root` report context used by Bash: it shapes targets but comparisons treat it as unknown; cwd is unknown unless an absolute segment makes it unnecessary. Literal JavaScript `~/` and `$HOME/` names remain literal evidence and targets; effects additionally include the home-normalized report abstraction. Helpers do not perform shell expansion.
 
 | Export family | Shapes | Arguments excluding final callback | Lowering / return |
 | --- | --- | --- | --- |

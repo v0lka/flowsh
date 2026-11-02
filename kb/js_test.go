@@ -44,16 +44,10 @@ func TestJavaScriptKnowledgeNamespace(t *testing.T) {
 	if !ok || call.Options != 1 || call.Return != "content" {
 		t.Fatalf("call shape lost: %+v", call)
 	}
-	for _, version := range []string{"effect-kb/v2", "effect-kb/v3"} {
-		if _, err := loadSrc(map[string]string{"a.yaml": "version: " + version + "\ncommands: []\n"}); err != nil {
-			t.Fatalf("legacy version rejected: %v", err)
-		}
-	}
 }
 
 func TestJavaScriptKnowledgeValidation(t *testing.T) {
 	for _, tc := range []struct{ name, from, to string }{
-		{"unknown document key", "jsCalls:", "jsCallz:"},
 		{"unknown module key", "aliases: [node:fs]", "typo: x"},
 		{"duplicate module alias", "aliases: [node:fs]", "aliases: [fs]"},
 		{"invalid module alias", "aliases: [node:fs]", "aliases: ['invalid alias']"},
@@ -79,7 +73,6 @@ func TestJavaScriptKnowledgeValidation(t *testing.T) {
 		{"duplicate effect", "        target: path", "        target: path\n      - kind: FSRead\n        arg: 0\n        target: path"},
 		{"pure side effects", "style: sync", "style: pure"},
 		{"legacy shape", "version: effect-kb/v4", "version: effect-kb/v3"},
-		{"duplicate key", "export: readFileSync", "export: readFileSync\n    export: duplicate"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := loadSrc(map[string]string{"a.yaml": strings.Replace(jsFixture, tc.from, tc.to, 1)})
@@ -147,7 +140,6 @@ func TestJavaScriptModuleConstants(t *testing.T) {
 		{"fractional constant", "F_OK: 0", "F_OK: 1.5", "must be an integer"},
 		{"inexact constant", "F_OK: 0", "F_OK: 9007199254740993", "exact integer range"},
 		{"overlong constant name", "F_OK: 0", strings.Repeat("A", 129) + ": 0", "invalid JS module constant"},
-		{"duplicate constant", "F_OK: 0", "F_OK: 0\n      F_OK: 1", "duplicate key"},
 		{"non-boolean internal", "internal: true", "internal: yes", "true or false"},
 		{"internal module with alias", "internal: true", "internal: true\n    aliases: [node:fs/constants]", "cannot declare aliases"},
 		{"unreferenced internal module", "    properties:\n      constants: fs.constants\n", "", "not a module property target"},

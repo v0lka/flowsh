@@ -22,6 +22,7 @@ type Value struct {
 	module    string
 	export    string
 	namespace bool
+	symbolic  bool // a placeholder string: a path, never compared
 	settled   *Value
 	Taint     engine.Taint
 }
@@ -50,6 +51,17 @@ func StringValue(s string) Value {
 	return stringValue(s)
 }
 
+// SymbolicString is a placeholder string such as the default
+// home: path helpers keep its text, comparisons treat it as ⊤.
+func SymbolicString(s string) Value {
+	v := StringValue(s)
+	v.symbolic = v.kind == "string"
+	return v
+}
+
+// Symbolic reports whether v is a placeholder string.
+func (v Value) Symbolic() bool { return v.symbolic }
+
 // NumberValue constructs an exact number for trusted models.
 func NumberValue(n float64) Value { return numberValue(n) }
 
@@ -77,7 +89,7 @@ func BuiltinValue(module, export string) Value {
 
 // PromiseValue wraps a trusted model's fulfillment value.
 func PromiseValue(value Value) Value {
-	return Value{kind: "promise", settled: &value, Taint: value.Taint}
+	return Value{kind: "promise", settled: new(value), Taint: value.Taint}
 }
 
 // Kind returns the value category.
@@ -110,15 +122,14 @@ func (v Value) Keys() ([]string, bool) {
 	return slices.Clone(v.object.keys), true
 }
 
+const maxProjection = 4096
+
 // Projection returns a bounded report argument.
 func (v Value) Projection() string {
-	if text, ok := v.String(); ok {
-		if len(text) <= 4096 {
-			return text
-		}
-		return "<string>"
-	}
 	if text, ok := v.primitiveString(); ok {
+		if len(text) > maxProjection {
+			return "<string>"
+		}
 		return text
 	}
 	if v.object != nil && !v.object.array && len(v.object.keys) <= 32 {
@@ -127,7 +138,7 @@ func (v Value) Projection() string {
 		for _, key := range v.object.keys {
 			field := v.object.fields[key]
 			bytes += len(key) + len(field.text) + 16
-			if bytes > 4096 {
+			if bytes > maxProjection {
 				return "<object>"
 			}
 			switch field.kind {
@@ -147,7 +158,7 @@ func (v Value) Projection() string {
 				fields[key] = "<" + field.kind + ">"
 			}
 		}
-		if encoded, err := json.Marshal(fields); err == nil && len(encoded) <= 4096 {
+		if encoded, err := json.Marshal(fields); err == nil && len(encoded) <= maxProjection {
 			return string(encoded)
 		}
 	}
@@ -172,7 +183,7 @@ func sameValue(a, b Value) bool {
 	}
 	switch a.kind {
 	case "string":
-		return a.text == b.text
+		return a.text == b.text && a.symbolic == b.symbolic
 	case "number":
 		if a.number == 0 && b.number == 0 {
 			return math.Signbit(a.number) == math.Signbit(b.number)
@@ -290,7 +301,7 @@ func (e *evaluator) havoc(s *state) {
 	for _, scope := range s.scopes {
 		for name, v := range scope {
 			e.step()
-			if !v.constant || v.value.kind == "object" || v.value.kind == "module" || v.value.kind == "builtin" || v.value.kind == "loader" {
+			if !v.constant || slices.Contains([]string{"object", "module", "builtin", "loader"}, v.value.kind) {
 				v.value = unknown(v.value.Taint)
 				scope[name] = v
 			}

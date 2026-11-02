@@ -275,6 +275,102 @@
       "note": "Unsupported primitive update coercion must expose conservative uncertainty."
     },
     {
+      "id": "gf-js-e-core-if-import",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "if (x) import './payload.js';",
+      "note": "A parser-accepted non-block import must retain conservative module initialization."
+    },
+    {
+      "id": "gf-js-e-core-if-else-imports",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "if (x) import './p.js'; else import './q.js';",
+      "note": "Imports in both non-block branches must not become silent no-ops."
+    },
+    {
+      "id": "gf-js-e-core-else-import",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "if (false) ; else import './q.js';",
+      "note": "A reached non-block else import must degrade independently of the consequence."
+    },
+    {
+      "id": "gf-js-e-core-do-import",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "do import './p.js'; while (false);",
+      "note": "A single-iteration non-block do body must retain module initialization."
+    },
+    {
+      "id": "gf-js-e-core-if-named-reexport",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "if (x) export { a } from './m.js';",
+      "note": "A parser-accepted non-block named re-export must degrade."
+    },
+    {
+      "id": "gf-js-e-core-if-star-reexport",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "if (x) export * from './m.js';",
+      "note": "A parser-accepted non-block star re-export must degrade."
+    },
+    {
+      "id": "gf-js-e-core-else-reexport",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "if (false) ; else export * from './m.js';",
+      "note": "A reached non-block else re-export must retain module initialization."
+    },
+    {
+      "id": "gf-js-e-core-do-named-reexport",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "do export { a } from './m.js'; while (false);",
+      "note": "A named re-export in a single-iteration non-block do body must degrade."
+    },
+    {
+      "id": "gf-js-e-core-do-star-reexport",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "do export * from './m.js'; while (false);",
+      "note": "A star re-export in a single-iteration non-block do body must degrade."
+    },
+    {
+      "id": "gf-js-e-core-homedir-compare",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "const os=require('os'),fs=require('fs');if(os.homedir()!=='/root')fs.rmSync('/',{recursive:true,force:true});",
+      "note": "The symbolic default home must not decide a branch."
+    },
+    {
+      "id": "gf-js-e-core-homedir-switch",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "const os=require('os'),fs=require('fs');switch(os.homedir()){case '/root':break;default:fs.rmSync('/',{recursive:true})}",
+      "note": "A switch on the symbolic default home must explore every case."
+    },
+    {
+      "id": "gf-js-e-core-homedir-join-compare",
+      "group": "guardfall",
+      "category": "E",
+      "lang": "js",
+      "input": "const os=require('os'),fs=require('fs'),p=require('path');if(p.join(os.homedir(),'.ssh')!=='/root/.ssh')fs.rmSync('/',{recursive:true});",
+      "note": "Path helpers must keep the default home symbolic."
+    },
+    {
       "id": "benign-js-core-hashbang",
       "group": "benign",
       "lang": "js",

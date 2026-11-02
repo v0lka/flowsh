@@ -10,8 +10,8 @@ import (
 	"github.com/v0lka/flowsh/engine"
 )
 
-// JSModule is an offline builtin namespace. An internal namespace is reachable
-// only through another module's property, never through require or import.
+// JSModule is an offline builtin namespace. An internal one is
+// reachable only via another module's property, never via require.
 type JSModule struct {
 	Name       string
 	Aliases    []string
@@ -51,9 +51,11 @@ func (k *KB) JSModule(name string) (*JSModule, bool) { m, ok := k.jsModules[name
 
 // JSCall looks up a canonical module/export pair.
 func (k *KB) JSCall(module, export string) (*JSCall, bool) {
-	c, ok := k.jsCalls[module+"\x00"+export]
+	c, ok := k.jsCalls[jsCallKey(module, export)]
 	return c, ok
 }
+
+func jsCallKey(module, export string) string { return module + "\x00" + export }
 
 func (k *KB) buildJS() error {
 	slices.SortFunc(k.JSModules, func(a, b JSModule) int { return cmp.Compare(a.Name, b.Name) })
@@ -73,7 +75,7 @@ func (k *KB) buildJS() error {
 	}
 	for i := range k.JSCalls {
 		c := &k.JSCalls[i]
-		key := c.Module + "\x00" + c.Export
+		key := jsCallKey(c.Module, c.Export)
 		if k.jsCalls[key] != nil {
 			return fmt.Errorf("kb: duplicate JS call %s.%s", c.Module, c.Export)
 		}
@@ -141,7 +143,7 @@ func (k *KB) validateJS() error {
 	return nil
 }
 
-// maxJSConstant bounds module constants to integers float64 represents exactly.
+// maxJSConstant bounds constants to integers exact in float64.
 const maxJSConstant = 1 << 53
 
 func validJSName(s string) bool {
@@ -167,17 +169,17 @@ func (c JSCall) validate() error {
 	if !slices.Contains([]string{"record", "encoding", "mode", "number"}, c.OptionShape) {
 		return fmt.Errorf("invalid options shape %q", c.OptionShape)
 	}
-	seen := map[string]bool{}
 	if c.Options < 0 && len(c.OptionKeys) > 0 {
 		return fmt.Errorf("option keys require an options selector")
 	}
+	keys := map[string]bool{}
 	for _, key := range c.OptionKeys {
-		if !slices.Contains([]string{"encoding", "flag", "flags", "mode", "recursive", "force", "maxRetries", "retryDelay", "bigint", "throwIfNoEntry", "flush", "autoClose", "emitClose", "start", "end", "highWaterMark", "fd", "fs", "signal"}, key) || seen[key] {
+		if !slices.Contains([]string{"encoding", "flag", "flags", "mode", "recursive", "force", "maxRetries", "retryDelay", "bigint", "throwIfNoEntry", "flush", "autoClose", "emitClose", "start", "end", "highWaterMark", "fd", "fs", "signal"}, key) || keys[key] {
 			return fmt.Errorf("invalid or duplicate option %q", key)
 		}
-		seen[key] = true
+		keys[key] = true
 	}
-	if c.FlagOption != "" && (c.Options < 0 || !seen[c.FlagOption] || c.FlagDefault == "") {
+	if c.FlagOption != "" && (c.Options < 0 || !keys[c.FlagOption] || c.FlagDefault == "") {
 		return fmt.Errorf("invalid flag selector")
 	}
 	if c.FlagOption == "" && c.FlagDefault != "" {
@@ -199,12 +201,12 @@ func (c JSCall) validate() error {
 		}
 		effects[eff] = true
 	}
-	seen = map[string]bool{}
+	destructive := map[string]bool{}
 	for _, d := range c.Destructive {
-		if c.Options < 0 || !slices.Contains(c.OptionKeys, d.Option) || !slices.Contains([]string{"recursive", "force"}, d.Option) || !d.Class.Valid() || d.Reason == "" || seen[d.Option] {
+		if !keys[d.Option] || !slices.Contains([]string{"recursive", "force"}, d.Option) || !d.Class.Valid() || d.Reason == "" || destructive[d.Option] {
 			return fmt.Errorf("invalid destructive predicate")
 		}
-		seen[d.Option] = true
+		destructive[d.Option] = true
 	}
 	return nil
 }

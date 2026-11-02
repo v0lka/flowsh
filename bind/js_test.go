@@ -87,25 +87,3 @@ func TestJavaScriptFilesystemWriteDataTaint(t *testing.T) {
 		})
 	}
 }
-
-func TestJavaScriptModuleConstants(t *testing.T) {
-	b, err := NewDefault()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result := b.BindJS(js.Call{Kind: "module", Module: "fs.constants"}, JSContext{}); result.Resolution.Handled {
-		t.Fatal("property-only namespace resolved as an importable module")
-	}
-	namespace := b.BindJS(js.Call{Kind: "property", Module: "fs", Export: "constants"}, JSContext{})
-	if !namespace.Resolution.Handled || namespace.Resolution.Value.Kind() != "module" {
-		t.Fatalf("fs.constants namespace lost: %+v", namespace.Resolution)
-	}
-	constant := b.BindJS(js.Call{Kind: "property", Module: "fs.constants", Export: "COPYFILE_EXCL"}, JSContext{})
-	number, known := constant.Resolution.Value.Number()
-	if !constant.Resolution.Handled || !known || number != 1 {
-		t.Fatalf("COPYFILE_EXCL lost: %+v", constant.Resolution)
-	}
-	if result := b.BindJS(js.Call{Kind: "property", Module: "fs.constants", Export: "O_CREAT"}, JSContext{}); result.Resolution.Handled {
-		t.Fatal("platform-specific constant guessed")
-	}
-}

@@ -171,7 +171,7 @@ Two design points: ordinary command effects come through the **Resolver seam** (
 - `maxFuncDepth = 64` — function-call recursion bound.
 - `maxAliasDepth = 32` — alias-chain expansion bound.
 - `maxRecorded = 1024` — bound on the resolved-invocation and note lists.
-- `defaultVars` = `{IFS: " \t\n", HOME: "/root", PATH: "/usr/bin:/bin", PWD: "/", SHELL: "/bin/sh", USER: "root"}`; `defaultUmask = "0022"`.
+- `defaultVars` = `{IFS: " \t\n", HOME: "/root", PATH: "/usr/bin:/bin", PWD: "/", SHELL: "/bin/sh", USER: "root"}`; `defaultUmask = "0022"`. Every default except `IFS` is `Assumed`: a host stand-in that names paths but never decides control flow. Assignments and `for` items derived from an assumed word stay assumed; any other assignment clears the flag.
 - Recognised wrappers (`wrapperSpecs`): `sudo`, `env`, `nohup`, `command`, `nice`, `timeout`, `xargs`, `setsid`.
 
 ## Extension Points

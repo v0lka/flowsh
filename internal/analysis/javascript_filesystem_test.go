@@ -10,12 +10,9 @@ import (
 )
 
 func jsHasTarget(r *Report, kind engine.EffectKind, target string) bool {
-	for _, effect := range r.Effects {
-		if effect.Kind == kind && slices.Contains(effect.Target.Targets(), target) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(r.Effects, func(e engine.Effect) bool {
+		return e.Kind == kind && slices.Contains(e.Target.Targets(), target)
+	})
 }
 
 func TestJavaScriptFilesystemMatrix(t *testing.T) {
@@ -58,12 +55,9 @@ func TestJavaScriptFilesystemMatrix(t *testing.T) {
 					t.Fatalf("missing %s %s: %+v", family.kind, family.target, r.Effects)
 				}
 				if family.name == "mkdtemp" {
-					found := false
-					for _, effect := range r.Effects {
-						if effect.Kind == engine.KindFSWrite && effect.Target.IsTop() {
-							found = true
-						}
-					}
+					found := slices.ContainsFunc(r.Effects, func(e engine.Effect) bool {
+						return e.Kind == engine.KindFSWrite && e.Target.IsTop()
+					})
 					if !found {
 						t.Fatalf("invented temporary suffix: %+v", r.Effects)
 					}
@@ -115,6 +109,8 @@ func TestJavaScriptModuleIdentity(t *testing.T) {
 		`import {default as fs} from 'fs';fs.readFileSync('/etc/passwd')`,
 		`import {readFile} from 'node:fs/promises';await readFile('/etc/passwd')`,
 		`read('/etc/passwd');import {readFileSync as read} from 'fs';`,
+		`if (true) { import fs from 'fs';fs.readFileSync('/etc/passwd'); }`,
+		`switch (1) { case 1: import fs from 'fs';fs.readFileSync('/etc/passwd'); }`,
 		`const fs=require('fs');fs['readFileSync']('/etc/passwd')`,
 	} {
 		t.Run(src, func(t *testing.T) {
@@ -194,6 +190,31 @@ func TestJavaScriptImportInitializationIsHoisted(t *testing.T) {
 	}
 }
 
+func TestJavaScriptNestedModuleStatementsDegrade(t *testing.T) {
+	a := mustAnalyzer(t)
+	for _, tc := range []struct{ name, src string }{
+		{"if import", `if (x) import './payload.js';`},
+		{"if else imports", `if (x) import './p.js'; else import './q.js';`},
+		{"else import", `if (false) ; else import './q.js';`},
+		{"do import", `do import './p.js'; while (false);`},
+		{"if named reexport", `if (x) export { a } from './m.js';`},
+		{"if star reexport", `if (x) export * from './m.js';`},
+		{"else reexport", `if (false) ; else export * from './m.js';`},
+		{"do named reexport", `do export { a } from './m.js'; while (false);`},
+		{"do star reexport", `do export * from './m.js'; while (false);`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := a.AnalyzeWith(LangJavaScript, tc.src, Options{Root: "nested.js"})
+			if err := r.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			if r.Top || !r.Conservative || !r.HasTop() || !r.Covered() || !strings.Contains(r.Reason, "module initialization") {
+				t.Fatalf("nested module statement lost conservative initialization: %+v", r)
+			}
+		})
+	}
+}
+
 func TestJavaScriptStreamAndExistenceModels(t *testing.T) {
 	a := mustAnalyzer(t)
 	for _, tc := range []struct {
@@ -238,6 +259,7 @@ func TestJavaScriptFilesystemControlFlow(t *testing.T) {
 		`fs.createWriteStream('/tmp/file',{fs:custom})`,
 		`fs.writeFileSync('/tmp/file','x',{flag:missing})`,
 		`fs.chmodSync('/tmp/file',0o4755)`,
+		`fs.mkdirSync('/tmp/dir','7777')`,
 	} {
 		t.Run(src, func(t *testing.T) {
 			r := a.Analyze(LangJavaScript, `const fs=require('fs');`+src)
@@ -343,12 +365,9 @@ func TestJavaScriptPathHelpersAndCanonicalTargets(t *testing.T) {
 			if r.Conservative || !jsHasTarget(r, engine.KindFSRead, tc.want) {
 				t.Fatalf("path model: %+v", r)
 			}
-			found := false
-			for _, effect := range r.Canonical.Effects {
-				if slices.Contains(effect.Target.Targets(), tc.want) {
-					found = true
-				}
-			}
+			found := slices.ContainsFunc(r.Canonical.Effects, func(e engine.Effect) bool {
+				return slices.Contains(e.Target.Targets(), tc.want)
+			})
 			if !found {
 				t.Fatalf("canonical target dropped: %+v", r.Canonical)
 			}
@@ -427,5 +446,22 @@ func TestJavaScriptFilesystemConstants(t *testing.T) {
 				t.Fatalf("unmodeled constant or namespace guessed: %+v", r)
 			}
 		})
+	}
+}
+
+func TestJavaScriptSymbolicDefaultHome(t *testing.T) {
+	a := mustAnalyzer(t)
+	guard := `const os=require('os'),fs=require('fs');if(os.homedir()!=='/home/u')fs.rmSync('/',{recursive:true})`
+	if r := a.Analyze(LangJavaScript, guard); !jsHasTarget(r, engine.KindFSWrite, "/") {
+		t.Fatalf("default home decided a branch: %+v", r)
+	}
+	r := a.Analyze(LangJavaScript, `const os=require('os'),fs=require('fs');fs.readFileSync(os.homedir()+'/.ssh/id_rsa')`)
+	if r.Conservative || !jsHasTarget(r, engine.KindFSRead, "/root/.ssh/id_rsa") {
+		t.Fatalf("default home lost path precision: %+v", r)
+	}
+	// A supplied home is the embedder's fact, so it may decide branches.
+	r = a.AnalyzeWith(LangJavaScript, guard, Options{JavaScript: &JavaScriptContext{Home: "/home/u"}})
+	if r.Conservative || len(r.Effects) != 0 {
+		t.Fatalf("supplied home lost precision: %+v", r)
 	}
 }

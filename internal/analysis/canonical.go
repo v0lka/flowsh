@@ -165,7 +165,7 @@ func normalizeBinary(name string, args []string) (string, []string) {
 // identity is a comparable key for a call: two abstract executions of the same
 // call site (name, normalized binary, arguments, redirections) produce the same
 // identity, so a repeated call — a loop body — contributes one report entry.
-// Lengths and collection counts preserve boundaries even for embedded NULs.
+// Length prefixes keep field boundaries injective.
 func (c CommandCall) identity() string {
 	var b strings.Builder
 	write := func(value string) {
@@ -186,6 +186,16 @@ func (c CommandCall) identity() string {
 		write(strconv.FormatBool(r.Known))
 	}
 	return b.String()
+}
+
+// appendCall appends cc unless seen holds its identity.
+func appendCall(calls []CommandCall, seen map[string]bool, cc CommandCall) []CommandCall {
+	key := cc.identity()
+	if seen[key] {
+		return calls
+	}
+	seen[key] = true
+	return append(calls, cc)
 }
 
 // buildCanonical derives the canonical effect set from the report's effects and

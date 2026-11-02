@@ -1,7 +1,6 @@
 package bind
 
 import (
-	"math"
 	"slices"
 	"strings"
 
@@ -11,9 +10,13 @@ import (
 )
 
 // JSContext holds offline paths; empty fields are unknown.
-type JSContext struct{ Home, Cwd string }
+type JSContext struct {
+	Home, Cwd string
+	// SymbolicHome marks Home as a placeholder, not a fact.
+	SymbolicHome bool
+}
 
-// JSResult holds modeled values, effects, and report metadata.
+// JSResult holds the modeled value, effects, and metadata.
 type JSResult struct {
 	Resolution js.Resolution
 	Binding    Result
@@ -21,17 +24,17 @@ type JSResult struct {
 
 // BindJS models a builtin JavaScript lookup or call.
 func (b *Binder) BindJS(call js.Call, context JSContext) JSResult {
-	out := JSResult{}
+	var out JSResult
 	if b == nil || b.k == nil {
 		return out
 	}
-	if call.Kind == "module" {
+	switch call.Kind {
+	case "module":
 		if module, ok := b.k.JSModule(call.Module); ok && !module.Internal {
 			out.Resolution = js.Resolution{Handled: true, Value: js.BuiltinValue(module.Name, "")}
 		}
 		return out
-	}
-	if call.Kind == "property" {
+	case "property":
 		if module, ok := b.k.JSModule(call.Module); ok {
 			if target := module.Properties[call.Export]; target != "" {
 				out.Resolution = js.Resolution{Handled: true, Value: js.BuiltinValue(target, "")}
@@ -61,7 +64,8 @@ func (b *Binder) BindJS(call js.Call, context JSContext) JSResult {
 			}
 		}
 		for _, effect := range model.Effects {
-			if text, known := jsArg(call.Args, effect.Arg).String(); known && (strings.HasPrefix(text, "~") || strings.HasPrefix(text, "$HOME") || strings.HasPrefix(text, "${HOME}")) {
+			text, known := jsArg(call.Args, effect.Arg).String()
+			if known && slices.ContainsFunc(jsHomePrefixes, func(p string) bool { return strings.HasPrefix(text, p) }) {
 				call.Charge(len(context.Home))
 			}
 		}
@@ -71,10 +75,8 @@ func (b *Binder) BindJS(call js.Call, context JSContext) JSResult {
 	name := model.Module + "." + model.Export
 	out.Binding.Resolution = Resolution{Invoked: call.Callee, Kind: ResolveBuiltin, Name: name}
 	args := call.Args
-	if model.Style == "callback" {
-		if len(args) > 0 {
-			args = args[:len(args)-1]
-		}
+	if model.Style == "callback" && len(args) > 0 {
+		args = args[:len(args)-1]
 	}
 	if len(args) < model.MinArgs || len(args) > model.MaxArgs {
 		out.Resolution.Reason = "unsupported JavaScript API argument shape"
@@ -87,10 +89,10 @@ func (b *Binder) BindJS(call js.Call, context JSContext) JSResult {
 		return out
 	}
 	options := js.UndefinedValue()
-	if model.Return == "content" {
+	switch model.Return {
+	case "content":
 		out.Resolution.Value = js.ContentValue()
-	}
-	if model.Return == "boolean" {
+	case "boolean":
 		out.Resolution.Value = js.UnknownBoolean()
 	}
 	if model.DataArg >= 0 {
@@ -116,12 +118,13 @@ func (b *Binder) BindJS(call js.Call, context JSContext) JSResult {
 			target = engine.ScopeTop()
 		}
 		taint := value.Taint
-		if kind == engine.KindFSRead {
-			taint = jsReadTaint(taint, target)
-			out.Resolution.Value.Taint = out.Resolution.Value.Taint.Join(taint)
-		}
 		if kind == engine.KindFSRead || kind == engine.KindFSMeta {
-			sourceTaint = sourceTaint.Join(jsReadTaint(taint, target))
+			read := jsReadTaint(taint, target)
+			sourceTaint = sourceTaint.Join(read)
+			if kind == engine.KindFSRead {
+				taint = read
+				out.Resolution.Value.Taint = out.Resolution.Value.Taint.Join(read)
+			}
 		}
 		if kind == engine.KindFSWrite && model.DataArg >= 0 {
 			taint = taint.Join(jsArg(args, model.DataArg).Taint)
@@ -132,7 +135,10 @@ func (b *Binder) BindJS(call js.Call, context JSContext) JSResult {
 		if index < len(call.ArgLocs) {
 			loc = call.ArgLocs[index]
 		}
-		atoms := []engine.Atom{{Kind: engine.AtomCommand, Text: name, Loc: &call.Loc}, {Kind: engine.AtomLiteral, Text: jsEvidence(value), Loc: &loc}}
+		atoms := []engine.Atom{
+			{Kind: engine.AtomCommand, Text: name, Loc: &call.Loc},
+			{Kind: engine.AtomLiteral, Text: jsEvidence(value), Loc: &loc},
+		}
 		out.Binding.Derivations = append(out.Binding.Derivations, engine.Derivation{Effect: effect, Atoms: atoms, Rules: []string{"js.kb.filesystem"}})
 	}
 	for _, effect := range model.Effects {
@@ -154,14 +160,18 @@ func (b *Binder) BindJS(call js.Call, context JSContext) JSResult {
 			add(engine.KindFSWrite, 0, false)
 		}
 	}
-	// Source selectors describe copied content or the old path of a rename.
-	// Join after collecting effects so YAML selector order cannot drop taint.
+	// Writes inherit source taint (copy source, rename old path),
+	// joined last so YAML effect order cannot drop it.
 	for i := range out.Binding.Effects {
 		effect := &out.Binding.Effects[i]
 		if effect.Kind == engine.KindFSWrite {
 			effect.Taint = effect.Taint.Join(sourceTaint)
 			out.Binding.Derivations[i].Effect = *effect
 		}
+	}
+	optionsLoc := call.Loc
+	if model.Options >= 0 && model.Options < len(call.ArgLocs) {
+		optionsLoc = call.ArgLocs[model.Options]
 	}
 	for _, predicate := range model.Destructive {
 		value := jsOption(options, predicate.Option)
@@ -173,40 +183,32 @@ func (b *Binder) BindJS(call js.Call, context JSContext) JSResult {
 			out.Resolution.Reason = "unknown JavaScript deletion options retain possible destructive behavior"
 		}
 		if active || !known {
-			out.Binding.Destructive = append(out.Binding.Destructive, kb.Destructive{Command: name, Spec: predicate.Option, Class: predicate.Class, Reason: predicate.Reason})
+			out.Binding.Destructive = append(out.Binding.Destructive, kb.Destructive{
+				Command: name, Spec: predicate.Option, Class: predicate.Class, Reason: predicate.Reason,
+			})
 			out.Binding.Destructiveness = out.Binding.Destructiveness.Join(predicate.Class.Severity())
-			loc := call.Loc
-			if model.Options < len(call.ArgLocs) && model.Options >= 0 {
-				loc = call.ArgLocs[model.Options]
-			}
-			// The option qualifies the call's modeled effects; a flag-derived
-			// effect of another kind is not deletion evidence.
+			// Only the model's own effect kinds get the option
+			// atom; flag-derived effects are not deletion evidence.
 			for i := range out.Binding.Derivations {
 				kind := out.Binding.Derivations[i].Effect.Kind
 				if !slices.ContainsFunc(model.Effects, func(e kb.JSEffect) bool { return e.Kind == kind }) {
 					continue
 				}
-				out.Binding.Derivations[i].Atoms = append(out.Binding.Derivations[i].Atoms, engine.Atom{Kind: engine.AtomLiteral, Text: predicate.Option, Loc: &loc})
+				out.Binding.Derivations[i].Atoms = append(out.Binding.Derivations[i].Atoms, engine.Atom{Kind: engine.AtomLiteral, Text: predicate.Option, Loc: &optionsLoc})
 			}
 		}
 	}
 	// Significant chmod modes remain conservative until #33.
-	if model.ModeArg >= 0 {
-		mode, known := jsArg(args, model.ModeArg).Number()
-		if text, ok := jsArg(args, model.ModeArg).String(); ok {
-			mode, known = jsOctalMode(text)
-		}
-		if !known || mode < 0 || mode > 0777 || math.Trunc(mode) != mode {
-			out.Resolution.Reason = "JavaScript permission mode requires destructive classification"
-		}
+	if model.ModeArg >= 0 && !jsModeValid(jsArg(args, model.ModeArg)) {
+		out.Resolution.Reason = "JavaScript permission mode requires destructive classification"
 	}
 	if model.Return == "undefined" {
 		out.Resolution.Value = js.UndefinedValue()
 	}
-	if model.Style == "promise" {
+	switch model.Style {
+	case "promise":
 		out.Resolution.Value = js.PromiseValue(out.Resolution.Value)
-	}
-	if model.Style == "callback" {
+	case "callback":
 		out.Resolution.Value = js.UndefinedValue()
 		out.Resolution.Reason = "JavaScript filesystem callback execution is unmodelled"
 	}
@@ -217,7 +219,6 @@ func (b *Binder) BindJS(call js.Call, context JSContext) JSResult {
 	out.Resolution.Effects = out.Binding.Effects
 	out.Resolution.Derivations = out.Binding.Derivations
 	if out.Resolution.Reason != "" {
-		out.Binding.Conservative = true
 		out.Binding.Notes = append(out.Binding.Notes, out.Resolution.Reason)
 	}
 	return out
@@ -225,13 +226,8 @@ func (b *Binder) BindJS(call js.Call, context JSContext) JSResult {
 
 func jsReadTaint(taint engine.Taint, target engine.Scope) engine.Taint {
 	taint = taint.Join(engine.TaintOf(engine.TaintFileSystem))
-	if target.IsTop() {
+	if target.IsTop() || slices.ContainsFunc(target.Targets(), engine.SecretPath) {
 		return taint.Join(engine.TaintOf(engine.TaintSecret))
-	}
-	for _, path := range target.Targets() {
-		if engine.SecretPath(path) {
-			return taint.Join(engine.TaintOf(engine.TaintSecret))
-		}
 	}
 	return taint
 }
@@ -244,7 +240,8 @@ func jsArg(args []js.Value, index int) js.Value {
 }
 
 func jsOption(options js.Value, key string) js.Value {
-	if options.Kind() == "undefined" || options.Kind() == "null" || options.Kind() == "string" || options.Kind() == "number" {
+	switch options.Kind() {
+	case "undefined", "null", "string", "number":
 		return js.UndefinedValue()
 	}
 	value, ok := options.Property(key)
