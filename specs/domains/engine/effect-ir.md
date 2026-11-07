@@ -7,6 +7,7 @@ The effect IR is the frozen, frontend-agnostic vocabulary of the core: the `Effe
 ## Key Files
 
 - `engine/effect.go` — `Effect`, `EffectKind`, `EffectMode`, `EffectKinds`, `EffectModes`, and `Effect.Key`/`Join`/`Validate`.
+- `engine/hostshape.go` — `HostShaped`/`HostShapedLenient` (the host/URL grammar), `UNCHost`/`UNCUnresolved`/`HostPath` (UNC and remote-path spellings), and `FilterEgressTargets` — the egress-target gate a `NetEgress` target must pass.
 - `engine/report.go` — `SchemaVersion`, `SourceLoc`, `WhyStep`, `WhyTrace`, `Report`, `NewReport`, and `Report.Normalize`/`Validate`/`Encode`/`Sort`.
 - `engine/why.go` — `AtomKind`, `Atom`, `Derivation`: the source-level facts a why-trace cites, and the lowering that turns them into `WhyTrace`.
 - `engine/testdata/effect.golden.json`, `engine/testdata/report.golden.json` — the pinned canonical JSON encodings.
@@ -41,6 +42,8 @@ const (
 	FlowIngest FlowRole = "ingest" // an FSWrite of downloaded content
 )
 ```
+
+`FlowRoles` is every defined flow role, in canonical order (`FlowNone`, `FlowCradle`, `FlowIngest`); `FlowRole.Valid` reports membership in it, and the unexported `FlowRole.kind` maps a role to the single effect kind it marks (`cradle` → `CodeExec`, `ingest` → `FSWrite`; `FlowNone` is tied to no single kind).
 
 - `Key` returns a stable identity for the effect — `Kind|Mode|canonical(Target)` — used for deterministic sorting and for referencing effects from why-traces:
 
@@ -104,6 +107,17 @@ func (e Effect) Join(o Effect) (Effect, bool) {
 | `ModeAmbient` | `Ambient` | implicit, via the runtime or host |
 | `ModeConditional` | `Conditional` | occurs only under a runtime guard |
 
+### Egress-target gate
+
+A `NetEgress` effect may only be created with a target that names a plausible network address (`engine/hostshape.go`): `FilterEgressTargets(scope, lenient)` is the gate every NetEgress-creating lowering step must pass its target through. `⊤` (an unresolved egress whose destination came from a dynamic word) and `⊥` (a payload-only egress) pass through unchanged; a literal target that is not host-shaped is dropped, and when nothing remains the effect must not be created at all — a subcommand name, a commit SHA or a pathspec is not network evidence.
+
+- `HostShaped` accepts a scheme-prefixed URL (any valid scheme except the local-URL schemes `file`, `data`, `mailto`, `about`, `blob`, `javascript`, `ws+file`, which name no address), an IPv4/IPv6 literal including the bracketed `[v6]:port` form and the obfuscated IPv4 spellings (`0x7f000001` hex, `2130706433` decimal), an scp-style remote `[user@]host[:path]` whose host part is itself host-shaped, and a dotted DNS name with an optional `:port` (plus `localhost`). A bare single-label word never passes — it is exactly the phantom-egress spelling the gate exists to reject.
+- `HostShapedLenient` additionally accepts a bare single-label DNS name and strips one egress protocol prefix (`tcp:`, `openssl:`, `ssh:`, the netcat `*-connect:` forms, the rclone `:backend:` form, …); it is for slots whose role as a destination is declared by the construct itself (a network client's HOST positional, `/dev/tcp`, `-ComputerName`).
+- The strict grammar rejects a final DNS label that names a file extension (`fileExtLabels`: `md`, `json`, `sh`, `git`, `repo`, …) — `code-review.md` is a pathspec, not a host.
+- `UNCHost` recognises a UNC path (`\\host\share\…`) and names its host: a write to one is a network write, not a local filesystem write. `UNCUnresolved` reports the forward-slash spelling whose authority is a bare single label (`//host/share`) — ambiguous between a UNC authority and a POSIX doubled separator — which the caller models as an unresolved network sink (a `NetEgress` over `⊤`). `HostPath` recognises the remote-path spelling `[user@]host:/path` shared by NFS mount sources and scp/rsync destinations.
+
+The consumer-side contract — where the gate runs in the binder and the frontends, and which dialects get the lenient grammar — is specified in [Binding](../binding.md) (egress target gate).
+
 ### Report
 
 `Report` is the frozen analysis output: plain data, serialisable to JSON, carrying no reference to any frontend type. `SchemaVersion` tags the frozen JSON schema and consumers/golden fixtures pin to it.
@@ -134,7 +148,7 @@ type SourceLoc struct {
 Report lifecycle operators:
 
 - `NewReport` returns an empty report stamped with the current schema version (`Effects: []Effect{}`).
-- `Normalize` canonicalises the report: effects that share a `(Kind, Mode, NetFlow)` triple are merged with `Join`, `Destructiveness` is recomputed, and every slice is sorted. (The `NetFlow` role is part of the merge key so the flow evidence of one effect cannot bleed onto the targets of another.) Two reports built from the same effects normalise to byte-identical JSON.
+- `Normalize` canonicalises the report: effects that share a `(Kind, Mode, NetFlow)` triple are merged with `Join`, `Destructiveness` is recomputed, and every slice is sorted. (The `NetFlow` role is part of the merge key so the flow evidence of one effect cannot bleed onto the targets of another.) An empty `SchemaVersion` is stamped with the constant. Merging under `Join` changes a merged effect's `Key`, so `Normalize` also re-points every why-trace at the effect it now explains (`whyRemap`/`newWhyRemap`/`remapWhy`): an exact table maps each pre-merge key to its merged counterpart (a key two differently-roled effects shared is ambiguous and dropped), a kind/mode fallback table is consulted only for keys naming no known pre-merge effect and only when the pair identifies exactly one merged effect, an unresolved key is left untouched, and traces that land on the same effect are combined with their steps deduplicated (`dedupSteps`) — otherwise `WhyGaps` would report a spurious gap for a fully explained merged effect. Two reports built from the same effects normalise to byte-identical JSON.
 - `Sort` orders `Effects` by `Key`, `Why` by `(Effect, whyFingerprint)`, and `Notes` lexicographically — the canonical deterministic order.
 - `Validate` reports whether the report is well-formed: a schema version is set, every effect is valid, and every why-trace references a non-empty effect key.
 - `Encode` validates the report and returns its canonical indented JSON (`json.MarshalIndent` with a two-space indent).
@@ -179,7 +193,7 @@ Premises are free-form tokens the frontend defines (call ids, argument slices, o
 - `Effect.Validate` returns a non-nil error naming the offending field and value for an unknown kind (`invalid effect kind %q`), an unknown mode (`invalid effect mode %q`), an out-of-range certainty (`invalid certainty %d`), an unknown network-flow role (`invalid netFlow %q`), or a role whose fixed kind does not match the effect's (`netFlow %q requires effect kind %q, got %q`).
 - `Report.Validate` returns `engine: report schemaVersion is empty` when `SchemaVersion` is unset, wraps an effect error as `engine: effects[%d]: …`, and returns `engine: why[%d]: empty effect key` for a why-trace with no effect key.
 - `Report.Encode` propagates any `Validate` error and returns the encoding error from `json.MarshalIndent`; it never returns partial output alongside an error.
-- `Certainty`/`Destructiveness` reject invalid values on marshal (`cannot marshal invalid …`) and reject unknown names or out-of-range ordinals on unmarshal (`engine: unknown …`, `… ordinal out of range`). `Scope`/`Taint` unmarshal accept the canonical object form plus a bare string or array, and error with `engine: cannot decode set from …` on anything else.
+- `Certainty`/`Destructiveness` reject invalid values on marshal (`cannot marshal invalid …`) and reject unknown names or out-of-range ordinals on unmarshal (`engine: unknown …`, `… ordinal out of range`). `Scope`/`Taint` unmarshal accept the canonical object form plus a bare string or array; a `null` or empty payload decodes to `⊥` (`parseFlatSet`), and anything else errors with `engine: cannot decode set from …`.
 - `WhyGaps` is the error-surfacing primitive for traces: it returns the effect keys a report fails to explain concretely, rather than failing construction.
 
 ## Invariants

@@ -16,7 +16,8 @@ All registered dialects end in the same place — a `analysis.Report` whose `eff
      ▼
  bash.Exec / bash.ExecBash        front/bash/exec.go 
    newNormalizer(src).fill(f, prog)          (builds the normalized AST)
-   newInterp(...)                            (Σ = NewState() from expand.go)
+   newInterpVars(src, prog, res, f, vars)    (Σ = NewState() from expand.go,
+                                              seeded with host-supplied vars)
    it.execStmts(f.Stmts)                     (abstract execution)
      │
      │  per CallExpr:  execCall (exec.go)
@@ -31,7 +32,10 @@ All registered dialects end in the same place — a `analysis.Report` whose `eff
  interp.dispatch                  front/bash/exec.go
    alias expansion (bounded) → shell function call → code-exec sink (⊤)
    → builtin state mutation → code-exec builtin (⊤) → shell-only builtin
-   → otherwise: effs := it.res(cmd, it.prog)   ◄── the Resolver seam
+   → otherwise: effs := it.res(cmd, rp)   ◄── the Resolver seam
+       rp = it.resolutionProgram() — the program's aliases restricted to
+            those declared so far — or, for a quoted command word (which is
+            never alias-expanded), resolutionProgramExcluding(name)
      │
      ▼
  bind.Binder.BindBash             bind/bind.go
@@ -79,7 +83,12 @@ Notes on the bash stage:
   path-qualified `/usr/bin/sudo …` — its entry models the wrapped argv as the
   `COMMAND` payload, `declaresWrapperPayload`) is beyond binding and degrades
   to ⊤ with a note. The PowerShell path peels no wrappers, so on that
-  path `sudo …` stays an unknown cmdlet and degrades to ⊤.
+  path `sudo …` stays an unknown cmdlet and degrades to ⊤. Elevation is not
+  bind-only: on the frontend's early-return ⊤ branches (dynamically-named
+  commands, code-execution sinks, code-executing builtins) `elevateWrappers`
+  (`front/bash/exec.go`) consults the same Resolver seam for the wrapper's own
+  PrivEsc evidence, and declaration commands such as `export -p` resolve their
+  stdout effects through the seam too.
 
 ## PowerShell path: parse → lower
 
@@ -107,7 +116,8 @@ Notes on the bash stage:
      │    known cmdlet ⇒ emit one effect per Spec, mapping
      │      Target{X}, provider Env/Variable/Registry, credentials
      │    Remove-Item -Recurse/-Force ⇒ bump Destructiveness to Critical
-     │    redirs ⇒ FSWrite
+     │    redirs: output ⇒ FSWrite; input redirections are modelled
+     │      reads (FSRead of the target) and do not write
      ▼
  Result (Effects, Destructiveness, Conservative, Notes)
    lowerer.finish: rep.Normalize(); Destructiveness.Join(bump)
@@ -167,11 +177,15 @@ per-command read provenance into the egress effects.
 
 ```
  Destructiveness = ComputeDestructiveness(effects)   fold of KindDestructiveness
- Irreversibility = fold(IrreversibilityOf(e, tokens…))   (rm/dd/mkfs… ⇒ worse)
+ Irreversibility = fold(IrreversibilityOf(e, tokens…))   (rm/dd/mkfs… ⇒ worse;
+                   escalated to Critical when irreversibility ≥ High AND
+                   breadth ≥ High)
  Breadth        = BreadthSeverity(⊔ targets)          (secret path ⇒ escalate)
  Influence      = MaxInfluence(effects)               fold of taint labels
  Exfil          = exfilSeverity(DetectExfil(effects)) (secret read ⊗ tainted egress)
- Confidence     = min ConfidenceOf(e)  (halved* for ⊤/⊥ targets)
+ CradleFlows    = DetectCradleFlows(effects)          (network → code-exec flows)
+ IngestFlows    = DetectIngestFlows(effects)          (network → FS-write flows)
+ Confidence     = min ConfidenceOf(e)  (×3/5 for ⊤/⊥ targets)
  Reversible     = AND of every effect's Reversible
  Grade          = join(all risk dimensions)
 ```
@@ -179,7 +193,11 @@ per-command read provenance into the egress effects.
 `tokens` are the resolved command names (from `bashTokens` / `psTokens`), which
 let irreversibility recognise destructive commands a single effect does not
 name. The why-trace is built by `engine.BuildWhy` (`engine/why.go`), and
-exfiltration pairings by `engine.DetectExfil` (`engine/taint.go`).
+exfiltration pairings by `engine.DetectExfil` (`engine/taint.go`). The flow
+pairings key on the effect-level `NetFlow` role (effect-ir/v2): a code-exec
+effect tagged `FlowCradle` or a write tagged `FlowIngest` is the sink half of
+the relation, so a consumer keys on the flow rather than on the co-occurrence
+of a `NetEgress` and a sink.
 
 ## Composition facade (`internal/analysis`)
 
@@ -188,29 +206,51 @@ the language:
 
 ```
  analyzeBash (analyze.go)                    analyzePS (analyze.go)
-   res := bash.Exec(v, source, src, resolver)      prog := ps.Parse("flowsh", src)
-       resolver = b.BindBash(cmd,prog)               res  := ps.LowerWith(prog, opts)
-       → Resolution{Effects, Derivations}
-   rep.Effects = normalizeEffects(res.Effects)     rep.Effects = normalizeEffects(res.Effects)
+   res := bash.ExecWithVars(v, source,            prog := ps.Parse(sourceName(root, "flowsh"), src)
+         src, resolver, vars)                     res  := ps.LowerWith(prog, opts)
+       resolver = b.BindBash(cmd,prog)
+       → Resolution{Effects, Derivations}; the closure aggregates
+         the resolution view, command calls, destructive
+         findings and binder notes before returning
+   rep.Effects = applyRemoteWriteSinks(       rep.Effects = applyRemoteWriteSinks(
+         normalizeEffects(res.Effects))             normalizeEffects(res.Effects))
    rep.Root = root                                 rep.Root = root
    rep.Destructiveness = ComputeDestructiveness    rep.Destructiveness = ComputeDestructiveness
+         .Join(kbDestruct) — raise-only, D6              .Join(psDestruct) — raise-only, D6
    rep.Conservative/Top/Reason = res…              rep.Conservative = res.Conservative
    rep.Commands = len(res.Cmds)                    rep.Top/Reason = prog.Top/Reason
    rep.Why = BuildWhy(…)                           rep.Why = BuildWhy(…)
    rep.Resolution/Destructive = binder aggregate   (PowerShell: Resolution stays zero)
    rep.Score = ScoreEffects(effects, bashTokens…)  rep.Score = ScoreEffects(effects, psTokens…)
+       then .Destructiveness/.Grade .Join(kbDestruct)   (ditto: .Join(psDestruct))
                      │                                          │
                      └──────────────► analysis.Report ◄─────────┘
 ```
 
-`normalizeEffects` (`internal/analysis/analyze.go`) re-runs `engine.Report.Normalize` (`engine/report.go`), which merges effects sharing `(Kind, Mode)` and sorts them — so two reports built from the same effects normalise to byte-identical JSON. `analyzePS` is a free function (no binder needed); `analyzeJS` is an Analyzer method in `javascript.go`, injects BindJS, and joins the bound destructive severity into the shared score without shell command tokens. `analyzeBash` uses the process-wide `bind.Binder` memoised by `defaultAnalyzer`.
+`applyRemoteWriteSinks` (`internal/analysis/remote_sink.go`) runs on the bash
+and PowerShell paths (the JavaScript path skips it): a write whose target is a
+remote authority — a UNC (SMB) path, or the `[user@]host:/path` spelling —
+contributes a `NetEgress` to that host, tainted with everything the same
+command read; a spelling that could be either a single-label UNC host or a
+doubled POSIX separator is not guessed and becomes a `NetEgress` over ⊤.
+
+The report's destructiveness is the effect-derived
+`ComputeDestructiveness` joined with the KB destructive class (bash, `.Join(kbDestruct)`)
+or the frontend escalation (PowerShell, `.Join(psDestruct)`); `Score.Destructiveness`
+and `Score.Grade` are joined the same raise-only way (D6), so neither can sit
+below a matched destructive class. `analyzeJS` joins its bound destructive
+severity identically.
+
+`normalizeEffects` (`internal/analysis/analyze.go`) re-runs `engine.Report.Normalize` (`engine/report.go`), which merges effects sharing `(Kind, Mode, NetFlow)` and sorts them — so two reports built from the same effects normalise to byte-identical JSON. `analyzePS` is a free function (no binder needed); `analyzeJS` is an Analyzer method in `javascript.go`, injects BindJS, and joins the bound destructive severity into the shared score without shell command tokens. `analyzeBash` uses the process-wide `bind.Binder` memoised by `defaultAnalyzer`.
 
 ## CLI (`cmd/flowsh`)
 
 `main.run` (`cmd/flowsh/main.go`) parses flags (`--lang bash|posix|posh|js|auto`,
-`--file PATH`, `--batch`, `--json`, `--explain`/`--why`, `--windows[=bool]`,
-`--version`, `-h`), reads the command from `--file`, the positional argument, or
-stdin, resolves the language (`api.ParseLang`, or `detectLang` for `auto`,
+`--batch`, `--json`, `--explain`/`--why`, `--windows[=bool]`, `--version`, `-h`),
+reads the command from the positional argument or stdin only — there is no
+`--file` flag; runtime I/O beyond argv and stdin is forbidden (SECURITY.md hard
+constraint 2) — resolves the language (`api.ParseLang`, or `detectLang` for
+`auto`,
 after the input is known), then calls
 `api.AnalyzeWith(lang, src, api.Options{Root: …})` and either:
 
@@ -224,7 +264,13 @@ after the input is known), then calls
 With `--batch` the selected source is split into non-blank lines (`splitBatch`)
 and each line is analysed (re-running `detectLang` per line for `auto`) and
 written as one compact single-line report (`encodeCompact` → `json.Marshal`), so
-the output is NDJSON.
+the output is NDJSON. The one-command-per-line contract is enforced by
+degradation, not assumed: a line that continues onto the next one (a trailing
+backslash, an open quote — `lineContinues`) is a fragment, and both it and the
+line that follows degrade; and `batchState.check` degrades any line that
+references a variable — or the positional parameters — assigned on an earlier
+batch line. Each degradation marks the whole line's report ⊤/Conservative with
+a cross-line reason rather than analysing it as a standalone command.
 
 The CLI reaches the facade exclusively through the public `api` package (and
 imports `engine` for the frozen IR types it prints); it does not import
@@ -232,11 +278,59 @@ imports `engine` for the frozen IR types it prints); it does not import
 
 Two flags short-circuit before any analysis: `--help` prints the usage text and
 `--version` prints the tool-contract tag (`flowsh/v3`) and `engine.SchemaVersion`
-(`effect-ir/v2`), one per line, to stdout; both exit `0` without reading stdin.
+(`effect-ir/v2`), one per line, to stdout; a release build stamped via ldflags
+additionally prints a third line, `flowsh <buildVersion>`, after the two contract
+lines — additive build metadata only, never affecting the frozen report contract
+(see [cli.md](../domains/cli.md)); both exit `0` without reading stdin.
 
 Exit status: `0` analysis produced a report (or `--help`/`--version`), `1`
 internal failure, `2` usage error, `3` input error (the source could not be
 read, or was empty).
+
+## Coverage snapshot
+
+Features the code covers beyond the paths above, kept concise:
+
+- **Network data-flow roles.** `Effect.NetFlow` (`FlowCradle`/`FlowIngest`,
+  effect-ir/v2) tags the sink of a network flow;
+  `DetectCradleFlows`/`DetectIngestFlows` (`engine/taint.go`, called from
+  `ScoreEffects` in `engine/score.go`) pair egresses
+  with code-execution / filesystem-write sinks into `Score.CradleFlows` /
+  `IngestFlows`. The bash pipeline marks sink roles through
+  `sinkFlowRole`/`stdinNet` (`front/bash/exec.go`).
+- **Remote-write composition.** `applyRemoteWriteSinks` adds the `NetEgress`
+  implied by UNC (SMB) and `[user@]host:/path` write targets — ⊤ target when
+  the spelling is ambiguous — folded with the command's read provenance (see
+  the facade section; JS skips it).
+- **D6 raise-only joins.** KB destructive classes (bash, JS) and the PS
+  frontend escalation join the report destructiveness and
+  `Score.Destructiveness`/`Score.Grade` on all three dialect paths.
+- **Report v2/v3 additive fields.** `commandCalls` and `canonical` (v2),
+  `cradleFlows`/`ingestFlows` (v3); `buildWhy`'s fallback atoms guarantee the
+  WhyGaps invariant (every non-empty effect explained) for every input,
+  including ⊤.
+- **Library-only options.** `Options.Vars` seeds the shell state host-side
+  (via `ExecWithVars`); `Options.JavaScript` supplies the offline home/cwd
+  context (an invalid context ⇒ "home and cwd treated as unknown" note). The
+  CLI exposes neither.
+- **Batch contract.** One command per line is enforced by degradation, not
+  assumed (fragment continuation and cross-line state, see the CLI section).
+- **Bash value-flow extras.** Exec-bearing environment assignments
+  (`ExecEnvEffect`, `PROMPT_COMMAND` re-exec variables), PATH/`BASH_CMDS`
+  resolution side effects, positional-parameter state, assigning builtins
+  (`mapfile`/`readarray`, `printf -v`), stdout folding (`echo`, `printf`,
+  `base64`), command-hash table modelling, and alias-table opacity (an alias
+  applies only from its declaration onward).
+- **PowerShell.** Input-redirection modelling (reads, not writes);
+  disk-wiping Storage cmdlets (`Clear-Disk`, `Format-Volume`, …) escalate to
+  Critical beyond `Remove-Item`; statically-known splats expand into parameter
+  bindings (see [conservatism.md](conservatism.md)).
+- **JavaScript.** A 2 s parse wall-clock safety net enabled in every build,
+  including `-race` (`front/js/parse.go`); the facade caps JS report metadata
+  at `maxJSMetadata = 1024`.
+- **Frontend-surfaced kinds.** `KindStdio` and `KindCredAccess` are surfaced
+  by the frontends (`CredAccess` groups with `CodeExec` in
+  `KindDestructiveness`).
 
 ## Invariants
 
@@ -259,7 +353,8 @@ read, or was empty).
 ## Anti-Patterns
 
 - **Bypassing `Normalize` before comparison or serialisation.** Effects that
-  share `(Kind, Mode)` would not be merged and outputs would differ run to run.
+  share `(Kind, Mode, NetFlow)` would not be merged and outputs would differ
+  run to run.
 - **Scoring effects without the command tokens.** The irreversibility dimension
   would miss destructive commands (`rm`, `dd`, `mkfs*`) that a single effect
   does not name.

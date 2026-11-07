@@ -21,6 +21,11 @@ binary with `//go:embed data/*.yaml`, exposed as `var dataFS embed.FS`
 filesystem — "no files on disk at run time" — so it works from any working
 directory; `EmbeddedFiles()` exposes the document names.
 
+> **Historical record.** The embed directive was later widened to
+> `//go:embed data` (the whole directory, `kb/loader.go`) so `.yml` spellings
+> are discovered exactly as they are embedded; the frozen document schema is
+> now `effect-kb/v4` (see ADR-0020 and `kb/schema.go`).
+
 The document schema is **frozen and versioned**: `SchemaVersion =
 "effect-kb/v2"` (`kb/schema.go`), with an explicit
 `KnownVersions` list and a `Known()` gate. The loader rejects a missing or

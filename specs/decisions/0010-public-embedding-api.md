@@ -53,6 +53,22 @@ a **thin type-alias re-export** over `internal/analysis`:
 - The package adds **no behaviour of its own**, so an embedding caller sees
   exactly the report contract the CLI emits.
 
+> **Historical record.** `api.Langs` later became a deliberate defensive copy
+> (`var Langs = append([]analysis.Lang(nil), analysis.Langs...)`, `api/api.go`)
+> rather than a shared slice, so an embedding caller cannot mutate the facade's
+> storage; the paragraph's rule otherwise still holds — its enumerated surface
+has since grown (see the next note).
+
+> **Historical record.** The re-exported surface has since grown past both
+> enumerations above (`api/api.go`): the alias set now also includes
+> `CommandCall`, `CallRedirect`, `Canonical` — the report's per-command view,
+> its resolved redirections, and the effect-based canonical form — and
+> `JavaScriptContext` (the offline JavaScript home/cwd context), and the
+> copied constants now include `LangJavaScript` for the bounded JavaScript
+> dialect. The bullets' rule still holds: every exported type is an alias,
+> every exported constant a copy, every exported function a one-line
+> forwarder.
+
 **CLI and API are equal first-class entry points.** Neither is the "real" one
 and neither wraps the other: both are consumers of `internal/analysis` at the
 same layer. The CLI is simply the **first consumer** of the surface — its
@@ -64,6 +80,11 @@ The **corpus harness is deliberately not re-exported**: `Case`, `LoadCorpus`,
 `CorpusDir`, `CorpusDirFrom`, `Filter`, the `Group*` constants and
 `GuardFallClasses` remain internal testing aids. In-module tests (including the
 external `engine_test` package) may still reach them through `internal/analysis`.
+
+> **Historical record.** The corpus harness later moved to its own
+> `internal/corpus` package (`Case`, `LoadCorpus`, `CorpusDir`, `CorpusDirFrom`,
+> `Filter`, the `Group*` constants, `GuardFallClasses`); `internal/analysis`
+> reaches it by import. It is still not re-exported from `api`.
 
 Versioning is unchanged and orthogonal: the embedding surface is pinned by the
 two report-contract constants — `SchemaVersion` (`effect-ir/v1`) for the effect

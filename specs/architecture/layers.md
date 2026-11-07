@@ -26,7 +26,7 @@ a responsibility belongs to exactly one layer.
 | PowerShell frontend | `front/ps/` | `engine` | Parse PowerShell source and lower it into the effect IR, using its own alias/cmdlet tables. |
 | JavaScript frontend | `front/js/` | `engine` | Parse/evaluate bounded values/control flow and builtin identities; delegate typed calls through an injected resolver. |
 | Binding | `bind/` | `engine`, `kb`, `front/bash`, `front/js` | Resolve an invoked name and bind its flags/operands against the knowledge base, producing `[]engine.Effect`. |
-| Composition | `internal/analysis/` | `engine`, `bind`, `front/bash`, `front/ps`, `front/js` | Wire the frontends, the binder and the core into one deterministic `Report`; the single facade behind the CLI and the embedding API. |
+| Composition | `internal/analysis/` | `engine`, `kb`, `bind`, `front/bash`, `front/ps`, `front/js` | Wire the frontends, the binder and the core into one deterministic `Report`; the single facade behind the CLI and the embedding API. Converts the binder's matched `kb.Destructive` entries into report `DestructiveFinding`s (`internal/analysis/analyze.go`). |
 | Public API | `api/` | `internal/analysis` | Re-export the facade as an embeddable Go API — type aliases, copied constants and forwarding functions only; holds no behaviour of its own ([ADR-0010](../decisions/0010-public-embedding-api.md)). |
 | Policy | `policy/` | `api`, `engine` | Evaluate reports using caller-owned rules; return a decision without changing or executing the analysis ([ADR-0017](../decisions/0017-report-policy-package.md)). |
 | CLI | `cmd/flowsh/` | `api`, `engine` | Parse arguments, read the command, call the facade through `api`, and print a text summary or JSON report. |
@@ -79,6 +79,7 @@ The JavaScript sibling follows the same downward edges:
 ```
 internal/analysis ──► front/js ──► engine
                   └─► bind ──► kb ──► engine
+                  └─► kb ──► engine
 ```
 
 `bind.BindJS` consumes frontend-local typed values and the separate JS YAML namespace; frontend imports stay directed toward engine. See [ADR-0020](../decisions/0020-javascript-filesystem-models.md).
@@ -94,7 +95,7 @@ Key properties of the graph:
   nor another core package of this module.
 - `kb` lowers into `engine` and is never imported by it (`kb/schema.go` package
   doc: "the core never imports kb").
-- `front/js` is another sibling, importing `engine` and the pinned parser. Its bounded evaluator owns per-analysis state; call modeling remains deferred to the invocation and Node API milestones.
+- `front/js` is another sibling, importing `engine` and the pinned parser. Its bounded evaluator owns per-analysis state; reviewed module/property/call identities are modelled by `bind.BindJS` (`bind/js.go`) against the separate JS YAML namespace, and the facade injects that binder as the JS resolver (`internal/analysis/javascript.go`).
 - `front/bash` and `front/ps` are siblings; neither imports the other, and
   neither imports `kb` or `bind`. The PowerShell frontend has "its own alias
   table and its own cmdlet→effect mapping" (`front/ps/parse.go`).
@@ -131,9 +132,12 @@ two call sites are:
 - `bind.BindBash` (`bind/bind.go`) adapts a frontend command into the
   binder's own normalized call; and
 - `internal/analysis.analyzeBash` (`internal/analysis/analyze.go`) injects a
-  closure that returns `b.BindBash(cmd, prog)` (a `Resolution{Effects,
-  Derivations}`) as the resolver when it calls
-  `bash.Exec(v, sourceName(root, "script"), src, resolver)`.
+  closure that runs `b.BindBash(cmd, prog)` and, before returning the
+  `Resolution{Effects, Derivations}`, aggregates the per-call resolution view,
+  the distinct command calls, the matched destructive findings (their severity
+  joined into a raise-only destructiveness) and the binder notes. It passes
+  that closure as the resolver when it calls
+  `bash.ExecWithVars(v, sourceName(root, "script"), src, resolver, vars)`.
 
 `Resolver` being nil disables command binding; the shell then reports only its
 own intrinsic effects (`front/bash/exec.go`: "Passing nil disables command
@@ -143,23 +147,41 @@ binding").
 
 - `engine` imports only the Go standard library; it imports no package of this
   module. The single, deliberate exception is the external test package
-  `engine/bench_test.go` (`package engine_test`), which imports
+  (`package engine_test`, spanning `engine/bench_test.go`,
+  `norace_test.go` and `race_test.go`; only `bench_test.go` adds the extra
+  imports), which imports
   `internal/analysis` and the test-only harness `internal/corpus`
   (`corpus.Case`, `corpus.LoadCorpus`, `corpus.CorpusDir`) to benchmark the whole
   pipeline end to end; it adds no edge to the core package and introduces no
   cycle. The corpus harness it reaches stays internal and is not re-exported by
   `api/`.
 - Every intra-module import edge points from a higher layer in the table above
-  to a lower one; the import graph is acyclic.
+  to a lower one; the import graph is acyclic. This boundary rule covers
+  production imports; the deliberate external test-package exceptions
+  (`engine/bench_test.go`, `front/bash/exec_test.go`, `kb/coverage_test.go`,
+  `kb/egress_model_test.go`) are listed in their own invariants below.
 - `front/bash` and `front/ps` import `engine` and (their external parser
   libraries) only; they import neither each other, nor `kb`, nor `bind`. The
   single, deliberate exception is the external test package
-  `front/bash/exec_test.go` (`package bash_test`), which imports `bind` to wire
+  (`package bash_test`, spanning `front/bash/exec_test.go`,
+  `expand_resolve_test.go` and `flow_test.go`; only `exec_test.go` adds the
+  import), which imports `bind` to wire
   a concrete resolver into the `Resolver` seam; it adds no edge to the
   `front/bash` package itself.
-- `kb` imports `engine` and no other package of this module.
-- `bind` is the only package that imports `front/bash` together with `kb`; it
-  imports `engine`, `kb` and `front/bash`.
+- `kb` imports `engine` and no other package of this module. The deliberate
+  exception is the external test package `kb_test` (`kb/coverage_test.go`,
+  `kb/egress_model_test.go`), which imports `bind` (and, in
+  `kb/coverage_test.go`, `front/bash`) to exercise real bindings end to end —
+  the same pattern as `engine/bench_test.go` and `front/bash/exec_test.go`; it
+  adds no edge to the `kb` package itself.
+- Production import edges are one-way and downward: `internal/analysis` →
+  `engine`, `kb`, `bind`, `front/bash`, `front/ps`, `front/js`; `bind` →
+  `engine`, `kb`, `front/bash`, `front/js`; `kb` → `engine`; each frontend →
+  `engine`; `api` → `internal/analysis`; `policy` → `api`, `engine`;
+  `cmd/flowsh` → `api`, `engine`. Both `bind` and `internal/analysis`
+  legitimately import `front/bash` together with `kb` — the binder to lower KB
+  signatures into effects, the facade to convert matched `kb.Destructive`
+  entries into report findings.
 - `internal/analysis` is the only package that composes `front/bash`,
   `front/ps`, and `front/js`.
 - The only channel by which the shell frontend receives command effects is the

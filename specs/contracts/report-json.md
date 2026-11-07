@@ -14,8 +14,8 @@ The JSON the CLI prints to stdout is a frozen wire contract: the effect payload 
 | `type Destructiveness int` + `func (Destructiveness) MarshalJSON` (string: `"None"`…`"Critical"`) | `engine` (`lattice.go`) | consumers of `destructiveness`/`score` | Severity encoded as a JSON string, not a number. |
 | `type Report struct{ SchemaVersion string \`json:"schemaVersion"\`; Root string \`json:"root,omitempty"\`; Effects []Effect \`json:"effects"\`; Destructiveness Destructiveness \`json:"destructiveness"\`; Why []WhyTrace \`json:"why,omitempty"\`; Notes []string \`json:"notes,omitempty"\` }` | `engine` (`report.go`) | fixtures, harness | The core effect report. |
 | `func (r *Report) Encode() ([]byte, error)` | `engine` (`report.go`) | harness | `Validate` then `json.MarshalIndent(r, "", "  ")` — canonical, deterministic bytes. |
-| `const ToolName = "flowsh"` + `const SchemaVersion = engine.SchemaVersion` + `const ToolVersion = "flowsh/v3"` | `internal/analysis` (`analyze.go`) | `cmd/flowsh`, CI | The CLI envelope's identity and version tags. |
-| `type Report struct{ SchemaVersion, Tool, ToolVersion, Lang, Input, Root string; Effects []engine.Effect; Destructiveness engine.Destructiveness; Score engine.Score; Why []engine.WhyTrace; Conservative, Top bool; Reason string; Commands int; Resolution bind.Resolution; CommandCalls []CommandCall; Canonical *Canonical; Destructive []DestructiveFinding; Notes []string }` | `internal/analysis` (`analyze.go`) | `cmd/flowsh`, CI | The CLI's JSON contract: the frozen IR plus CLI metadata, the why-trace, the aggregated resolution, the per-command resolution view, the effect-based canonical form, the matched destructive entries and the score. |
+| `const ToolName = "flowsh"` + `const SchemaVersion = engine.SchemaVersion` + `const ToolVersion = "flowsh/v3"` | `internal/analysis` (`analyze.go`) | `api` (re-exported), `cmd/flowsh` (via `api`), CI | The CLI envelope's identity and version tags. |
+| `type Report struct{ SchemaVersion, Tool, ToolVersion, Lang, Input, Root string; Effects []engine.Effect; Destructiveness engine.Destructiveness; Score engine.Score; Why []engine.WhyTrace; Conservative, Top bool; Reason string; Commands int; Resolution bind.Resolution; CommandCalls []CommandCall; Canonical *Canonical; Destructive []DestructiveFinding; Notes []string }` | `internal/analysis` (`analyze.go`) | `api` (aliased as `api.Report`), `cmd/flowsh` (via `api`), CI | The CLI's JSON contract: the frozen IR plus CLI metadata, the why-trace, the aggregated resolution, the per-command resolution view, the effect-based canonical form, the matched destructive entries and the score. |
 | `type CommandCall struct{ Invoked, Resolved string; Args []string; Redirs []CallRedirect }` + `type CallRedirect struct{ Op, Target string; Known bool }` | `internal/analysis` (`canonical.go`) | consumers of `commandCalls[]` | One command invocation for effect-based comparison: the invoked name as written, the normalized binary — the knowledge-base command the invocation resolved to (`npx tsc -b` and `./node_modules/.bin/tsc -b` both resolve to `tsc`; a wrapper alias resolves to its target, so `npx mvnw` and `./mvnw` report `mvn`) — the surviving argument values, and the statement's resolved redirections. |
 | `type Canonical struct{ Effects []engine.Effect; Key string }` | `internal/analysis` (`canonical.go`) | consumers of `canonical` | The effect-based canonical form: the report's effects with staged temp writes folded onto the destination of the trailing `mv` (`sed … > tmp && mv tmp file` ≡ `sed -i … file`) and non-path operand targets dropped, plus the deterministic `key` (sorted `Effect.Key()` values joined by `;`) a signature compares across retries that differ in form but not in effect. |
 | `type DestructiveFinding struct{ Command string \`json:"command"\`; Spec string \`json:"spec"\`; Class string \`json:"class"\`; Reason string \`json:"reason"\` }` | `internal/analysis` (`analyze.go`) | `cmd/flowsh`, CI | One matched knowledge-base destructive-flags entry as surfaced in `destructive[]` (class `A`–`E`). |
@@ -23,17 +23,18 @@ The JSON the CLI prints to stdout is a frozen wire contract: the effect payload 
 | `type Score struct{ Destructiveness, Irreversibility, Breadth, Influence, Exfil Destructiveness; Confidence int; Reversible bool; Grade Destructiveness; ExfilPairs []Exfil; CradleFlows []CradleFlow; IngestFlows []IngestFlow }` | `engine` (`score.go`) | consumers of `score` | Composite, orderable risk assessment; `CradleFlows` (network → code execution) and `IngestFlows` (network → file write) are the additive `flowsh/v3` network data flows, each omitted when empty. |
 | `func (r *Report) Validate() error` / `func (r *Report) Covered() bool` / `func (r *Report) HasTop() bool` | `internal/analysis` (`analyze.go`) | `cmd/flowsh`, harness | Well-formedness and the "no silent miss" / ⊤ invariants. |
 | `func (r *Report) Encode() ([]byte, error)` | `internal/analysis` (`analyze.go`) | `cmd/flowsh` | Canonical indented JSON of the CLI report. |
-| `func Analyze(lang Lang, src string) (*Report, error)` / `func ParseLang(s string) (Lang, error)` | `internal/analysis` (`analyze.go`) | `cmd/flowsh` | The pipeline producing the report from `(lang, src)`. |
-| CLI: `--lang bash\|posix\|posh\|js\|auto`, `--file PATH`, `--batch`, `--json`, `--explain`/`--why`, `--windows[=bool]`, `--version`, `-h/--help`; exit `0`/`1`/`2`/`3` | `cmd/flowsh` (`main.go`) | CI, users | Entry point; writes the report to stdout (`--file` names the input file — also setting `report.root`), `--batch` writes one NDJSON report per input line, and `--version` prints `flowsh/v3` + `effect-ir/v2` and exits `0`. |
+| `api` package — type aliases (`Lang`, `Report`, `Options`, `JavaScriptContext`, …) plus forwarded constants and functions (`api.ParseLang`, `api.Analyze`/`api.AnalyzeWith`, `api.Bool`) | `api` (`api.go`) | `cmd/flowsh`, external embedders | The public embedding surface the CLI consumes instead of `internal/analysis` directly (ADR-0010, ADR-0017; see [domains/analysis-report.md](../domains/analysis-report.md)) — an embedding caller sees exactly the report contract the CLI emits. |
+| `func Analyze(lang Lang, src string) (*Report, error)` / `func ParseLang(s string) (Lang, error)` | `internal/analysis` (`analyze.go`) | `api` (forwarded), `cmd/flowsh` (via `api`) | The pipeline producing the report from `(lang, src)`. |
+| CLI: `--lang bash\|posix\|posh\|js\|auto`, `--batch`, `--json`, `--explain`/`--why`, `--windows[=bool]`, `--version`, `-h/--help`; exit `0`/`1`/`2`/`3` | `cmd/flowsh` (`main.go`) | CI, users | Entry point; the command comes from the positional argument or stdin only — there is no `--file` (a SECURITY.md hard constraint; `TestFinding001NoFileInput` pins `--file` to unknown-flag exit 2); `--batch` writes one NDJSON report per non-blank input line; `--version` prints `flowsh/v3` + `effect-ir/v2` and exits `0`. |
 
 ## Initialization
 
-`cmd/flowsh/main.go` parses flags, maps `--lang` through `analysis.ParseLang` (`"bash"`/`"shell"` → bash; `"posix"`/`"sh"` → posix; `"posh"`/`"ps"`/`"pwsh"`/`"powershell"` → posh; `"js"`/`"javascript"`/`"node"`/`"nodejs"` → js; `"auto"` → sniffed by `detectLang`), reads the command from `--file`, the positional argument, or stdin (stamping the source name `Root`), and calls `analysis.AnalyzeWith`. `--version` (like `--help`) short-circuits before the language and input stages, printing `flowsh/v3` and `effect-ir/v2` on stdout and exiting `0`. With `--lang auto` the dialect is resolved after the input is read: `detectLang` scores PowerShell cmdlet/parameter/syntax markers (`psVerbs`/`psParams`/`psSyntax`) against shell markers (`shellTokens`/`shSyntax`) and falls back to `bash`, so it never fails. With `--batch` the selected source is split into non-blank lines (`splitBatch`); each line is analysed (with `detectLang` re-run per line when `--lang auto`) and written as one compact, single-line JSON object via `encodeCompact` (validate + `json.Marshal`), so the output is NDJSON. The report is built by `newReport(lang, src, root)` — which stamps `SchemaVersion`, `Tool`, `ToolVersion`, `Lang` and `Root` and initialises `Effects` to `[]engine.Effect{}` (so the JSON carries `[]`, never `null`) — then filled by `analyzeBash`/`analyzePS`/`analyzeJS` and encoded with `Report.Encode`. The process-wide analyzer is memoised via `sync.OnceValues(NewAnalyzer)` so the KB is loaded once. Fixed golden fixtures — `engine/testdata/report.golden.json` and `engine/testdata/effect.golden.json` — pin the encoding.
+`cmd/flowsh/main.go` parses flags, maps `--lang` through `api.ParseLang` (`"bash"`/`"shell"` → bash; `"posix"`/`"sh"` → posix; `"posh"`/`"ps"`/`"pwsh"`/`"powershell"` → posh; `"js"`/`"javascript"`/`"node"`/`"nodejs"` → js; `"auto"` → sniffed by `detectLang`), reads the command from the positional argument or stdin only — there is no named-file input (the root is stamped `RootArgument` or `RootStdin`) — and calls `api.AnalyzeWith`: the CLI consumes the public `api` package (ADR-0010, ADR-0017), never `internal/analysis` directly. `--version` (like `--help`) short-circuits before the language and input stages, printing `flowsh/v3` and `effect-ir/v2` on stdout and exiting `0`. With `--lang auto` the dialect is resolved after the input is read: `detectLang` scores PowerShell cmdlet/parameter/syntax markers (`psVerbs`/`psParams`/`psSyntax`) against shell markers (`shellTokens`/`shSyntax`) and falls back to `bash`, so it never fails; when the sniffed dialect's report is uncovered, `analyzeAuto` re-analyses the input under the alternate dialect (auto selects Bash or PowerShell only), and when neither covers it the report degrades to ⊤/conservative with reason `"no dialect could bound the input"`. With `--batch` the selected source is split into non-blank lines (`splitBatch`); each line is analysed (`analyzeAuto` per line when `--lang auto`) and written as one compact, single-line JSON object via `encodeCompact` (validate + `json.Marshal`), so the output is NDJSON; a line that references a variable or positional assigned on an earlier line (`batchState`) or is a fragment of a multi-line program (`lineContinues`: a trailing backslash or open quote, plus the line that follows) degrades to ⊤/conservative rather than being analysed against an empty state. The report is built by `newReport(lang, src, root)` — which stamps `SchemaVersion`, `Tool`, `ToolVersion`, `Lang` and `Root` and initialises `Effects` to `[]engine.Effect{}` (so the JSON carries `[]`, never `null`) — then filled by `analyzeBash`/`analyzePS`/`analyzeJS` and encoded with `Report.Encode`. The process-wide analyzer is memoised via `sync.OnceValues(NewAnalyzer)` so the KB is loaded once. Fixed golden fixtures — `engine/testdata/report.golden.json` and `engine/testdata/effect.golden.json` — pin the encoding.
 
 ## Data Flow Across Boundary
 
 ```
-  argv / stdin / --file ──▶ parseArgs ──▶ ParseLang (or detectLang for auto)
+  argv / stdin ──▶ parseArgs ──▶ ParseLang (or detectLang/analyzeAuto for auto)
                                                                           │
                                                                           ▼
                        front/bash | front/ps ──▶ bind ──▶ engine (effects, destructiveness, score)
@@ -58,22 +59,144 @@ The emitted document has the envelope:
   "toolVersion": "flowsh/v3",
   "lang": "bash",
   "input": "rm -rf $HOME",
-  "effects": [ { "kind": "FSWrite", "target": { "targets": ["/root"], "arbitrary": false },
-                 "mode": "Direct", "certainty": "Certain",
-                 "taint": { "labels": [], "arbitrary": false }, "reversible": false } ],
-  "destructiveness": "High",
-  "score": { "destructiveness": "High", "irreversibility": "High", "breadth": "High",
-             "influence": "None", "exfil": "None", "confidence": 100,
-             "reversible": false, "grade": "High" },
+  "root": "\u003cargument\u003e",
+  "effects": [
+    {
+      "kind": "FSWrite",
+      "target": {
+        "targets": [
+          "/root"
+        ],
+        "arbitrary": false
+      },
+      "mode": "Direct",
+      "certainty": "Certain",
+      "taint": {
+        "labels": [],
+        "arbitrary": false
+      },
+      "reversible": false
+    }
+  ],
+  "destructiveness": "Critical",
+  "score": {
+    "destructiveness": "Critical",
+    "irreversibility": "High",
+    "breadth": "Low",
+    "influence": "None",
+    "exfil": "None",
+    "confidence": 100,
+    "reversible": false,
+    "grade": "Critical"
+  },
+  "why": [
+    {
+      "effect": "FSWrite|Direct|[/root]",
+      "because": [
+        {
+          "rule": "fs.write",
+          "premises": [
+            "command:rm"
+          ],
+          "note": "derived from command",
+          "loc": {
+            "file": "\u003cargument\u003e",
+            "line": 1,
+            "col": 1
+          }
+        },
+        {
+          "rule": "fs.write",
+          "premises": [
+            "flag:-r"
+          ],
+          "note": "derived from flag",
+          "loc": {
+            "file": "\u003cargument\u003e",
+            "line": 1,
+            "col": 5
+          }
+        },
+        {
+          "rule": "fs.write",
+          "premises": [
+            "flag:-f"
+          ],
+          "note": "derived from flag",
+          "loc": {
+            "file": "\u003cargument\u003e",
+            "line": 1,
+            "col": 6
+          }
+        },
+        {
+          "rule": "fs.write",
+          "premises": [
+            "operand:/root"
+          ],
+          "note": "derived from operand",
+          "loc": {
+            "file": "\u003cargument\u003e",
+            "line": 1,
+            "col": 8
+          }
+        }
+      ]
+    }
+  ],
   "conservative": false,
   "top": false,
   "commands": 1,
-  "resolution": { "kind": "command", "invoked": "rm", "name": "rm" },
-  "commandCalls": [ { "invoked": "rm", "resolved": "rm", "args": [ "-rf", "/root" ] } ],
-  "canonical": { "effects": [ { "kind": "FSWrite", "target": { "targets": [ "/root" ], "arbitrary": false },
-                               "mode": "Direct", "certainty": "Certain",
-                               "taint": { "labels": [], "arbitrary": false }, "reversible": false } ],
-                 "key": "FSWrite|Direct|[/root]" }
+  "resolution": {
+    "invoked": "rm",
+    "kind": "command",
+    "name": "rm"
+  },
+  "commandCalls": [
+    {
+      "invoked": "rm",
+      "resolved": "rm",
+      "args": [
+        "-rf",
+        "/root"
+      ]
+    }
+  ],
+  "canonical": {
+    "effects": [
+      {
+        "kind": "FSWrite",
+        "target": {
+          "targets": [
+            "/root"
+          ],
+          "arbitrary": false
+        },
+        "mode": "Direct",
+        "certainty": "Certain",
+        "taint": {
+          "labels": [],
+          "arbitrary": false
+        },
+        "reversible": false
+      }
+    ],
+    "key": "FSWrite|Direct|[/root]"
+  },
+  "destructive": [
+    {
+      "command": "rm",
+      "spec": "-f",
+      "class": "E",
+      "reason": "forced removal that suppresses prompts and hides errors on missing files"
+    },
+    {
+      "command": "rm",
+      "spec": "-r",
+      "class": "E",
+      "reason": "recursively removes a whole directory tree, with no confirmation by default"
+    }
+  ]
 }
 ```
 
@@ -87,7 +210,7 @@ JS `commands` counts distinct reached call locations, excluding module/property 
 
 ## Error Propagation
 
-Encoding is guarded: `Report.Encode` calls `Report.Validate` first and returns an `error` if the report is malformed (empty `schemaVersion`, empty `lang`, or an invalid effect), so a bad report is never written. The CLI maps failures to exit statuses: `0` for a produced report (or the `--help`/`--version` short-circuits), `1` for an internal failure (analyzer construction or `Encode`/`encodeCompact` failure, printed as `flowsh: encode report: …`), `2` for a usage error (unknown `--lang`, a bad flag, conflicting sources, no input), and `3` for an input error (the named source could not be read — a missing/unreadable file, a directory — or was empty, including an empty batch). Because the frontends degrade to ⊤ rather than fail, an analysis of unparseable input still exits `0` with a well-formed report whose `top` is `true` and whose `reason` explains why — exit `1` therefore signals an internal error, never "hard input".
+Encoding is guarded: `Report.Encode` calls `Report.Validate` first and returns an `error` if the report is malformed (empty `schemaVersion`, empty `lang`, or an invalid effect), so a bad report is never written. The CLI maps failures to exit statuses: `0` for a produced report (or the `--help`/`--version` short-circuits), `1` for an internal failure (analyzer construction or `Encode`/`encodeCompact` failure, printed as `flowsh: encode report: …`), `2` for a usage error (unknown `--lang`, an unknown flag — there is no `--file` — or conflicting sources: `--batch` with a positional argument, `--explain` with `--batch`, `-` with a positional argument), and `3` for an input error (stdin could not be read, or the command was empty: an empty positional argument, empty stdin, or an empty batch — no named input source exists). Because the frontends degrade to ⊤ rather than fail, an analysis of unparseable input still exits `0` with a well-formed report whose `top` is `true` and whose `reason` explains why — exit `1` therefore signals an internal error, never "hard input".
 
 ## Breaking Change Checklist
 

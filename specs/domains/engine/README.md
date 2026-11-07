@@ -7,6 +7,7 @@ The `engine` package is the frontend-agnostic core of the effect-analysis IR. It
 ## Key Files
 
 - `engine/effect.go` — the effect IR atoms: `EffectKind`, `EffectMode`, the `Effect` struct, and its `Key`, `Join`, `Validate` operations.
+- `engine/hostshape.go` — the host/URL grammar and egress-target gate: `HostShaped`, `HostShapedLenient`, `UNCHost`, `UNCUnresolved`, `HostPath`, `FilterEgressTargets`.
 - `engine/lattice.go` — the value lattices: `Certainty`, `Destructiveness`, the shared `flatSet` shape, `Scope` and `Taint`, plus their join/meet/order operations.
 - `engine/report.go` — the frozen `Report` container: `SchemaVersion`, `SourceLoc`, `WhyStep`, `WhyTrace`, `NewReport`, and `KindDestructiveness`/`ComputeDestructiveness`/`Sort`/`Normalize`/`Validate`/`Encode`.
 - `engine/score.go` — the risk dimensions and composite score: `Breadth`, `Irreversibility`, `ConfidenceOf`, `Score`, `ScoreEffects`, `BreadthSeverity`, `IrreversibilityOf`.
@@ -14,7 +15,7 @@ The `engine` package is the frontend-agnostic core of the effect-analysis IR. It
 - `engine/why.go` — why-trace construction: `AtomKind`, `Atom`, `Derivation`, `BuildWhy`, `WhyStepsFor`, `WhyGaps`.
 - `engine/report_test.go` — golden JSON, round-trip, lattice-law and import-direction tests.
 - `engine/score_test.go` — fixtures and unit tests for every scoring dimension.
-- `engine/bench_test.go` — external test package (`engine_test`): per-command latency and recall gates. The latency reference is committed per host (`engine/testdata/latency_baseline.json`), so a slower CI runner is compared against its own numbers rather than the developer reference ([ADR-0015](../../decisions/0015-per-host-latency-reference.md)).
+- `engine/bench_test.go` — external test package (`engine_test`): per-command latency and recall gates. The latency reference is committed per host (`engine/testdata/latency_baseline.json`), so a slower CI runner is compared against its own numbers rather than the developer reference ([ADR-0015](../../decisions/0015-per-host-latency-reference.md)). The latency leg skips under the race detector (`raceDetectorEnabled`, defined by the build-tagged `engine/race_test.go`/`engine/norace_test.go`): a wall-clock budget is not meaningful when every memory access is instrumented.
 - `engine/testdata/report.golden.json`, `engine/testdata/effect.golden.json` — frozen canonical JSON the schema is pinned to.
 
 ## Core Types
@@ -125,7 +126,7 @@ The core has no runtime configuration and no I/O. Its behaviour is fixed by comp
 | `EffectModes` | `engine/effect.go` | `Direct, Transitive, Ambient, Conditional`. |
 | Taint labels (`TaintUntrusted`, `TaintUserInput`, `TaintEnv`, `TaintNetwork`, `TaintSecret`, `TaintFileSystem`, `TaintProcess`) | `engine/lattice.go` | the labels the core recognises; the label universe is otherwise open. |
 | `SourceClasses` | `engine/taint.go` | `UntrustedContent, Env, File, Literal` (most attacker-influenced first). |
-| `secretPathMarkers` | `engine/taint.go` | substrings that mark credential/secret locations (case-insensitive, substring match). |
+| `secretPathMarkers` | `engine/taint.go` | the credential/secret path-marker inventory (case-insensitive; matched by per-marker rules — see [Scoring](scoring.md)). |
 | `irreversibleTokens` | `engine/score.go` | command → `Irreversibility` table (`rm`, `dd`, `shred`, `mkfs*`, …). |
 | Golden fixtures | `engine/testdata/*.golden.json` | pin the canonical JSON encoding of `Effect` and `Report`. |
 

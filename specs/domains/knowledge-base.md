@@ -9,7 +9,7 @@ The knowledge base (`kb`) is the effect dataset of the analysis: a hand-verified
 - `kb/schema.go` — the frozen document schema and its types: `SchemaVersion`, `KnownVersions`, `Dialect`, `ParamKind`, `ValueSource`, `Effect`, `Param`, `Command`, `DestructiveClass`, `Destructive`, `KB`, and the validation methods.
 - `kb/js.go`, `kb/js_decode.go`, `kb/js_test.go` — JS schema, validated decoding/indexing, and rejection tests.
 - `kb/data/js-filesystem.yaml`, `kb/data/js-path.yaml` — filesystem API shapes and offline path/home operations.
-- `kb/loader.go` — the loader: `go:embed data/*.yaml`, `Load`/`loadFS`/`documentNames`, `EmbeddedFiles` (the sorted names of the embedded documents), the decode/merge/build/validate pipeline, `Default`, and a dependency-free minimal YAML reader.
+- `kb/loader.go` — the loader: `go:embed data` (the whole directory — a `data/*.yaml` glob would silently drop a `.yml` document that discovery nonetheless reports), `Load`/`loadFS`/`documentNames`, `EmbeddedFiles` (the sorted names of the embedded documents), the decode/merge/build/validate pipeline, `Default`, and a dependency-free minimal YAML reader.
 
 The `kb/data/` directory holds one YAML document per command tradition (discovery is automatic, so the set grows by adding files):
 
@@ -36,8 +36,12 @@ The `kb/data/` directory holds one YAML document per command tradition (discover
 - `kb/data/containers.yaml` — container and infrastructure tooling (`docker`, `docker-compose`, `kubectl`, `helm`, `terraform`, `ansible` and its per-binary entry points), dialect `systemd`.
 - `kb/data/cloud.yaml` — cloud provider clients (`aws`, `gcloud`, `az`), dialect `net-tools`.
 - `kb/data/destructive.yaml` — the destructive-flags table: `(command, spec)` pairs known to be destructive, with a severity class and a reason.
-- `kb/loader_test.go` — loader tests, including version-rejection and referential-integrity cases.
+- `kb/loader_test.go` — loader tests, including version-rejection and referential-integrity cases, and the load-budget gate `TestLoadUnderBudget`: the acceptance criterion "loads from go:embed within a fixed budget and with no external files" — both the fastest and the average of 50 `Load()` runs must stay under 150 ms, a smoke budget generous enough for the slowest shared CI runner while still failing an order-of-magnitude regression or any accidental disk I/O ([ADR-0011](../decisions/0011-ci-tolerant-load-budget.md), [ADR-0016](../decisions/0016-kb-load-budget-release-headroom.md)); it skips under the race detector, where wall-clock timing is not meaningful.
+- `kb/race_test.go` — the build-tagged `raceDetectorEnabled` constant: the race detector instruments every memory access and inflates wall-clock time several-fold, so the package's timing gate skips under `-race`; the gate still runs — and still enforces the budget — in the ordinary (non-race) test step on every OS.
 - `kb/coverage_test.go` — the common-binary inventory gate: every maintained routine CLI binary resolves (no ⊤), and a representative command per family binds to a bounded, non-conservative report.
+- `kb/also_test.go` — the `also` secondary-effect parameter: `TestParamAlsoParses`, `TestParamAlsoValidation` (distinct kinds, no secondary `fileRef`), and `TestPackageInstallDeclaresBothEffects` (a package manager declares both `NetEgress` and `FSWrite`).
+- `kb/egress_model_test.go` — the egress-model gates, including `TestCodeHostEgressIsUnresolved` (a code-host URL never resolves to a concrete egress target).
+- `kb/norace_test.go` — the `!race` build-tagged half of the `raceDetectorEnabled` constant (false in an ordinary build) that the load-budget gate reads.
 
 ## Core Types
 
@@ -99,7 +103,7 @@ The expanded command sets are laid out one document per tradition, and every com
 - `security` (`security.yaml`): auditctl, ausearch, chage, chcon, chfn, chpasswd, chsh, getfacl, gpasswd, gpg, groupadd, groupdel, groupmod, passwd, restorecon, semanage, setfacl, sudo, useradd, userdel, usermod, visudo.
 - `vcs` (`vcs.yaml`, `codehost.yaml`): bzr, darcs, fossil, gh, glab, hg, jj, svn.
 - `bsd` (`bsd.yaml`): caffeinate, chflags, defaults, diskutil, dscl, launchctl, mdfind, mdls, open, pbcopy, pbpaste, softwareupdate, sw_vers, sysctl, xattr.
-- `builtin` (`builtins.yaml`, `plumbing.yaml`): bind, caller, cd, command, compgen, complete, declare, echo, enable, eval, exec, export, fc, hash, help, history, kill, local, mapfile, printf, pwd, read, readonly, set, source, test, trap, type, ulimit, umask, unset, wait, which.
+- `builtin` (`builtins.yaml`, `plumbing.yaml`): bind, caller, cd, command, compgen, complete, declare, echo, enable, eval, exec, export, fc, hash, help, history, jobs, kill, local, mapfile, printf, pwd, read, readonly, set, source, test, trap, type, ulimit, umask, unset, wait, which.
 
 ### ParamKind / ValueSource
 
@@ -113,6 +117,7 @@ const (
 	ParamOption     ParamKind = "option"     // -o FILE, --output=FILE
 	ParamPositional ParamKind = "positional" // rm FILE, cp SRC DEST
 	ParamAssign     ParamKind = "assign"     // dd of=FILE, if=FILE
+	ParamSelf       ParamKind = "self"       // intrinsic: contributed by mere invocation
 )
 
 type ValueSource string
@@ -127,6 +132,8 @@ const (
 	ValueLiteral   ValueSource = "literal"   // a literal encoded in the flag value
 )
 ```
+
+`ParamSelf` is the intrinsic parameter: an effect the command contributes by the mere fact of being invoked, with no token on the command line to bind it to. Its spec is a **bare name** (no leading `-`, no trailing `=` — conventionally the command's own name) and its effect must use `valueFrom: self`, so a command whose other parameters are all flags still contributes a concrete "this command ran" effect instead of an empty, non-conservative report. The authoring contract: use `kind: self` for effects that need no operand — e.g. a credential-access builtin that touches credentials merely by running. Live: 10 entries (`build.yaml`, `security.yaml`, `systemd.yaml` ×5, `toolchain.yaml` ×3).
 
 ### Effect / Param / Command
 
@@ -178,9 +185,12 @@ type Destructive struct {
 	Command string           `yaml:"command"`
 	Spec    string           `yaml:"spec"`
 	Class   DestructiveClass `yaml:"class"`
+	Value   ValuePredicate   `yaml:"value,omitempty"` // gates the row on a resolved operand value
 	Reason  string           `yaml:"reason"`
 }
 ```
+
+`Value` gates a row on a **resolved operand value** rather than on the parameter alone: some parameters are destructive only for some of their values (a row keyed on `chmod`'s `MODE` would classify every `chmod`). `ValuePredicate` is the closed condition set — `""` (`ValueAlways`, the default: the parameter alone is enough) and `"suid"` (`ValueSuid`: the operand sets the set-user-ID/set-group-ID bit — chmod's octal special-bit digit or a symbolic `+s`/`=s` clause). The KB never sees an operand, so the binder evaluates the predicate and passes the satisfied set to the lookup. Live rows gated on `value: suid`: `install -m`, `install --mode`, `chmod MODE` (`kb/data/destructive.yaml`).
 
 `DestructiveClass.Severity()` maps the class onto `engine.Destructiveness`.
 
@@ -188,7 +198,7 @@ type Destructive struct {
 
 JS knowledge uses separate `JSModules` and `JSCalls` collections and indexes. `JSModule` declares a canonical namespace, aliases, properties referring to canonical modules, integer constants exposed as exact numbers, and an `internal` flag for property-only namespaces (such as `fs.constants`) that `require`/`import` never resolve. `JSCall` declares Module/Export, Style, Operation, Return, MinArgs/MaxArgs, Options/ModeArg/DataArg, OptionShape/OptionKeys, FlagOption/FlagDefault, Effects, and Destructive. Omitted selectors use -1. `JSEffect` selects a required positional argument and a path/prefix target; `JSDestructive` selects recursive/force and carries the shared A–E severity class. Return models are unknown, undefined, opaque content, or unknown boolean. Styles are sync, callback, promise, stream, and pure; operation names select filesystem or bounded POSIX path/home behavior. See [JavaScript Filesystem Models](javascript-filesystem.md) for the full API matrix and conservative boundaries.
 
-`JSModule(name)` and `JSCall(module, export)` return reviewed identities without adding shell commands. Load rejects unknown keys, duplicate identities/aliases, invalid selectors/options/operations/returns/styles, conflicting module properties/constants/exports, non-integer or inexact (beyond ±2^53) constants, internal modules that declare aliases or are not referenced by a property, and broken module references. v2/v3 shell-only documents remain readable; v4 JS fields require v4 even when their collections are empty. All documents in one load use the same version.
+`JSModule(name)` and `JSCall(module, export)` return reviewed identities without adding shell commands. Load rejects unknown keys, duplicate identities/aliases, invalid selectors/options/operations/returns/styles, conflicting module properties/constants/exports, non-integer or inexact (beyond ±2^53) constants, internal modules that declare aliases or are not referenced by a property, and broken module references. v2/v3 shell-only documents remain readable; v4 JS fields require v4 even when their collections are empty. All documents in one load use the same version. Module and export names (module names, aliases, properties, constants) are bounded by `validJSName` — at most 128 bytes, no whitespace or NUL (`kb/js.go`) — and integer constants by `maxJSConstant` (±2^53 inclusive: the integers exact in float64).
 
 ### KB
 
@@ -200,8 +210,10 @@ type KB struct {
 	JSModules []JSModule
 	JSCalls []JSCall
 
-	byName  map[string]*Command     // keyed by name and every alias
-	byDestr map[string]*Destructive // keyed by "command|spec"
+	byName    map[string]*Command     // keyed by name and every alias
+	byDestr   map[string]*Destructive // keyed by "command|spec"
+	jsModules map[string]*JSModule    // keyed by canonical name and every alias
+	jsCalls   map[string]*JSCall      // keyed by module + "\x00" + export (jsCallKey)
 }
 ```
 
@@ -210,7 +222,7 @@ Lookups: `Command(name)` (name or alias), `DestructiveFor(command, spec)`, `Comm
 ## Flow
 
 ```
-kb/data/*.yaml  (embedded via //go:embed data/*.yaml)
+kb/data/*.yaml  (embedded via //go:embed data — the whole directory)
         │
         ▼  Load()
    loadFS(dataFS, "data")
@@ -226,7 +238,8 @@ kb/data/*.yaml  (embedded via //go:embed data/*.yaml)
         ▼  after all documents
    KB.build()                      stable-sort Commands by Name,
         │                          stable-sort Destructive by (Command, Spec),
-        │                          build byName (name + aliases) and byDestr maps,
+        │                          build byName (name + aliases), byDestr, and the
+        │                          jsModules/jsCalls lookup maps,
         │                          and each Command's Spec→position index
         ▼
    KB.Validate()                   version known; every Command/Param/Destructive valid;
@@ -247,10 +260,10 @@ kb/data/*.yaml  (embedded via //go:embed data/*.yaml)
 - Command names and aliases are unique across the whole KB; a duplicate name/alias is a build error.
 - Destructive entries are unique by `(command|spec)`.
 - Every destructive entry refers to a parameter that is actually declared on a known command (referential integrity).
-- A parameter's `spec` syntax matches its `kind`: `flag`/`option` specs start with `-`, `assign` specs end with `=`, `positional` specs do not start with `-`.
+- A parameter's `spec` syntax matches its `kind`: `flag`/`option` specs start with `-`, `assign` specs end with `=`, `positional` specs do not start with `-`, and `self` specs are bare names (no leading `-`, no trailing `=`). A `self` parameter requires `valueFrom: self`, and an `option` never takes its value from the invocation's positional arguments (`valueFrom: args` on an option is a load error — the value is the flag's).
 - An effect's `kind` and `mode` are members of the core's closed sets, and `fileRef` is set only when `valueFrom: flagValue`.
 - A parameter's `also` entries are valid effects of distinct kinds, and none of them sets `fileRef` (a payload reference belongs to the primary effect).
-- A package-manager/toolchain subcommand that installs, adds, updates or otherwise resolves packages declares both `FSWrite` and `NetEgress` (one as the primary, the other in `also`); the only exceptions are the documented index refreshes (`apt update`, `apk update`), which rewrite only the package index.
+- A package-manager/toolchain subcommand that installs, adds, updates or otherwise resolves packages declares both `FSWrite` and `NetEgress` (one as the primary, the other in `also`); the only exceptions are the documented index refreshes (`apt update`, `apk update`), which fetch the package index (`NetEgress` only — no `FSWrite`).
 - Distinct documents' commands are merged by appending; conflicts surface either as a duplicate name/alias (build) or a duplicate destructive key.
 - A command belongs to exactly one dialect, and every dialect listed in `Dialects` is exercised by at least one command (`TestDialectCoverage` in `kb/loader_test.go`).
 
@@ -260,14 +273,14 @@ kb/data/*.yaml  (embedded via //go:embed data/*.yaml)
 - `KnownVersions` = `[]string{"effect-kb/v2", "effect-kb/v3", SchemaVersion}` — the explicit list the loader accepts; extend it to add a version.
 - `dataDir` = `"data"` — the directory inside the embedded FS holding the schema documents.
 - Document discovery accepts `.yaml` and `.yml`; at least one document must exist.
-- Supported YAML subset (a strict, documented subset — anything else is an explicit error): block mappings, block sequences, single-line flow collections, plain/single/double-quoted scalars, and `#` comments. Anchors, aliases, tags, multi-line scalars and tab indentation are rejected.
+- Supported YAML subset (a strict, documented subset): block mappings, block sequences, single-line flow collections, plain/single/double-quoted scalars, and `#` comments. Tab indentation is an explicit error, and a multi-line scalar is rejected as unexpected content; anchors, aliases and tags have no separate recognition — their sigils are read as plain scalar text (`&a wipes` decodes as the literal `&a wipes`) rather than rejected.
 - `Default()` caches a single parsed KB; use `Load()` for a fresh, independently-parsed copy.
 
 ## Extension Points
 
 - **Add a command or parameter**: append to the relevant `kb/data/*.yaml` document (or add a new `*.yaml` file — discovery is automatic). Keep the `kind`/`spec` syntax consistent; validation rejects drift.
 - **Add a dialect**: append to the `Dialect` constants and to the `Dialects` slice in `kb/schema.go`.
-- **Add a destructive flag**: add a `(command, spec, class, reason)` entry to `kb/data/destructive.yaml`. The spec must already be declared on the command.
+- **Add a destructive flag**: add a `(command, spec, class, reason, value?)` entry to `kb/data/destructive.yaml`. The spec must already be declared on the command; `value` is the optional resolved-operand predicate (`suid`) that gates the row.
 - **Add a parameter/effect field shape**: bump `SchemaVersion` and add the new value to `KnownVersions` (this is exactly why v2 added `fileRef` and v3 added `also`, each bumping the version rather than extending the previous one in place).
 - **Add a new `ParamKind`/`ValueSource`/`DestructiveClass`**: extend the corresponding slice; `Valid()` derives from the slice's membership set.
 

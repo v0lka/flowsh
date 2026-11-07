@@ -40,7 +40,9 @@ specs/
 │   ├── bash-frontend/              the bash frontend (front/bash)
 │   │   ├── README.md               bash frontend overview
 │   │   ├── parse-normalize.md      parse + normalize detail
+│   │   ├── wrappers.md             the wrapper inventory + peel rules
 │   │   └── abstract-exec.md        abstract execution detail
+│   ├── javascript-filesystem.md    filesystem API acceptance matrix (front/js + kb JS models)
 │   ├── javascript-frontend.md      bounded JavaScript values/control flow (front/js)
 │   ├── powershell-frontend.md      the PowerShell frontend (front/ps)
 │   ├── analysis-report.md          composition facade + report + corpus harness
@@ -64,7 +66,17 @@ specs/
     ├── 0007-lattice-based-effect-model.md
     ├── 0008-single-go-module.md
     ├── 0009-rename-identity-to-flowsh.md
-    └── 0010-public-embedding-api.md
+    ├── 0010-public-embedding-api.md
+    ├── 0011-ci-tolerant-load-budget.md
+    ├── 0012-race-advisory-parse-budget.md
+    ├── 0013-windows-clock-tick-parse-budget.md
+    ├── 0014-ps-abstract-state.md
+    ├── 0015-per-host-latency-reference.md
+    ├── 0016-kb-load-budget-release-headroom.md
+    ├── 0017-report-policy-package.md
+    ├── 0018-javascript-semantic-kernel.md
+    ├── 0019-determinism-gate-parse-budget-trip.md
+    └── 0020-javascript-filesystem-models.md
 ```
 
 Specs are organized by domain, never by this layout. The mapping of a domain to the source packages it documents is:
@@ -77,6 +89,7 @@ Specs are organized by domain, never by this layout. The mapping of a domain to 
 | `domains/bash-frontend/` | `front/bash/` |
 | `domains/powershell-frontend.md` | `front/ps/` |
 | `domains/javascript-frontend.md` | `front/js/` |
+| `domains/javascript-filesystem.md` | `front/js/`, `bind/js*.go`, `kb/js*.go`, `kb/data/js-filesystem.yaml`, `kb/data/js-path.yaml` |
 | `domains/analysis-report.md` | `internal/analysis/`, `internal/corpus/`, `api/` |
 | `domains/policy.md` | `policy/` |
 | `domains/cli.md` | `cmd/flowsh/` |
@@ -87,7 +100,7 @@ Specs are organized by domain, never by this layout. The mapping of a domain to 
 - Directories within `domains/`: created when a domain requires multiple files
 - `README.md` inside a domain directory: overview and entry point for that domain
 - `_template.md` prefix: template files (not actual specs)
-- ADR files: `NNN-kebab-case-slug.md` (three-digit number, kebab-case slug)
+- ADR files: `NNNN-kebab-case-slug.md` (four-digit number, kebab-case slug)
 
 ## Document Formats
 
@@ -220,14 +233,14 @@ Architectural rules that must never be violated.
 What NOT to do, with brief explanation of why.
 ```
 
-### ADR (`decisions/NNN-slug.md`)
+### ADR (`decisions/NNNN-slug.md`)
 
 ```markdown
-# ADR-NNN: [Title]
+# ADR-NNNN: [Title]
 
 ## Status
 
-Accepted | Superseded by [NNN](./NNN-slug.md)
+Accepted | Superseded by [NNNN](./NNNN-slug.md)
 
 ## Context
 
@@ -269,6 +282,8 @@ What was evaluated and why it was rejected.
 3. Update cross-references if file paths changed
 4. After adding or removing a spec file, update `INDEX.md`
 5. ADRs with `Status: Accepted` are immutable; create a new ADR to supersede
+6. An accepted ADR that contains a claim reading as current but drifted from the code is amended with a `> **Historical record.**` note at the relevant section — the decision text itself is never rewritten (the notes in ADR-0001/0009/0010 are the precedent)
+7. References inside accepted ADRs to pre-rename artefacts (the `cmdscope` paths) and superseded version tags (`flowsh/v1`, `effect-ir/v1`, `effect-kb/v2`) are immutable history rather than live identity (ADR-0009) and are exempt from path-existence checks
 
 ### Validation checklist
 

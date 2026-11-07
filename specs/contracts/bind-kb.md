@@ -15,14 +15,15 @@
 | `func (k *KB) Validate() error` | `kb` (`schema.go`) | `kb` loader, tests | Referential integrity: known version, well-formed commands, every destructive entry naming a declared param. |
 | `type Command struct{ Name string; Dialect Dialect; Aliases []string; Params []Param }` | `kb` (`schema.go`) | `bind.bindCommand` | One command's parameter set. |
 | `func (c Command) Param(spec string) (Param, bool)` / `func (c Command) HasParam(spec string) bool` | `kb` (`schema.go`) | `bind.parseArgs`, `bind.bindCommand`, `KB.Validate` | Match a written flag/option/operand against the declared specs. |
-| `type Param struct{ Spec string; Kind ParamKind; Effect Effect }` | `kb` (`schema.go`) | `bind.bindCommand`, `bind.lowerParam` | One parameter and the primary effect it contributes. |
+| `type Param struct{ Spec string; Kind ParamKind; Effect Effect; Also []Effect }` | `kb` (`schema.go`) | `bind.bindCommand`, `bind.lowerParam` | One parameter, the primary effect it contributes, and `Also` — secondary effects of the same token (added in schema v3), each lowered exactly like a primary effect and de-duplicated against it. |
 | `func (p Param) Validate() error` / `func (c Command) Validate() error` | `kb` (`schema.go`) | `kb` loader, tests | Spec/kind coherence and command well-formedness. |
-| `type ParamKind string` (`ParamFlag`, `ParamOption`, `ParamPositional`, `ParamAssign`) | `kb` (`schema.go`) | `bind.parseArgs`, `bind.bindCommand` | Surface syntax classification that drives argv parsing. |
+| `type ParamKind string` (`ParamFlag`, `ParamOption`, `ParamPositional`, `ParamAssign`, `ParamSelf`) | `kb` (`schema.go`) | `bind.parseArgs`, `bind.bindCommand` | Surface syntax classification that drives argv parsing; `ParamSelf` (a member of `ParamKinds`) is the intrinsic "it ran" parameter — an effect the command contributes by being invoked, with no command-line token to bind (`valueFrom: self`). |
 | `type ValueSource string` (`ValueArgs`, `ValueFlagValue`, `ValueStdin`, `ValueEnv`, `ValueCwd`, `ValueSelf`, `ValueLiteral`) | `kb` (`schema.go`) | `bind.taintFor` | Which token of the invocation becomes the effect's target/taint. |
 | `type Dialect string` (`DialectPOSIX`, `DialectGNU`, `DialectBuiltin`, …) | `kb` (`schema.go`) | `bind.resolve` | Command tradition; `DialectBuiltin` is the first link of the resolution chain. |
 | `type Effect struct{ Kind engine.EffectKind; Mode engine.EffectMode; ValueFrom ValueSource; FileRef bool }` | `kb` (`schema.go`) | `bind.lowerParam` | The effect a parameter contributes, reusing the core's closed kind/mode sets. |
 | `func (e Effect) EngineEffect(target engine.Scope, taint engine.Taint, c engine.Certainty) engine.Effect` | `kb` (`schema.go`) | `bind.lowerParam` | Lower a KB effect into the core IR (kind, mode, default reversibility). |
-| `type Destructive struct{ Command string; Spec string; Class DestructiveClass; Reason string }` | `kb` (`schema.go`) | `bind.Result.Destructive` | One entry of the destructive-flags table. |
+| `type Destructive struct{ Command string; Spec string; Class DestructiveClass; Value ValuePredicate; Reason string }` | `kb` (`schema.go`) | `bind.Result.Destructive` | One entry of the destructive-flags table; `Value` (empty = always) gates the row on a *resolved operand value* rather than on the parameter alone. |
+| `type ValuePredicate string` (`ValueAlways`="", `ValueSuid`="suid") | `kb` (`schema.go`) | `bind.resolvedValuePredicates`, `bind.destructiveEntries` | A resolved-operand condition a destructive row may require (`suid`: the operand sets the set-user/group-ID bit). The KB names the predicate but never sees an operand, so the binder evaluates it (`bind/chmod_mode.go`) and passes the satisfied set to the lookup. |
 | `type DestructiveClass string` (`ClassNone`="A" … `ClassCritical`="E") + `func (c DestructiveClass) Severity() engine.Destructiveness` | `kb` (`schema.go`) | `bind.normalizeResult` | Lettered class folded into the core `Destructiveness` lattice (A↔None … E↔Critical). |
 | `func Load() (*KB, error)` / `func Default() (*KB, error)` | `kb` (`loader.go`) | `bind.NewDefault` | Parse the embedded (`//go:embed data`) KB, memoised for hot paths. |
 | `func NewDefault() (*Binder, error)` | `bind` (`bind.go`) | `internal/analysis` | Construct the binder over the embedded KB. |
@@ -59,8 +60,9 @@ The KB is compiled into the binary: `kb/loader.go` embeds `data/*.yaml` via `//g
   lowerParam: p.Effect.EngineEffect(target, taint, certainty) ──▶ []engine.Effect
         │      (ValueSource picks target/taint; FileRef adds an @file FSRead)
         ▼
-  specs []string ──▶ destructiveEntries(k, cmd.Name, specs)
-        │                 └─ k.DestructiveFor(cmd, spec) ──▶ []kb.Destructive (sorted)
+  specs []string ──▶ destructiveEntries(k, cmd.Name, specs, resolvedValuePredicates(cmd, argv))
+        │                 └─ k.DestructiveFor(cmd, spec) ──▶ []kb.Destructive (sorted;
+        │                    a row gated `value: suid` applies only when that predicate is satisfied)
         ▼
   Result{ Effects, Resolution, Destructive, Destructiveness }
         │   Destructiveness = join(effects…) ⋈ join(d.Class.Severity() for d in Destructive)

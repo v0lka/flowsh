@@ -9,7 +9,7 @@ The value lattices define the order and combination operators over every scalar 
 - `engine/lattice.go` — `Certainty`, `Destructiveness`, the shared `flatSet` shape, `Scope`, `Taint`, and the string-set helpers.
 - `engine/score.go` — `Breadth` and `Irreversibility` (ordinal chains) and their `Severity` mappings.
 - `engine/taint.go` — `Influence` (ordinal chain) and its `Severity` mapping.
-- `engine/report_test.go` — `TestLatticeLaws` verifies idempotence, commutativity, associativity, absorption and the `⊥`/`⊤` identities for certainty, destructiveness, scope and taint.
+- `engine/report_test.go` — `TestLatticeLaws` verifies idempotence, commutativity, associativity, absorption and the `⊥`/`⊤` identities for certainty, destructiveness, scope, taint, breadth and irreversibility.
 
 ## Behavior
 
@@ -17,10 +17,10 @@ The value lattices define the order and combination operators over every scalar 
 
 Two structural shapes cover all seven lattices:
 
-- **Ordinal chain** — a bounded integer with `Join = max`, `Meet = min`, `⊥ = 0` and `⊤ = n`. `Certainty`, `Destructiveness`, `Breadth`, `Irreversibility` and `Influence` are chains of this shape.
+- **Ordinal chain** — a bounded integer with `Join = max`, `⊥ = 0` and `⊤ = n`. `Certainty`, `Destructiveness`, `Breadth`, `Irreversibility` and `Influence` are chains of this shape; all of them except `Influence` also expose `Meet = min`.
 - **Flat set (powerset)** — `flatSet` is the powerset lattice over an open universe of strings plus a single maximal element `{arbitrary}`. `Scope` and `Taint` are this shape.
 
-Each lattice also exposes `Valid`, `String`, and (except for the set lattices) `LessOrEqual`; the scoring lattices add a `Severity() Destructiveness` projection so every dimension is comparable on the shared severity scale.
+Each lattice exposes `String` and its operations: the ordinal chains expose `Valid` and `LessOrEqual`, while the set lattices expose no `Valid` but do expose `LessOrEqual` alongside `Equal`, `Contains`, `IsBottom` and `IsTop`. The scoring lattices (`Breadth`, `Irreversibility`, `Influence`) add a `Severity() Destructiveness` projection so every dimension is comparable on the shared severity scale.
 
 ### Certainty (chain, 5 levels)
 
@@ -89,7 +89,7 @@ type flatSet struct {
 ⊓        = set intersection
 ```
 
-Constructors: `ScopeBottom()` (`⊥`), `ScopeTop()` (`⊤`), `ScopeOf(targets ...string)`. Operations: `Join`, `Meet`, `IsBottom`, `IsTop`, `Equal`, `LessOrEqual`, `Contains(target)`, `Targets()` (sorted; nil for `⊥` and `⊤`), `String` (`∅`, `⊤`, or `{a,b}`), and canonical JSON `{"targets":[…],"arbitrary":bool}`.
+Constructors: `ScopeBottom()` (`⊥`), `ScopeTop()` (`⊤`), `ScopeOf(targets ...string)`. Operations: `Join`, `Meet`, `IsBottom`, `IsTop`, `Equal`, `LessOrEqual`, `Contains(target)`, `Targets()` (sorted; nil for `⊥` and `⊤`), `String` (`∅`, `⊤`, or `{a,b}`), and canonical JSON `{"targets":[…],"arbitrary":bool}`. `canonical()` — the bracketed set form `Effect.Key` embeds (`[]`, `*`, or `[a,b]`) — backslash-escapes the three bytes that are its own syntax, `,`, `]` and `\`, inside each target element, so a target cannot forge a set boundary; a Windows `C:\Windows` target renders as `C:\\Windows` in the key.
 
 ### Taint (flat set)
 
@@ -116,6 +116,13 @@ The core recognises these canonical labels (the universe is otherwise open-ended
 
 Constructors/operations mirror `Scope`: `TaintBottom()`, `TaintTop()`, `TaintOf(labels ...string)`, `Join`, `Meet`, `IsBottom`, `IsTop`, `Equal`, `LessOrEqual`, `Contains(label)`, `Labels()`, and canonical JSON `{"labels":[…],"arbitrary":bool}`.
 
+### Provenance
+
+`Provenance` (`engine/taint.go`) is the source-class summary of the data an effect consumes: the set of `SourceClass` values a value flows from, before the classes are folded into taint labels and attacker influence.
+
+- `NewProvenance(classes ...)` normalises the set: empty entries dropped, sorted by canonical `SourceClasses` position (most attacker-influenced first) with a lexicographic name tie-break for unrecognised classes — which all share the last position — then de-duplicated. The tie-break makes normalisation order-independent for any input, including unknown classes (pinned by `TestProvenanceUnknownClassesOrderIndependent` and `TestProvenanceFoldsSources` in `engine/score_test.go`).
+- `Provenance.Taint()` joins the taint labels of every source class; `.Influence()` joins their attacker influences; `.Trusted()` reports an entirely literal provenance (`Influence() == InfluenceNone`).
+
 ### Breadth (chain, 5 levels)
 
 `Breadth` classifies how wide an effect's target scope is, in the fixed order `exact < glob < $HOME < /`:
@@ -128,7 +135,7 @@ Constructors/operations mirror `Scope`: `TaintBottom()`, `TaintTop()`, `TaintOf(
 | `BreadthHome` | 3 | | the user's home directory or a home subtree (`$HOME`, `~`) | `DestructHigh` |
 | `BreadthRoot` | 4 | `⊤` | `/` or the whole host | `DestructCritical` |
 
-`Join = max`, `LessOrEqual` is `≤`. `Severity()` maps each level onto the shared destructiveness scale (`BreadthNone ⇒ DestructNone`).
+`Join = max`, `Meet = min`, `LessOrEqual` is `≤`. `Severity()` maps each level onto the shared destructiveness scale (`BreadthNone ⇒ DestructNone`).
 
 ### Irreversibility (chain, 4 levels)
 
@@ -141,7 +148,7 @@ Constructors/operations mirror `Scope`: `TaintBottom()`, `TaintTop()`, `TaintOf(
 | `IrrevPermanent` | 2 | data loss that resists recovery | `DestructHigh` |
 | `IrrevDestructive` | 3 | data destruction, effectively irreversible | `DestructCritical` |
 
-`Join = max`, `LessOrEqual` is `≤`. `Severity()` maps each level onto the shared scale (`IrrevReversible ⇒ DestructNone`).
+`Join = max`, `Meet = min`, `LessOrEqual` is `≤`. `Severity()` maps each level onto the shared scale (`IrrevReversible ⇒ DestructNone`).
 
 ### Influence (chain, 3 levels)
 
@@ -157,11 +164,11 @@ None ⊑ Indirect ⊑ Direct
 | `InfluenceIndirect` | 1 | attacker-controlled only insofar as its container is | `DestructMedium` |
 | `InfluenceDirect` | 2 | directly attacker-controlled | `DestructHigh` |
 
-`Join = max`, `LessOrEqual` is `≤`. `Severity()` maps each level onto the shared scale (`InfluenceNone ⇒ DestructNone`).
+`Join = max`, `LessOrEqual` is `≤`; the lattice exposes no `Meet` (its operations are `Join`, `LessOrEqual`, `Valid`, `String`, `Severity`). `Severity()` maps each level onto the shared scale (`InfluenceNone ⇒ DestructNone`).
 
 ### Lattice laws
 
-`TestLatticeLaws` checks, over sample elements, that each of `Certainty`, `Destructiveness`, `Scope` and `Taint` satisfies:
+`TestLatticeLaws` checks, over sample elements, that each of `Certainty`, `Destructiveness`, `Scope`, `Taint`, `Breadth` and `Irreversibility` satisfies (`Influence` is absent — it exposes no `Meet`):
 
 - **Idempotence** — `a ⊔ a = a` and `a ⊓ a = a`.
 - **Commutativity** — `a ⊔ b = b ⊔ a` and `a ⊓ b = b ⊓ a`.
@@ -173,16 +180,16 @@ Because `Certainty`, `Destructiveness`, `Breadth`, `Irreversibility` and `Influe
 
 ## Error Handling
 
-- `Certainty.UnmarshalJSON` and `Destructiveness.UnmarshalJSON` reject an unknown canonical name (`engine: unknown …`) and an out-of-range ordinal (`… ordinal out of range`), and wrap a non-integer/`null` payload as `engine: cannot decode … from …`.
+- `Certainty.UnmarshalJSON` and `Destructiveness.UnmarshalJSON` reject an unknown canonical name (`engine: unknown …`) and an out-of-range ordinal (`… ordinal out of range`), and wrap a payload that is neither a name nor an integer (`true`, `[]`, `1.5`) as `engine: cannot decode … from …`. A `null` payload is a no-op for the name unmarshal, so it surfaces as the empty name and is rejected as unknown (`engine: unknown certainty ""` / `engine: unknown destructiveness ""`), not as a decode error.
 - `Certainty.MarshalJSON` and `Destructiveness.MarshalJSON` refuse to encode an invalid value (`engine: cannot marshal invalid …`).
-- `parseFlatSet` errors with `engine: cannot decode set from …` for a token that is neither a string, an array, nor an object; `null`/empty decode to `⊥`. It accepts the canonical object form plus a bare string or array (keeping hand-written fixtures terse).
+- `parseFlatSet` errors with `engine: cannot decode set from …` for a token that is neither a string, an array, nor an object; `null`/empty decode to `⊥`. It accepts the canonical object form — keyed `targets` or `labels`, with `elems` accepted as a third alias — plus a bare string or array (keeping hand-written fixtures terse).
 - `Valid` is total: it returns `false` for any out-of-range value and never panics.
 
 ## Invariants
 
-- Every lattice has a least element `⊥` and greatest element `⊤` accessible via its constructor (`…Bottom()`/`…Top()` or `ScopeBottom`/`ScopeTop`).
+- Every lattice has a least element `⊥` and a greatest element `⊤`; explicit `…Bottom()`/`…Top()` constructors (`CertaintyBottom`/`CertaintyTop`, `DestructBottom`/`DestructTop`, `ScopeBottom`/`ScopeTop`, `TaintBottom`/`TaintTop`) exist for `Certainty`, `Destructiveness`, `Scope` and `Taint` only — the ordinal scoring chains (`Breadth`, `Irreversibility`, `Influence`) name their bounds as their zero and maximum constants and provide no constructors.
 - `Join` is the least upper bound and `Meet` the greatest lower bound; both are idempotent, commutative and associative, and satisfy absorption.
-- The ordinal chains use `Join = max` and `Meet = min`; `⊥` is the zero ordinal and `⊤` the maximum ordinal.
+- The ordinal chains use `Join = max` — and `Meet = min` where the operation is exposed, i.e. everywhere except `Influence`; `⊥` is the zero ordinal and `⊤` the maximum ordinal.
 - `Scope` and `Taint` are canonical: their elements are sorted and unique, and each has exactly one JSON encoding (an object with the appropriate key plus `arbitrary`).
 - For a flat set, `⊤ = {arbitrary}` is absorbing under `⊔` and an identity under `⊓`; `⊥ = ∅` is an identity under `⊔` and absorbing under `⊓`.
 - `LessOrEqual(a, b)` is true exactly when `a ⊔ b = b`; `Equal` coincides with mutual `LessOrEqual`.

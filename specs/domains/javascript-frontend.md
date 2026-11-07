@@ -50,7 +50,7 @@ func Analyze(src string) *Result
 func AnalyzeWith(name, src string, resolver Resolver) *Result
 ```
 
-`Value` is a frontend-local lattice, separate from the frozen effect IR. Its zero value is unknown; exact elements include strings, numbers, booleans, null, undefined, function bodies, bounded plain objects/arrays, builtin modules/exports, trusted modeled promises, opaque filesystem content, and unknown booleans. A join preserves equal primitive values or identical immutable snapshots; disagreement becomes unknown. Taint always joins, independently of knownness. Unknown is distinct from JavaScript `undefined`.
+`Value` is a frontend-local lattice, separate from the frozen effect IR. Its zero value is unknown; exact elements include strings, numbers, booleans, null, undefined, function bodies, bounded plain objects/arrays, builtin modules/exports, the unshadowed `require` loader, trusted modeled promises, opaque filesystem content, and unknown booleans. A join preserves equal primitive values or identical immutable snapshots; disagreement becomes unknown. Taint always joins, independently of knownness. Unknown is distinct from JavaScript `undefined`.
 
 Numeric lattice equivalence follows [ECMAScript SameValue](https://tc39.es/ecma262/multipage/ecmascript-data-types-and-values.html#sec-numeric-types-number-sameValue): signed zeros differ and NaNs agree. JavaScript strict equality still equates the zero signs and rejects NaN equality. Unsupported primitive update conversions return unknown for both the stored value and the postfix result, preserving taint, and emit a conservative top effect with a reason; numeric updates remain exact.
 
@@ -66,7 +66,10 @@ State stores case-sensitive bindings in lexical frames, with initialization and 
 a shadowing catch parameter; hoisting alone targets the variable frame.
 `typeof` on a name absent from lexical state yields unknown because the host may
 provide it. Possible host accessor throws remain catchable; known local values
-and the unshadowed built-in `undefined` retain exact types.
+and the unshadowed built-in `undefined` retain exact types. Exact `typeof`
+results map builtin module namespaces, modeled promises, and null to `object`,
+builtin exports to `function`, and unknown booleans to `boolean`; opaque
+content and the loader yield unknown.
 
 ## Flow
 
@@ -85,9 +88,9 @@ explicit --lang js/javascript/node/nodejs
 | --- | --- | --- |
 | `var`/`let`/`const`, assignment, comments, leading shebang, empty statements | Case-sensitive state, block scope, var hoisting, TDZ/constant degradation; shebangs are inert and preserve source positions | `TestValuesAndStatements`, `TestDegradeRules`, `TestHashbangIsInert` |
 | Object/array destructuring, defaults, rest, holes | Exact own literal fields/elements; missing properties and unknown receivers/iterables degrade | `TestValuesAndStatements`, `TestDegradeRules` |
-| String/number/boolean/null/undefined literals | Exact primitive values; unsupported encodings/numeric forms yield unknown and conservative top with a reason | `TestValuesAndStatements`, `TestUnsupportedValuesDegrade` |
+| String/number/boolean/null/undefined literals | Exact primitive values; hex/octal/binary integers up to 2^53 fold exactly, while legacy octal (`0123`) and `BigInt` (`n`) forms yield unknown; unsupported encodings/numeric forms yield unknown and conservative top with a reason | `TestValuesAndStatements`, `TestUnsupportedValuesDegrade` |
 | Plain object/array and JSON-shaped literals | Immutable bounded snapshots; literal property/index reads | `TestValuesAndStatements` |
-| Templates and string concatenation | Known primitive components fold; unknown/coercible components yield unknown, with top for unmodelled conversion | `TestUnknownTemplateIsNotLiteral`, `TestDegradeRules` |
+| Templates and string concatenation | Known primitive components fold; template fragments normalize `\r\n` and lone `\r` to `\n`; unknown/coercible components yield unknown, with top for unmodelled conversion | `TestUnknownTemplateIsNotLiteral`, `TestDegradeRules` |
 | Numeric arithmetic, bitwise `&`/`\|`/`^`, numeric comparisons, equality, unary operations | Fold documented primitive cases; unsupported coercions yield unknown and top | `TestValuesAndStatements`, `TestDegradeRules`, `TestUnsupportedValuesDegrade` |
 | `&&`, `\|\|`, `??`, ternary | Respect known reachability; unknown alternatives join state and values | `TestValuesAndStatements`, `TestHeadersAndUnknownExceptions` |
 | `if`/`else` | Select a known branch; fork and join unknown branches | `TestValuesAndStatements` |
@@ -113,6 +116,8 @@ Function **invocation** always remains conservative in this milestone. Parameter
 | Classes/methods, generators/async iterators, accessors, Proxy, `with` | Affected value unknown and top for unsupported execution |
 | Escaped identifier tokens | Whole-unit top with an explicit unsupported-syntax reason; raw spelling is never used as a binding name |
 | Labels beyond an empty labelled statement | Top; labelled abrupt completion is unsupported |
+| Module-scope `break`/`continue`/`return` completion | Conservative top with the fixed reason `invalid JavaScript control completion at module scope` |
+| Duplicate lexical declaration in a scope | Conservative top with the fixed reason `duplicate JavaScript lexical declaration` |
 | Unknown literal property keys | Unknown + top; containers, reads, destructured values, and rest objects lose precision; exact empty-string keys remain supported |
 | Computed property keys beyond literal member/index keys | Evaluate the key's expressions, then unknown + top |
 | Prototype-dependent property access, object spread, property writes/export mutation | Unknown + top; mutable state invalidated |
@@ -120,7 +125,7 @@ Function **invocation** always remains conservative in this milestone. Parameter
 | Unknown-value/object coercion or await of an unknown thenable | Unknown + top; retain possible throw path |
 | External module initialization | Unknown imported names + top; no runtime file resolution |
 
-The public facade injects `BindJS`. The function-valued seam accepts module/property requests and typed calls, and returns values/effects/derivations, possible throws, and conservative reasons without importing bind/KB into front/js. Constructors remain unmodeled. Work is charged before model execution, including reused strings and option records. Models share the existing 1024 argument/effect/derivation limits. `Value.String`, Kind, Boolean, Number, Property, and Keys expose bounded read-only model inputs; constructors create exact strings/undefined, reviewed builtin identities, opaque content, unknown booleans, and modeled promises. Projection supplies bounded report arguments. See the [filesystem contract](javascript-filesystem.md) and [ADR-0020](../decisions/0020-javascript-filesystem-models.md).
+The public facade injects `BindJS`. The function-valued seam accepts module/property requests and typed calls, and returns values/effects/derivations, possible throws, and conservative reasons without importing bind/KB into front/js. Constructors remain unmodeled. Work is charged before model execution, including reused strings and option records. Models share the existing 1024 argument/effect/derivation limits. `Value.String`, Kind, Boolean, Number, Property, and Keys expose bounded read-only model inputs; constructors create exact strings/undefined, reviewed builtin identities, opaque content, unknown booleans, and modeled promises. Projection supplies bounded report arguments: at most 4,096 bytes and 32 keys, with `<string>`/`<object>` placeholders past the bounds. Resolver output is never trusted: an effect failing `engine.Validate()` degrades with the fixed reason `invalid JavaScript resolver effect` and taints everything top, and a resolver-reported top-scope CodeExec degrades with `JavaScript resolver reported unknown execution`. See the [filesystem contract](javascript-filesystem.md) and [ADR-0020](../decisions/0020-javascript-filesystem-models.md).
 
 ### Console and asynchronous policy
 
@@ -174,7 +179,7 @@ String decoding/concatenation and state copying also consume the step budget.
 Invalid UTF-8 source degrades before parsing. Bounds are compile-time constants,
 not source-controlled settings.
 
-`Options.Root` labels report/why locations. `Options.Vars` remains Bash/POSIX-only and `Options.Windows` remains PowerShell-only. `Options.JavaScript` supplies explicit POSIX Home/Cwd context; nil uses symbolic home `/root` and unknown cwd. The symbolic home names path targets (including through concatenation, templates, and `path` helpers) but is unknown to equality, `switch`, and other operators, so it never prunes a branch. A supplied Home is an embedder fact and stays exact. JS reads no host environment, files, runtime state, or module contents. CLI `--lang auto` still chooses Bash or PowerShell only; existing input validation and batch splitting apply.
+`Options.Root` labels report/why locations. `Options.Vars` remains Bash/POSIX-only and `Options.Windows` remains PowerShell-only. `Options.JavaScript` supplies explicit POSIX Home/Cwd context; nil uses symbolic home `/root` and unknown cwd. An explicit but invalid context — a Home or Cwd that is non-empty yet not absolute, longer than 65,536 bytes, or NUL-bearing — degrades to a fully unknown home and cwd and appends the report note `invalid JavaScript abstract context; home and cwd treated as unknown`. The symbolic home names path targets (including through concatenation, templates, and `path` helpers) but is unknown to equality, `switch`, and other operators, so it never prunes a branch. A supplied Home is an embedder fact and stays exact. JS reads no host environment, files, runtime state, or module contents. CLI `--lang auto` still chooses Bash or PowerShell only; existing input validation and batch splitting apply.
 
 ## Extension Points
 

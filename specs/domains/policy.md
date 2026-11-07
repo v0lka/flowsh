@@ -9,6 +9,7 @@
 - `policy/policy.go` — configuration validation and pure report evaluation.
 - `policy/policy_test.go` — fail-closed behaviour, precedence, and integration tests.
 - `policy/example_test.go` — executable public API example.
+- `policy/pass52_test.go` … `policy/pass67_test.go` — the numbered regression passes, one file per revision of the decision surface (`pass52` through `pass67`, including the `pass63`/`pass63b` pair): each replays that revision's scenarios end-to-end through the public embedding surface (`api.Analyze` → `policy`), never through internals.
 - `docs/embedding.md` — consumer workflow and limitations.
 
 ## Core Types

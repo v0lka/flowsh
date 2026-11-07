@@ -40,15 +40,20 @@ func topEffect(mode engine.EffectMode) engine.Effect {
 ```
 
 `isTopEffect` recognises it as `Kind == KindCodeExec && Target.IsTop()`
-(`front/bash/exec.go`). Because `KindCodeExec` maps to the worst-case
+(`front/bash/exec.go`). A ⊤ may additionally carry the orthogonal `NetFlow`
+role — a `FlowCradle`-tagged ⊤ (network content executed as code) is distinct
+from an untagged ⊤; the role changes neither kind nor target.
+Because `KindCodeExec` maps to the worst-case
 destructiveness `DestructCritical` (`engine/report.go`, `KindDestructiveness`)
 and `ScopeTop` classifies as `BreadthRoot` (`engine/score.go`, `BreadthOf`), ⊤
 propagates as maximum severity and minimum confidence through scoring.
 
 `ModeDirect` marks ⊤ for the analysed unit's own opaque step; `ModeTransitive`
 marks ⊤ for an opaque callee (a shell function body). Since `Report.Normalize`
-merges effects sharing `(Kind, Mode)`, repeated ⊤ emissions inside one mode
-collapse to a single effect.
+merges effects sharing `(Kind, Mode, NetFlow)`, repeated ⊤ emissions inside one
+mode collapse to a single effect — but a `FlowCradle`-tagged ⊤ no longer merges
+with an untagged ⊤ in the same mode: the flow role is per-effect evidence and
+part of the merge key.
 
 ## When ⊤ is emitted — by layer
 
@@ -61,6 +66,7 @@ collapse to a single effect.
 | name not statically known | Direct | `unresolved command …: assuming ⊤ (CodeExec)` | `bind/bind.go` |
 | shell function body | Transitive | `shell function body is opaque to command binding` | `bind/bind.go` |
 | alias that did not resolve to a command | Direct | `unresolved command …` | `bind/bind.go` (`res.res.Kind` default branch) |
+| payload-carrying privilege wrapper the frontend did not peel (a path-qualified `/usr/bin/sudo …`) | Direct | `…: wrapped command not analyzable; assuming ⊤ (CodeExec)` | `bind/bind.go` (`declaresWrapperPayload`) |
 
 `Result.Conservative` is set true whenever the outcome contains a ⊤
 (`CodeExec`) effect; `Result.conservativeResult` builds the fully-⊤ result.
@@ -75,6 +81,7 @@ The interpreter's budget bounds are:
 | `maxFuncDepth` | `64` | `markTopEffect` | `front/bash/exec.go` |
 | `maxAliasDepth` | `32` | alias body treated as opaque | `front/bash/exec.go` |
 | `maxRecorded` | `1024` | caps recorded invocations / notes | `front/bash/exec.go` |
+| `maxFindDepth` | `8` | bounds nesting of `find … -exec` payloads | `front/bash/exec.go` |
 
 - **Step budget (50000).** `interp.step()` decrements `it.budget` and panics a
   `budgetError` when it reaches zero (`front/bash/exec.go`). The panic is
@@ -85,21 +92,44 @@ The interpreter's budget bounds are:
   parse failure or unknown variant is folded to a whole-program ⊤ by
   `topResult` (`ExecResult.Top = true`).
 - **Code-execution sinks (`sinkSet`).** If the dispatched name is in `sinkSet`,
-  `dispatch` calls `markTopEffect("code-execution sink …")`
+  `dispatch` calls `markTopEffectFlow("code-execution sink …", sinkFlowRole(cmd))`
   (`front/bash/exec.go`). `sinkSet` (`front/bash/builtins.go`) is the
   closed set: `sh`, `bash`, `dash`, `ash`, `zsh`, `ksh`, `ksh93`, `csh`, `tcsh`,
   `fish`, `python`, `python2`, `python3`, `node`, `nodejs`, `deno`, `bun`,
   `perl`, `ruby`, `php`, `lua`, `tclsh`, `awk`, `gawk`, `mawk`, `nawk`,
   `osascript`, `docker`, `podman`. Feeding data to any of them executes that
   data as code, so the value-flow aggregate becomes ⊤.
-- **Code-executing builtins `{eval, source, .}`.** `isCodeExecBuiltin` matches
+- **Code-executing builtins `{eval, source, ., trap}`.** `isCodeExecBuiltin` matches
   `codeExecBuiltins` (`front/bash/builtins.go`); `dispatch` calls
-  `markTopEffect("code-executing builtin …")` (`front/bash/exec.go`). These
+  `markTopEffectFlow("code-executing builtin …", sinkFlowRole(cmd))` (`front/bash/exec.go`). These
   execute shell source supplied at run time, so their effects cannot be bounded.
+  `trap` ⊤-fires only when it registers a non-empty ACTION (`trapHasAction`):
+  the listing/query forms (`trap`, `trap -p`, `trap -l`) and the reset form
+  (`trap - INT`) carry no action and execute no code.
 - **Dynamically-named command.** When `nameOK` is false, `dispatch` calls
-  `markTopEffect("dynamically-named command")` (`front/bash/exec.go`).
+  `markTopEffectFlow("dynamically-named command", sinkFlowRole(cmd))` (`front/bash/exec.go`).
 - **Function recursion limit.** `callFunc` calls `markTopEffect("function
   recursion limit reached …")` once `it.depth >= maxFuncDepth`
+  (`front/bash/exec.go`).
+- **Alias-table opacity.** A dynamic alias operand leaves the alias table not
+  statically known; `dispatch` emits `markTopEffectFlow("alias table not
+  statically known")` instead of expanding a body it cannot bound
+  (`front/bash/exec.go`).
+- **find exec payloads.** `find -exec`/`-execdir`/`-ok`/`-okdir` payloads are
+  analysed as the invocations they perform, with nesting bounded by
+  `maxFindDepth`; a payload the analysis cannot bound (a dynamically-named
+  command, an expansion-bearing word, an unresolvable search root) emits
+  `markTopEffect("find exec payload not analyzable")` (`front/bash/exec.go`).
+- **Command language on standard input.** Feeding a command language on stdin
+  to a client that interprets it (`stdinCodeClient`: sqlite3's `.shell`, gdb's
+  `shell`, an interactive SQL client's `\!`, ssh's remote login shell) emits
+  `markTopEffectFlow("command language on standard input to …")`
+  (`front/bash/exec.go`).
+- **Command-hash opacity.** The shell's command-hash table: a dynamic
+  `hash -p` leaves name resolution unbound (`markTopEffectFlow("name
+  resolution unbound after a dynamic hash -p")`), and a hashed name whose
+  path cannot be resolved emits `markTopEffectFlow("hashed name … with an
+  unresolvable path")` instead of binding the name's knowledge-base row
   (`front/bash/exec.go`).
 
 `markTop` (whole program ⊤) sets `ExecResult.Top`; `markTopEffect` (one
@@ -120,9 +150,12 @@ single decision point for the constructs the task pins:
 | `Invoke-Expression` (incl. alias `iex`) | Direct | `Invoke-Expression evaluates data as code` | `front/ps/lower.go` |
 | `Add-Type` | Direct | `Add-Type compiles and loads arbitrary code` | `front/ps/lower.go` |
 | `New-Object` | Direct | `New-Object instantiates an arbitrary .NET type` | `front/ps/lower.go` |
+| `Invoke-History` | Direct | `Invoke-History re-executes a previous command (arbitrary code)` | `front/ps/lower.go` |
+| `Trace-Command` | Direct | `Trace-Command evaluates an arbitrary expression string` | `front/ps/lower.go` |
+| static .NET invocation (`[ScriptBlock]::Create`) | Direct | static-invocation reason (emitted as `KindTop` by the parser) | `front/ps/parse.go` |
 | dot-sourcing (`c.DotSource`) | Direct | `dot-sourcing runs an external script in the caller's scope` | `front/ps/lower.go` |
 | call operator `&` with a computed name | Direct | `call operator & with a computed name` | `front/ps/lower.go` |
-| splatting (`a.Splat`) | Direct | `splatting … hides the parameter set` | `front/ps/lower.go` |
+| splatting (`a.Splat`) — only when the splat variable is unknown or has an entry-unknown value; a statically-known hashtable/array splat expands into parameter bindings (`a.Splat = false`, so switch entries like `-Recurse` survive) and does not degrade | Direct | `splatting … hides the parameter set` | `front/ps/lower.go` |
 | computed command name | Direct | `computed command name` | `front/ps/lower.go` |
 | shell function body | Transitive | `⊤ shell function … body is opaque` | `front/ps/lower.go` |
 | unknown command | Direct | `⊤ unknown command …` | `front/ps/lower.go` |
@@ -139,8 +172,12 @@ iteration/node/depth limits still bound the parse. The 250 ms budget is also far
 above one tick of any host clock, so it is observable everywhere; only a
 sub-tick budget is not, because gotreesitter's deadline poll compares
 `time.Now()` and Windows advances it on the system timer tick (≥ 1 ms) — see
-[ADR-0013](../decisions/0013-windows-clock-tick-parse-budget.md). `ps.Lower` also
-treats a nil program as ⊤ (`front/ps/lower.go`).
+[ADR-0013](../decisions/0013-windows-clock-tick-parse-budget.md). Lowering is bounded too, and deterministically: the lowerer charges its own
+step budget (`defaultBudget = 50000`, `front/ps/lower.go`) and recovers the
+exhaustion panic (`budgetError`) into `l.top("analysis budget exhausted")`,
+keeping the effects discovered so far. Unlike the parse budget it is a step
+counter, not a wall clock, so it needs no race-detector special case.
+`ps.Lower` also treats a nil program as ⊤ (`front/ps/lower.go`).
 
 ### `front/js` — bounded JavaScript evaluation
 
@@ -153,6 +190,17 @@ top; no function invocation or Node API effects are inferred. Pure understood
 programs can have no effects and remain uncovered under the existing policy.
 See [JavaScript Frontend](../domains/javascript-frontend.md) and
 [ADR-0018](../decisions/0018-javascript-semantic-kernel.md).
+
+### `internal/analysis` — composition-layer degradation
+
+With no binder bound, any program that contains at least one command statement
+degrades to Conservative with the reason `no effect resolver bound: command
+effects cannot be resolved` (`internal/analysis/analyze.go`) — a zero-value
+`Analyzer` must not emit a fail-open empty report (the no-silent-miss guard).
+A source with no command statement at all — empty input, a bare assignment, a
+lone redirection — is left untouched. In the frontend, a nil resolver on an
+ordinary command emits the note `no effect resolver bound for X` and the shell
+reports only its own intrinsic effects (`front/bash/exec.go`).
 
 ## No-silent-miss invariant
 
@@ -173,8 +221,9 @@ work that must degrade to ⊤ (budget exhaustion, unknown).
 ## Invariants
 
 - Every unanalysable construct degrades to ⊤; it never degrades to "no effect".
-- ⊤ is exactly `CodeExec` over `ScopeTop`; no other kind/mode pair is used to
-  express it.
+- ⊤ is exactly `CodeExec` over `ScopeTop` — optionally carrying the orthogonal
+  `NetFlow` role, so a `FlowCradle`-tagged ⊤ is distinct from an untagged ⊤; no
+  other kind/target pair is used to express it.
 - A ⊤ effect is `CertaintyCertain`, `TaintBottom`, `Reversible:false`.
 - An unparsable source yields a whole-program ⊤ with a non-empty `Reason`
   (`Program.Top` for bash/PowerShell; `ExecResult.Top` for bash;

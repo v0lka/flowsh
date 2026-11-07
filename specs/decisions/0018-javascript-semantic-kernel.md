@@ -18,6 +18,11 @@ Retain function bodies and make the same statement evaluator usable for bodies i
 
 Provide a function-valued, typed call-resolution seam, injected above the frontend. The facade currently passes nil, so all calls, constructors, and external module initialization remain conservative. Later Node API knowledge belongs to the YAML/binder milestone, not frontend Go tables. The frontend imports neither `bind`, `kb`, nor sibling frontends.
 
+> **Historical record.** As of ADR-0020 the facade no longer passes nil:
+> `NewAnalyzer()` wires `bind.NewDefault()` and `analyzeJS` injects
+> `a.binder.BindJS(call, jsCtx)` through this seam. Unhandled calls still
+> degrade conservatively via `bind.ResolveUnknown`.
+
 Choose no console stdout folding. Awaited primitive values use sequential semantics; unknown thenables degrade. Event-loop scheduling stays out of scope.
 
 Preserve the existing wire contract and policy behavior: understood pure programs may yield valid empty-effect reports, with `Covered()==false` and policy `uncovered_report` denial. Local unknown execution sets Conservative with canonical top; parse/budget/internal failures additionally set Top. No artificial effect or coverage flag is introduced.

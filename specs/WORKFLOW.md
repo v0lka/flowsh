@@ -1,6 +1,6 @@
 # Specification Workflow
 
-A reference guide for developers and AI agents on effective use of this project's specification system. The system documents **flowsh** (`github.com/v0lka/flowsh`), the shell/PowerShell command effect analyser (`flowsh`).
+A reference guide for developers and AI agents on effective use of this project's specification system. The system documents **flowsh** (`github.com/v0lka/flowsh`), the shell/PowerShell/JavaScript command effect analyser (`flowsh`).
 
 ---
 
@@ -10,7 +10,7 @@ Specifications are the **source of truth** about the intended behavior of the sy
 
 - A discrepancy between a spec and the code = a bug (in the code or in the spec — determine by context).
 - Specs are optimized for **AI agents**: predictable structure, explicit cross-references, no filler prose.
-- Organized by **domains** (conceptual areas), NOT by repository file structure. flowsh's domains are `engine` (the frozen core), `knowledge-base`, `binding`, `bash-frontend`, `powershell-frontend` and `javascript-frontend` (bounded JS values/control flow; Node API effects remain unmodelled), `analysis-report`, and `cli`.
+- Organized by **domains** (conceptual areas), NOT by repository file structure. flowsh's domains are `engine` (the frozen core), `knowledge-base`, `binding`, `bash-frontend`, `powershell-frontend`, `javascript-frontend` (bounded JS values/control flow; Node APIs beyond the modelled filesystem/path family remain unmodelled), `javascript-filesystem` (the JS filesystem API acceptance matrix), `analysis-report`, `policy`, and `cli`.
 - **Contracts** are a separate first-class entity for describing boundaries between layers.
 
 ---
@@ -23,7 +23,7 @@ Open `specs/INDEX.md`. It contains a "task → specs" table that maps common tas
 
 ### Step 2: Domain README
 
-Every domain with multiple files has a `README.md` — the entry point. In flowsh those are `domains/engine/README.md` and `domains/bash-frontend/README.md`; the single-file domains are `domains/knowledge-base.md`, `domains/binding.md`, `domains/powershell-frontend.md`, `domains/javascript-frontend.md`, `domains/analysis-report.md` and `domains/cli.md`. A domain README contains:
+Every domain with multiple files has a `README.md` — the entry point. In flowsh those are `domains/engine/README.md` and `domains/bash-frontend/README.md`; the single-file domains are `domains/knowledge-base.md`, `domains/binding.md`, `domains/powershell-frontend.md`, `domains/javascript-frontend.md`, `domains/javascript-filesystem.md`, `domains/analysis-report.md`, `domains/policy.md` and `domains/cli.md`. A domain README contains:
 
 - Purpose
 - Key Files (key source files)
@@ -46,7 +46,7 @@ The system uses 5 strictly defined formats. Every new document MUST follow the c
 2. **Domain Detail** — `domains/*/<component>.md` (7 required sections)
 3. **Contract** — `contracts/*.md` (7 required sections)
 4. **Architecture** — `architecture/*.md` (4+ required sections)
-5. **ADR** — `decisions/NNN-slug.md` (5 required sections)
+5. **ADR** — `decisions/NNNN-slug.md` (6 required sections)
 
 ---
 
@@ -84,7 +84,7 @@ Rule: all links are **relative from `specs/`**. Section anchors — lowercase, h
 2. **Preserve the format** — sections and their order are defined in META.md
 3. **Update cross-references** if file paths changed
 4. **Update INDEX.md** after adding or removing a spec file
-5. **ADRs are immutable** — if `Status: Accepted`, create a new ADR with a `Superseded by` link
+5. **ADRs are immutable** — if `Status: Accepted`, create a new ADR with a `Superseded by` link; the one exception is an accepted ADR whose claim reads as current but has drifted from the code: amend it with a `> **Historical record.**` note at the relevant section, never by rewriting the decision text (META.md, Update Protocol)
 
 ### Validation Checklist
 
@@ -102,7 +102,7 @@ After updating, verify:
 
 ### "Add a command or parameter to the knowledge base" (domain: `knowledge-base`)
 
-1. Read `domains/knowledge-base.md` — understand the frozen schema (`effect-kb/v2`), `Dialect`, `ParamKind`, `ValueSource` and the destructive-flags table.
+1. Read `domains/knowledge-base.md` — understand the frozen schema (`effect-kb/v4`), `Dialect`, `ParamKind`, `ValueSource` and the destructive-flags table.
 2. Read `domains/binding.md` and `contracts/bind-kb.md` — see how a resolved invocation is matched against command signatures, so you author params the binder will actually match.
 3. Add the command to the appropriate dataset under `kb/data/*.yaml` (`coreutils.yaml`, `net.yaml`, …) and, when it is destructive, an entry to `kb/data/destructive.yaml`.
 4. **After implementation**: update `domains/knowledge-base.md`; run `go test ./kb/ ./bind/` (the loader and `KB.Validate` enforce referential integrity).
@@ -137,7 +137,7 @@ After updating, verify:
 
 ### "Add a corpus case to the GuardFall / recall gate" (domain: `analysis-report`)
 
-1. Read `domains/analysis-report.md` — understand the corpus `Case`, the GuardFall classes A–E, and the groups (`guardfall`, `destructive`, `benign`, `ps`, `resolution`).
+1. Read `domains/analysis-report.md` — understand the corpus `Case`, the GuardFall classes A–E, and the groups (`guardfall`, `destructive`, `benign`, `ps`, `resolution`, `external_malicious`, `external_benign`).
 2. Add the case to the relevant fixture under `testdata/corpus/*.json` with a stable `id`, `group` and `lang`.
 3. **After implementation**: update `domains/analysis-report.md`; the "no silent miss" invariant (`Report.Covered`) must hold: a case yields at least one effect or degrades to ⊤.
 
@@ -148,13 +148,13 @@ After updating, verify:
 
 ### "Add a new input dialect" (domains: `bash-frontend`/`powershell-frontend`/`javascript-frontend` and `analysis-report`)
 
-1. Read `domains/bash-frontend/README.md` and `domains/powershell-frontend.md` — the frontend contract (parse → normalize/lower → `[]engine.Effect`, degrade to ⊤ on failure).
+1. Read the existing frontend specs — `domains/bash-frontend/README.md`, `domains/powershell-frontend.md`, `domains/javascript-frontend.md` — the frontend contract (parse → normalize/lower → `[]engine.Effect`, degrade to ⊤ on failure).
 2. Read `domains/analysis-report.md` and `contracts/frontend-engine.md` — dialects are registered as `Lang` values and routed in the facade.
 3. **After implementation**: add a domain spec for the dialect, update `domains/analysis-report.md`, and update INDEX.md.
 
 ### "Understand why X is designed a certain way"
 
-1. Search in `decisions/` — there may already be an ADR (ADR-0001 … ADR-0010).
+1. Search in `decisions/` — there may already be an ADR (ADR-0001 … ADR-0020).
 2. If not — look at the `## Invariants` section of the corresponding domain spec.
 
 ---
@@ -171,8 +171,8 @@ After updating, verify:
 ### Superseding a Decision
 
 1. Create a new ADR with the updated decision
-2. In the old ADR, change `## Status` to `Superseded by [NNN](./NNN-slug.md)`
-3. This is the only permissible edit to an accepted ADR
+2. In the old ADR, change `## Status` to `Superseded by [NNNN](./NNNN-slug.md)`
+3. Besides the historical-record amendment note (see *How to update*, item 5), this is the only permissible edit to an accepted ADR
 
 ---
 

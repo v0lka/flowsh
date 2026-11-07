@@ -2,7 +2,7 @@
 
 ## Boundary Rule
 
-A frontend (`front/bash`, `front/ps`, `front/js`) may import the core (`engine`) and lower its constructs into `engine.Effect`; the core never imports a frontend. Data crosses the boundary one way only: frontends produce effects, the core consumes them.
+A frontend (`front/bash`, `front/ps`, `front/js`) may import the core (`engine`) and lower its constructs into `engine.Effect`; the core never imports a frontend. Data crosses the boundary one way only: frontends produce effects, the core consumes them. These rules are about *production* imports — test-only upward imports exist (`engine/bench_test.go` → `internal/analysis`; `kb/coverage_test.go` and `kb/egress_model_test.go` → `bind`).
 
 ## Interfaces
 
@@ -15,15 +15,19 @@ A frontend (`front/bash`, `front/ps`, `front/js`) may import the core (`engine`)
 | `engine.Report`, `Report.Normalize` | `engine` | frontends (bash `ExecResult` folds through it) | canonical effect aggregation |
 | `engine.Derivation`, `engine.Atom` | `engine` | frontends | the concrete source facts (nodes/flags) a reported effect rests on — the why-trace vocabulary |
 | `bash.Resolver` (`func(*Command, *Program) bash.Resolution`) | `front/bash` | `bind`, via the facade | injected seam for ordinary-command effects and their `Derivation`s |
+| `bash.ExecWithVars(v, name, src, r, vars)` | `front/bash` | `internal/analysis` (the facade) | the production seam entry: `Exec` with the abstract state pre-seeded from host-known variable bindings, each resolving like a literal in-script assignment (see [exec-resolver.md](exec-resolver.md)) |
 | `ps.Result` | `front/ps` | `internal/analysis` | lowering outcome (mirrors `bind.Result`) |
+| `ps.Options{Windows bool}` + `ps.LowerWith(prog, opts)` / `ps.ParseTimeout(name, src, timeoutMicros)` | `front/ps` | `internal/analysis` | option-aware lowering in production wiring (`Windows` gates the Registry provider's path reading); `Lower`/`Parse` remain the host-default wrappers |
 | `js.Resolver` (`func(js.Call) js.Resolution`) | `front/js` | bind, via composition/test models | injected typed module/property/call boundary |
 | `js.Result` | `front/js` | `internal/analysis` | bounded JS effects/derivations and Top/Conservative/Reason |
+| `bind.Binder.BindJS(call js.Call, context JSContext) JSResult` (`JSContext{Home, Cwd string; SymbolicHome bool}`, `JSResult{Resolution js.Resolution; Binding Result}`) | `bind` (`js.go`) | the facade's injected `js.Resolver` | the JS seam's context parameter supplies offline home/cwd paths (a nil context defaults to home `/root`, marked symbolic); `JSResult` splits the frontend `Resolution` from the binder's `Result` |
+| `analysis.Options{Windows *bool; Root string; Vars map[string]string; JavaScript *JavaScriptContext}` + `func Bool(v bool) *bool` | `internal/analysis` (re-exported as aliases by `api`) | library embedders; the CLI (only `--windows`) | composition tuning: `Vars` host-seeding and the JS home/cwd context are library-only surfaces — the CLI exposes only `--windows` |
 
 ## Initialization
 
-The core has no initialization. A frontend is constructed per analysis: `bash.ExecBash(src, resolver)` or `ps.Parse` + `ps.Lower(prog)`. The bash `Resolver` is supplied by the composition layer (the facade passes a closure that calls `binder.BindBash`); passing `nil` disables command binding while the shell's own intrinsic effects are still emitted.
+The core has no initialization. A frontend is constructed per analysis: the facade builds the bash side via `bash.ExecWithVars(v, name, src, resolver, vars)` — `bash.ExecBash(src, resolver)` remains a test-facing wrapper — and the PowerShell side via `ps.Parse` + `ps.LowerWith(prog, opts)` (`ps.Lower` is the host-default wrapper). The bash `Resolver` is supplied by the composition layer (the facade passes a closure that calls `binder.BindBash`); passing `nil` disables command binding while the shell's own intrinsic effects are still emitted.
 
-`js.AnalyzeWith(name, src, resolver)` parses and evaluates a bounded subset. The facade injects `bind.Binder.BindJS`; module and property requests carry exact identities, and call requests carry canonical module/export identity, typed values, argument locations, and the invoked spelling. `js.Resolution` returns Handled, Value, Effects, Derivations, MayThrow, and Reason. Handled distinguishes a pure modeled call from an unresolved one; Reason requests canonical degradation beside any known effects. Trusted modeled promises retain rejection at await. The evaluator charges model arguments/options before resolution and applies the existing work, string, and record limits. Frontend imports remain directed toward engine, with bind/KB injected above it. See the [filesystem contract](../domains/javascript-filesystem.md).
+`js.AnalyzeWith(name, src, resolver)` parses and evaluates a bounded subset. The facade injects `bind.Binder.BindJS`, resolving its `bind.JSContext` from `Options.JavaScript` (a nil context defaults to home `/root`, marked symbolic); module and property requests carry exact identities, and call requests carry canonical module/export identity, typed values, argument locations, and the invoked spelling. `js.Resolution` returns Handled, Value, Effects, Derivations, MayThrow, and Reason. Handled distinguishes a pure modeled call from an unresolved one; Reason requests canonical degradation beside any known effects. Trusted modeled promises retain rejection at await. The evaluator charges model arguments/options before resolution and applies the existing work, string, and record limits. Frontend imports remain directed toward engine, with bind/KB injected above it. See the [filesystem contract](../domains/javascript-filesystem.md).
 
 ## Data Flow Across Boundary
 

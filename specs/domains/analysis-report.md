@@ -16,6 +16,7 @@
 - `front/js/analyze.go`, `api/api_test.go` — bounded JavaScript frontend and shared public report-contract checks.
 - `internal/analysis/analyze_ps_test.go` — PowerShell provider options (`Options.Windows` toggles the Registry independently of the host OS).
 - `internal/analysis/vars_test.go` — host-table option (`Options.Vars`) end to end: seeded bindings resolve `$name`-derived targets, and the option never loosens the unseeded ⊤ default.
+- `internal/analysis/security_review_*_test.go` — the security-review regression suite: `security_review_test.go` pins the original F-numbered findings, the per-area files (`bash_norm`, `bash_taint`, `bind`, `engine`, `kb`, `ps`, `residual`) and the `pass52`–`pass67` series pin their review pass's findings. Every test reproduces a finding's documented payload and asserts the corrected verdict, so a future change that reopens a finding fails with its number.
 - `internal/analysis/canonical.go` — the per-command resolution view (`CommandCall`, `CallRedirect`) with binary-name normalization (`normalizeBinary`), and the effect-based canonical form (`Canonical`, `buildCanonical`: staging fold + non-path target filter + deterministic key).
 - `internal/analysis/remote_sink.go` — the remote-write rule: a write (`FSWrite`/`FSMeta`) whose target names a remote authority contributes a `NetEgress` tainted with the program's read provenance, so a credential copied off the host forms an exfiltration pair. It recognises a UNC authority (`\\host\share`, `//host/share`) and the export/scp spelling `[user@]host:/path` (`engine.UNCHost`, `engine.UNCUnresolved`, `engine.HostPath`); an authority the text does not prove widens to an unresolved (⊤) sink rather than being taken for a local path.
 - `internal/analysis/canonical_test.go` — the retry-splitting repros (npx vs `node_modules/.bin` binary path; staged write + `mv` vs `sed -i`), the normalization table, the staging-fold boundary rules and the ⊤-survival invariant.
@@ -75,6 +76,8 @@ type Report struct {
 	Reason          string                 `json:"reason,omitempty"`
 	Commands        int                    `json:"commands"`
 	Resolution      bind.Resolution        `json:"resolution"`
+	CommandCalls    []CommandCall          `json:"commandCalls,omitempty"`
+	Canonical       *Canonical             `json:"canonical,omitempty"`
 	Destructive     []DestructiveFinding   `json:"destructive,omitempty"`
 	Notes           []string               `json:"notes,omitempty"`
 }
@@ -90,7 +93,7 @@ The JSON field contract (a flowsh report is an engine report plus CLI metadata):
 | `lang` | string | `"bash"`, `"posix"`, `"posh"` or `"js"` (bounded evaluator). |
 | `input` | string | The analysed source text verbatim. |
 | `root` | string | The source name the input was read from (a file path, or `RootArgument`/`RootStdin`); present (`omitempty`) only when the caller named one via `Options.Root`. |
-| `effects` | array of `engine.Effect` | Normalised effects (merged by kind+mode, canonically sorted). Never `null` — always at least `[]`. |
+| `effects` | array of `engine.Effect` | Normalised effects (merged by kind+mode+netFlow, canonically sorted). Never `null` — always at least `[]`. |
 | `destructiveness` | `engine.Destructiveness` | `"None"`\|`"Low"`\|`"Medium"`\|`"High"`\|`"Critical"`; join (max) over effect kinds. |
 | `score` | `engine.Score` | Composition score (see below). |
 | `why` | array of `engine.WhyTrace` | Why-trace: for each effect, the ordered rule steps and concrete source atoms that justify it (`omitempty`). |
@@ -99,7 +102,7 @@ The JSON field contract (a flowsh report is an engine report plus CLI metadata):
 | `reason` | string | Present (`omitempty`) only when `top`/`conservative`; explains the degradation. |
 | `commands` | int | Number of commands/statements analysed. |
 | `resolution` | `bind.Resolution` | Aggregated name-resolution outcome across the calls (`kind` `alias`/`function`/`builtin`/`command`/…); `name` is the resolved target name and differs from `invoked` for aliases/functions and for the package-runner / path-linked forms that map onto a knowledge-base command. The zero value (`kind: ""`) on the PowerShell path. |
-| `commandCalls` | array of `CommandCall` | Per-command resolution view: every distinct call the binder saw (a repeated call site, such as a loop body, contributes one entry) with its `invoked` name (as written), its `resolved` binary — the knowledge-base command the invocation resolved to, so every spelling of one binary shares one identity (`npx tsc -b` and `./node_modules/.bin/tsc -b` both resolve to `tsc`; a wrapper alias resolves to its target, so `npx mvnw` and `./mvnw` report `mvn`), or, when it resolved to no knowledge-base command, the basename of the resolved name with any `node_modules/.bin` segment stripped, its non-empty argument values and its statement's resolved `redirs` (`omitempty`; absent on the PowerShell path and when no call reached the binder). |
+| `commandCalls` | array of `CommandCall` | Per-command resolution view: every distinct call the binder saw (a repeated call site, such as a loop body, contributes one entry) with its `invoked` name (as written), its `resolved` binary — the knowledge-base command the invocation resolved to, so every spelling of one binary shares one identity (`npx tsc -b` and `./node_modules/.bin/tsc -b` both resolve to `tsc`; a wrapper alias resolves to its target, so `npx mvnw` and `./mvnw` report `mvn`), or, when it resolved to no knowledge-base command, the basename of the resolved name with any `node_modules/.bin` segment stripped, its non-empty argument values and its statement's resolved `redirs` (`omitempty`; absent on the PowerShell path, and on the bash/POSIX path when no call reached the binder — the JavaScript path records a call even when the binder resolves nothing). |
 | `canonical` | `Canonical` | The effect-based canonical form for signature comparison: the report's effects normalized (a staged temp write folded onto the destination of the trailing `mv` — `sed … > tmp && mv tmp file` ≡ `sed -i … file`; non-path operand targets such as a sed script or a grep pattern dropped) plus the deterministic `key` (sorted `Effect.Key()` values joined by `;`). Present whenever the report has effects. |
 | `destructive` | array of `DestructiveFinding` | Matched knowledge-base destructive-flags entries (`command`, `spec`, `class` `A`–`E`, `reason`), de-duplicated and sorted (`omitempty`). |
 | `notes` | array of string | Frontend diagnostics (`omitempty`). |
@@ -164,6 +167,9 @@ type Case struct {
 	Category string `json:"category,omitempty"` // GuardFall class "A".."E"; empty otherwise
 	Lang     string `json:"lang"`               // the dialect the input is written in
 	Input    string `json:"input"`
+	// Windows forces the Windows-native provider profile (the PowerShell
+	// Registry provider) for this case; only a posh case may set it.
+	Windows  bool   `json:"windows,omitempty"`
 	Note     string `json:"note,omitempty"`
 }
 ```
@@ -210,11 +216,12 @@ Analyze(lang, src)                       analyze.go (package func)
                  ├─ lang == LangPowerShell ──► analyzePS(src, opts.psOptions(), opts.Root)
                  │        ps.Parse → ps.LowerWith(opts) → normalizeEffects
                  │
-                 ├─ lang == LangPOSIX ───────► analyzeBash(bash.POSIX, LangPOSIX, src, opts.Root)
+                 ├─ lang == LangPOSIX ───────► analyzeBash(bash.POSIX, LangPOSIX, src, opts.Root, opts.Vars)
                  │
-                 └─ otherwise (LangBash) ────► analyzeBash(bash.Bash, LangBash, src, opts.Root)
-                          binder != nil → bash.Exec(v, sourceName(root, "script"), src, resolver)
+                 └─ otherwise (LangBash) ────► analyzeBash(bash.Bash, LangBash, src, opts.Root, opts.Vars)
+                          binder != nil → bash.ExecWithVars(v, sourceName(root, "script"), src, resolver, vars)
                                  resolver = b.BindBash(cmd, prog) → Resolution{Effects, Derivations}
+                          (no binder → ExecWithVars(…, nil, vars); see the no-resolver backstop)
                           then normalizeEffects → ComputeDestructiveness
                                               → ScoreEffects(effects, tokens...)
                  │
@@ -224,18 +231,19 @@ Analyze(lang, src)                       analyze.go (package func)
 
 `Encode()` (CLI `--json`) validates and marshals the report with two-space indent.
 
-The [JavaScript evaluator](javascript-frontend.md) supplies bounded values/control flow; the facade injects `BindJS` for YAML-backed module identity, filesystem operations, and path helpers. The facade aggregates canonical module/export resolution, distinct call locations, bounded argument projections, destructive findings/severity, notes, and source-located derivations. It builds JS canonical effects directly from bound targets, preserving literal filename characters. Unsupported execution retains canonical top and a reason; pure understood source remains uncovered under policy. `Options.JavaScript` supplies explicit offline Home/Cwd context; nil uses symbolic home `/root` and unknown cwd, matching Bash's home abstraction. Empty supplied fields are unknown. Windows and Vars remain ignored by JS. The report shape stays flowsh/v3. The corpus contains 460 cases, including 51 filesystem witnesses, nine nested module-initialization witnesses, and six symbolic-home branch witnesses; the latency limits and zero-miss floor remain unchanged.
+The [JavaScript evaluator](javascript-frontend.md) supplies bounded values/control flow; the facade injects `BindJS` for YAML-backed module identity, filesystem operations, and path helpers. The facade aggregates canonical module/export resolution, distinct call locations, bounded argument projections, destructive findings/severity, notes, and source-located derivations. It builds JS canonical effects directly from bound targets, preserving literal filename characters. Unsupported execution retains canonical top and a reason; pure understood source remains uncovered under policy. `Options.JavaScript` supplies explicit offline Home/Cwd context; nil uses symbolic home `/root` and unknown cwd, matching Bash's home abstraction. Empty supplied fields are unknown. A supplied path that is not absolute, carries a NUL byte, or exceeds 64 KiB is invalid: the analysis proceeds with home and cwd unknown and appends the note `invalid JavaScript abstract context; home and cwd treated as unknown`. JS report metadata is capped at `maxJSMetadata` (1024 entries per collection); a call past the cap resolves as `JavaScript report metadata limit reached` (may-throw), so an unbounded program degrades rather than growing the report without limit. Windows and Vars remain ignored by JS. The report shape stays flowsh/v3. The corpus contains 460 cases, including 51 filesystem witnesses and six symbolic-home branch witnesses; the nine nested module-initialization witnesses (`gf-js-e-core-*-import`/`*-reexport` in `testdata/corpus/guardfall_js.json`) are mirrored by the 9-entry table of `TestJavaScriptNestedModuleStatementsDegrade` (`internal/analysis/javascript_filesystem_test.go`), which pins that a module statement nested under `if`/`else`/`do` still degrades conservatively. The latency limits and zero-miss floor remain unchanged.
 
 ## Invariants
 
 - `Analyze` is total and deterministic: the frontends degrade to ⊤ rather than fail, so the returned `*Report` is never nil. The single qualification is sound in direction and host-dependent: a PowerShell parse runs under a wall-clock budget (ADR-0006), so a starved host can turn a benign source into ⊤ — the same input then reports ⊤ (covered, conservative) instead of the concrete effects, never a *different* concrete effect set ([ADR-0019](../decisions/0019-determinism-gate-parse-budget-trip.md)).
 - `Report.Effects` is never `null`: `normalizeEffects` replaces a nil slice with `[]engine.Effect{}`, so JSON always carries `[]`.
 - `Report.Covered()` is true iff the analysis produced at least one effect, degraded to ⊤ (`Top`), or is `Conservative` — the "no silent miss" property the GuardFall corpus checks.
+- An `Analyzer` holding no binder (a zero-value or `nil` analyser) marks any analysed program with at least one command statement — unless the report already carries a ⊤ — conservative, with reason `no effect resolver bound: command effects cannot be resolved`: the shell's intrinsic effects are still reported, but a report that silently omits resolution-dependent command effects is never emitted (`analyzeBash`'s `noResolver` backstop). Only a source with no command statement at all — empty input, a bare assignment, a lone redirection — is left unescalated.
 - `Report.SchemaVersion`, `Report.Tool` and `Report.ToolVersion` always equal `engine.SchemaVersion` (`effect-ir/v2`), `"flowsh"`, `"flowsh/v3"` respectively.
 - `Report.Destructiveness` is the join (max) of `engine.ComputeDestructiveness(effects)` and the join of the binder's per-call `Destructiveness` (which already folds each matched destructive-table class severity); the same KB-class severity is joined into `Score.Destructiveness` and `Score.Grade`, so a matched destructive class can only raise — never lower — the reported severity.
 - `ParseLang` returns `LangBash`, `LangPOSIX`, `LangPowerShell` or `LangJavaScript`, otherwise a non-nil error; it never returns an unknown `Lang` with a nil error.
 - `defaultAnalyzer` loads the knowledge base at most once per process (`sync.OnceValues`), and every `Analyze` call shares that analyser.
-- `LoadCorpus` returns cases sorted by `ID`, with duplicate `ID`s rejected, so iterations are stable and unambiguous.
+- `LoadCorpus` returns cases sorted by `ID`, with duplicate `ID`s rejected, so iterations are stable and unambiguous. It also validates every document and case, rejecting: a document without a `name`, an empty `cases[]`, an empty case `id`/`input`/`lang`, an unknown group, a GuardFall case without a valid `A`–`E` category (and a non-GuardFall case that carries one), `windows` on a non-posh case, and a corpus directory containing no `*.json` documents (`flowsh: no corpus documents in %s`).
 - The `flowsh` package is the only composition point of frontends + binder + engine; `engine` imports no frontend.
 
 ## Configuration
@@ -266,8 +274,8 @@ The facade is consumed by external Go programs through the sibling top-level pac
 
 | Kind | `api/` name | Alias of |
 | --- | --- | --- |
-| type | `Lang`, `Report`, `DestructiveFinding`, `Analyzer`, `Options`, `JavaScriptContext` | the same `analysis` types (`=`) |
-| var | `Langs` | `analysis.Langs` |
+| type | `Lang`, `Report`, `DestructiveFinding`, `CommandCall`, `CallRedirect`, `Canonical`, `Analyzer`, `Options`, `JavaScriptContext` | the same `analysis` types (`=`) |
+| var | `Langs` | a defensive copy of `analysis.Langs` (`append([]analysis.Lang(nil), …)`), so an embedding caller that writes to it cannot mutate the facade's slice — the one exported non-alias |
 | const | `ToolName`, `SchemaVersion`, `ToolVersion`, `RootArgument`, `RootStdin`, `LangBash`, `LangPOSIX`, `LangPowerShell`, `LangJavaScript` | the same `analysis` constants |
 | func | `ParseLang`, `Analyze`, `AnalyzeWith`, `NewAnalyzer`, `Bool` | one-line forwarders to `analysis` |
 

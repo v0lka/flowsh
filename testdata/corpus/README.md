@@ -12,7 +12,7 @@ The corpus has 460 cases. The filesystem slice adds 51 witnesses with specific e
 | File | Group(s) | Content |
 | ---- | -------- | ------- |
 | `guardfall_bash.json`, `guardfall_posix.json`, `guardfall_posh.json` | `guardfall` | guard-evading classes A–E, both dialect families |
-| `guardfall_js.json` | `guardfall` | JavaScript A–E examples plus #28 control-flow, TDZ, async-iterator, budget, and nineteen review regressions (inherited reads, shadowing, signed zero, catch defaults, escaped identifiers, postfix conversion, unknown keys, null-receiver exceptions, default TDZ, spread mutation, and unsupported declarations); the bounded evaluator asserts conservative coverage without Node API effect recognition. |
+| `guardfall_js.json` | `benign`, `guardfall` | JavaScript A–E examples plus #28 control-flow, TDZ, async-iterator, budget, and nineteen review regressions (inherited reads, shadowing, signed zero, catch defaults, escaped identifiers, postfix conversion, unknown keys, null-receiver exceptions, default TDZ, spread mutation, and unsupported declarations); the bounded evaluator asserts conservative coverage without Node API effect recognition. |
 | `filesystem_js.json` | `benign`, `destructive`, `resolution`, `guardfall` | 39 real filesystem API shapes plus path/home, named import, unknown options, export mutation, hidden callback effects, and read-failure/catch witnesses. Ordinary writes/metadata changes use the benign precision group; recursive deletions carry class E. Callback bodies remain explicit top pending #34. |
 | `destructive_bash.json` | `destructive` | canonical destructive/recall cases |
 | `benign_bash.json` | `benign` | precision control (no ⊤/conservative) |

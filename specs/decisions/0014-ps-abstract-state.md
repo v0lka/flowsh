@@ -60,6 +60,13 @@ model at the frontend's own layer:
   results join. A `foreach` over a literal list iterates exactly; every other
   loop runs its body once. `break`/`continue`/`return`/`exit`/`throw` are
   control-flow keywords, not unknown commands.
+
+> **Historical record.** Function bodies later gained the same
+> "declaration is not invocation" treatment as the JavaScript frontend: the
+> walker records the function's name and emits nothing for the body itself;
+> only a *call* to the function resolves to ⊤. Control-flow headers
+> (`if (…) {}`, loop heads) are also lowered in place today, so a condition
+> can itself carry effects.
 - **Session-state cmdlets**: `Set-Location`/`cd` moves `$pwd`,
   `Pop-Location` marks it unknown, `Set-Variable`/`New-Variable` and
   `Set-Item Variable:` bind values, `Clear-Variable`/`Remove-Item Variable:`
@@ -93,6 +100,11 @@ model at the frontend's own layer:
   fabricated literals existed before (corpus re-pinned, expectations updated
   consciously); truthiness over strings (`"0"` is falsy, `"False"` is false)
   is an approximation of PowerShell's richer type system.
+
+> **Historical record.** The shipped approximation is the opposite on this
+> point: `condTruthy` treats any non-empty quoted string — including `"0"` and
+> `"false"` — as truthy; only `$false`, `$null`, `0` and the empty string are
+> false (`front/ps/lower.go`).
 
 ## Alternatives Considered
 

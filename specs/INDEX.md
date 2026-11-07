@@ -16,6 +16,7 @@ For formats and update rules, see [META.md](META.md). For how to use the system,
 | Tweak scoring / destructiveness / exfil | [Scoring](domains/engine/scoring.md), [Report Contract](contracts/report-json.md) |
 | Add a frontend (new language) | [Layer Architecture](architecture/layers.md), [frontend <-> engine Contract](contracts/frontend-engine.md), [Analysis Facade](domains/analysis-report.md) |
 | Change bash parsing / abstract execution | [bash Frontend](domains/bash-frontend/README.md), [Parse & Normalize](domains/bash-frontend/parse-normalize.md), [Abstract Execution](domains/bash-frontend/abstract-exec.md) |
+| Add or change a command wrapper, peel rule, or find(1) exec payload | [Command Wrappers](domains/bash-frontend/wrappers.md), [Parse & Normalize](domains/bash-frontend/parse-normalize.md) |
 | Change JavaScript parsing / values / control flow | [JavaScript Frontend](domains/javascript-frontend.md), [Analysis Facade](domains/analysis-report.md), [frontend <-> engine Contract](contracts/frontend-engine.md) |
 | Change PowerShell parsing / lowering | [PowerShell Frontend](domains/powershell-frontend.md), [ADR-0014](decisions/0014-ps-abstract-state.md) |
 | Change command resolution or flag binding | [Binding](domains/binding.md), [bind <-> kb Contract](contracts/bind-kb.md) |
@@ -77,7 +78,7 @@ Spec-level view of the layered system (arrows point from a layer to what it depe
               0013 windows-clock-tick 0014 ps-abstract-state
               0015 per-host-latency 0016 kb-load-budget
               0017 report-policy-package 0018 javascript-semantic-kernel
-              0019 determinism-gate
+              0019 determinism-gate 0020 js-filesystem-models
 ```
 
 ## Directory Listing
@@ -104,6 +105,7 @@ specs/
 │   ├── bash-frontend/
 │   │   ├── README.md                          bash frontend (domain overview)
 │   │   ├── parse-normalize.md                 parse + normalize detail
+│   │   ├── wrappers.md                        the wrapper inventory + peel rules
 │   │   └── abstract-exec.md                   abstract execution detail
 │   ├── javascript-filesystem.md               filesystem API acceptance matrix
 │   ├── javascript-frontend.md                 Bounded JavaScript values/control flow (front/js)
@@ -156,7 +158,6 @@ Every spec file, by path relative to `specs/`:
 - `contracts/exec-resolver.md`
 - `contracts/frontend-engine.md`
 - `contracts/report-json.md`
-- `decisions/0020-javascript-filesystem-models.md`
 - `decisions/_template.md`
 - `decisions/0001-frozen-effect-ir.md`
 - `decisions/0002-one-way-dependency.md`
@@ -177,10 +178,12 @@ Every spec file, by path relative to `specs/`:
 - `decisions/0017-report-policy-package.md`
 - `decisions/0018-javascript-semantic-kernel.md`
 - `decisions/0019-determinism-gate-parse-budget-trip.md`
+- `decisions/0020-javascript-filesystem-models.md`
 - `domains/analysis-report.md`
 - `domains/bash-frontend/README.md`
 - `domains/bash-frontend/abstract-exec.md`
 - `domains/bash-frontend/parse-normalize.md`
+- `domains/bash-frontend/wrappers.md`
 - `domains/binding.md`
 - `domains/cli.md`
 - `domains/engine/README.md`
