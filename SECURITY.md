@@ -7,8 +7,8 @@
 > issue tracker, never in this file.
 
 `flowsh` is a Go effect-analysis engine (module
-`github.com/v0lka/flowsh`, binary `flowsh`). It takes a shell or PowerShell
-command — as a CLI argument, on stdin, or through the public
+`github.com/v0lka/flowsh`, binary `flowsh`). It takes a shell, PowerShell, or
+JavaScript program — as a CLI argument, on stdin, or through the public
 `github.com/v0lka/flowsh/api` library API — and reports the **effects it
 implies** (filesystem, environment,
 network, process, IPC, credential access, code execution, …), a composite risk
@@ -18,6 +18,20 @@ never executes, fetches, or writes anything it analyses. Its value is as a
 consults before deciding whether a command is safe to run.
 
 JavaScript source is also accepted through the bounded `front/js` evaluator. Unmodelled execution emits `CodeExec(⊤)` with `conservative` true; parser and analysis-bound failures also set `top`. Pure understood programs may produce empty-effect reports, which remain uncovered and deny under report policy. Reviewed builtin filesystem/path models are interpreted through an injected YAML-backed binder; callback execution and general function invocation remain conservative. Home/cwd use explicit abstract context, with no host-state reads.
+
+Three consequences follow for anyone consuming a verdict, and they are the reason
+this policy is strict about direction rather than about features:
+
+- **A false negative is the worst defect this tool can have.** A dangerous
+  command reported as benign is worse than no analysis at all, because the
+  consumer acted on a safety claim. Every ambiguous case therefore resolves
+  toward ⊤ (unknown/dangerous), never toward "none".
+- **A report is untrusted data, not a command.** It echoes the analysed text and
+  carries attacker-influenced strings in its targets, reasons, notes and
+  why-trace; consumers must encode it for their own context before rendering it.
+- **Precision is not completeness.** A report can name an exact filesystem
+  target and still be `conservative`, because a part of the program was not
+  analysed. Both signals must be read.
 
 ## Supported Versions
 
@@ -35,6 +49,18 @@ to a module version.
 
 When releases are cut, replace this table with the maintained minor lines and
 mark older lines unsupported.
+
+This policy describes the **repository as it stands**, which is ahead of the last
+tag: the working tree carries unreleased work beyond `v0.7.0` — chiefly the
+YAML-backed JavaScript filesystem and path models
+([ADR-0020](specs/decisions/0020-javascript-filesystem-models.md)) and the
+recall fix that stops a host-assumed `$HOME`/`$USER` from pruning a `case` arm.
+A consumer pinning a `v0.7.x` binary should read the `[Unreleased]` section of
+[CHANGELOG.md](CHANGELOG.md) for the delta, and must pin the report
+`schemaVersion`/`toolVersion` as well as the module version: the frozen contract
+tags (`effect-ir/v2`, `flowsh/v3`) did **not** move for that work, so a report
+from either build is shape-identical and a consumer cannot distinguish them by
+the envelope alone.
 
 ## Reporting a Vulnerability
 
@@ -74,7 +100,7 @@ control** and the data it unavoidably touches.
 | Asset | Sensitivity | Description |
 | ----- | ----------- | ----------- |
 | Effect-report integrity | **Critical** | The report is the control surface. An under-report (a dangerous command reported as benign) is a false negative that can lead a consumer to execute a destructive or exfiltrating command. |
-| Knowledge-base integrity | **Critical** | `kb/data/*.yaml` is the authoritative command/parameter→effect dataset ([kb/schema.go](kb/schema.go)). Poisoning it (e.g. marking `rm -rf` benign) silently blinds every consumer. |
+| Knowledge-base integrity | **Critical** | `kb/data/*.yaml` is the authoritative command/parameter→effect dataset, and now also the JavaScript model documents (`js-filesystem.yaml`, `js-path.yaml`) that decide which Node `fs`/`path` calls report precise effects instead of ⊤ ([kb/schema.go](kb/schema.go), [kb/js_decode.go](kb/js_decode.go)). Poisoning it — marking `rm -rf` benign, declaring a destructive `fs` option inert, or narrowing a model's target — silently blinds every consumer. |
 | Destructive-flags table integrity | **High** | The `(command, spec)`→class table (`kb/data/destructive.yaml`) drives severity; corrupting it distorts the score. |
 | Conformance-corpus integrity | **High** | `testdata/corpus/*.json` (the seven `corpus.Group*` groups: GuardFall classes A–E, destructive, benign, PS, name-resolution, and the external malicious/benign samples) is the no-silent-miss gate; weakening it lets regressions ship. |
 | Analysed command text (input) | **High** | The command under analysis is attacker-influenced and may embed secrets (e.g. an inline bearer token). |
@@ -95,13 +121,13 @@ control** and the data it unavoidably touches.
 
 ### Attack Surface
 
-- **CLI argv** — `flowsh [--lang bash|posix|posh|js|auto] [--json] [--windows] [--batch] '<command>'`; the positional command, the `--lang` value (including `auto`, which sniffs the dialect from the source text itself), and flags ([cmd/flowsh/main.go](cmd/flowsh/main.go)).
-- **stdin** — the entire command text when no positional argument is given or `-` is passed ([cmd/flowsh/main.go](cmd/flowsh/main.go)).
-- **Library API** — the public embedding package `github.com/v0lka/flowsh/api` (`api.Analyze(lang, src)`, `api.AnalyzeWith`, `api.NewAnalyzer` for a reusable analyser over the embedded knowledge base, `api.ParseLang` for the caller-supplied dialect name, and the re-exported `Report`/`Options`/`Lang`/`Analyzer` types), consumed by other Go programs that embed the analyser. The optional `policy` package evaluates its reports with trusted caller configuration (`policy.New(Config)` builds a `*Policy`; `(*Policy).Evaluate` returns the `Decision`); `internal/analysis` and other `internal/` packages remain private ([api/api.go](api/api.go), [policy/policy.go](policy/policy.go), [ADR-0010](specs/decisions/0010-public-embedding-api.md), [policy specification](specs/domains/policy.md)).
+- **CLI argv** — `flowsh [--lang bash|posix|posh|js|auto] [--json] [--explain] [--windows[=bool]] [--batch] '<command>'`; the positional command, the `--lang` value (including `auto`, which sniffs the dialect from the source text itself), and the output-shape flags: `--json`, `--explain`/`--why` (prints the why-trace that justifies each reported effect), `--windows[=bool]`, `--batch` (NDJSON, one report per stdin line; mutually exclusive with a positional command and with `--explain`), `--version` and `-h`/`--help`. Flags parse in any position, and the exit codes are a stable contract (`0` report produced, `1` internal failure, `2` usage error — unknown flag or `--lang`, `3` input error — unreadable stdin or empty command). There is deliberately **no** `--file` or other path flag: the CLI never opens a caller-named file, so it cannot be turned into an arbitrary-file-read primitive ([cmd/flowsh/main.go](cmd/flowsh/main.go), [specs/domains/cli.md](specs/domains/cli.md)).
+- **stdin** — the entire command text when no positional argument is given or `-` is passed. The report stamps which channel it read (`Report.root`: `<argument>` or the stdin marker), so a consumer can attribute a verdict to its input source ([cmd/flowsh/main.go](cmd/flowsh/main.go)).
+- **Library API** — the public embedding package `github.com/v0lka/flowsh/api` (`api.Analyze(lang, src)`, `api.AnalyzeWith`, `api.NewAnalyzer` for a reusable analyser over the embedded knowledge base, `api.ParseLang` for the caller-supplied dialect name, `api.Langs` for the accepted dialect list, `api.Bool` for the optional-flag pointers, and the re-exported `Report`/`Options`/`Lang`/`Analyzer`/`Canonical`/`CommandCall`/`CallRedirect`/`DestructiveFinding` types), consumed by other Go programs that embed the analyser. `api.JavaScriptContext{Home, Cwd}` (through `Options.JavaScript`) is a **caller-supplied analysis input**: it names the abstract POSIX home and working directory the JavaScript filesystem and path models resolve against, so an embedding application controls those two strings and they shape reported targets. The optional `policy` package evaluates its reports with trusted caller configuration (`policy.New(Config)` builds a `*Policy`; `(*Policy).Evaluate` returns the `Decision`); `internal/analysis` and other `internal/` packages remain private ([api/api.go](api/api.go), [policy/policy.go](policy/policy.go), [ADR-0010](specs/decisions/0010-public-embedding-api.md), [policy specification](specs/domains/policy.md)).
 - **Bash parser** — `mvdan.cc/sh/v3` over untrusted source ([front/bash/parse.go](front/bash/parse.go)).
 - **PowerShell parser** — the pure-Go tree-sitter runtime over untrusted source ([front/ps/parse.go](front/ps/parse.go)).
-- **JavaScript parser** — the same pure-Go tree-sitter runtime over untrusted source, ahead of the bounded abstract evaluator ([front/js/parse.go](front/js/parse.go), [front/js/analyze.go](front/js/analyze.go)).
-- **Embedded knowledge base** — `kb/data/*.yaml`, a build-time input reached through pull requests ([kb/loader.go](kb/loader.go)).
+- **JavaScript parser and model binder** — the same pure-Go tree-sitter runtime over untrusted source, ahead of the bounded abstract evaluator. A module-resolution seam maps each callee to a builtin module/export identity (CJS `require`, ESM imports, `node:` aliases, `fs/promises`, destructuring, local aliases), which the YAML-backed JavaScript models then lower to filesystem effects ([front/js/parse.go](front/js/parse.go), [front/js/analyze.go](front/js/analyze.go), [front/js/modules.go](front/js/modules.go), [bind/js.go](bind/js.go), [bind/js_options.go](bind/js_options.go), [bind/js_path.go](bind/js_path.go), [JavaScript filesystem models](specs/domains/javascript-filesystem.md)).
+- **Embedded knowledge base** — `kb/data/*.yaml`, a build-time input reached through pull requests ([kb/loader.go](kb/loader.go), with the strict JavaScript-model decoder [kb/js_decode.go](kb/js_decode.go) and the builtin-namespace rules [kb/js.go](kb/js.go)).
 - **Conformance corpus** — `testdata/corpus/*.json`, a test-time input.
 - **CI/CD** — `.github/workflows/ci.yml` (push to `main`/`master` and every pull request, including from forks).
 - **Dependency graph** — `go.mod` / `go.sum`.
@@ -161,13 +187,17 @@ findings about the current code versus this policy.
 | A modelled command's remote sub-surface is deliberately unmodelled: `markitdown`'s optional Document-Intelligence endpoint | Low | Accepted recall gap: modelling it would place the `gnu` dialect on the network-egress inventory (`kb/loader_test.go TestNetEgressDialectInventory`), so only the local-path read is modelled. Residual: an invocation pointed at the remote endpoint reports no `NetEgress`. |
 | Reports echo the analysed command verbatim and may therefore carry secrets | Medium | Inherent to the "explain the input" contract. Reports are treated as sensitive data; consumers must redact before logging (see **Data Protection**). |
 | Egress effects require a host-shaped target: a literal operand that names no network address creates no `NetEgress` effect | Medium | Deliberate precision/recall trade (2026-09, phantom-egress fix). Before the gate, the binder force-fit git subcommand names, commit SHAs and pathspecs onto network positionals (`git status` → `NetEgress{"status"}`), and consumers keying on the mere presence of a network effect fired on network-free commands; the secret-tainting rule then fabricated exfiltration pairs. The grammar (`engine.HostShaped`) accepts URLs (network schemes only — `file:`/`data:`/`mailto:` name no address), IPv4/IPv6 (incl. hex/decimal obfuscations), scp-style remotes (incl. single-label and IPv6 hosts), UNC/SMB authorities (`//host/share`) and dotted DNS names (incl. the trailing-dot absolute form); destination slots of declared network clients also accept single-label names and the clients' own `TCP:host:port` spellings (`engine.HostShapedLenient`). The safe side is preserved: an unresolved (⊤) target stays as *unresolved egress* and keeps participating in network controls, and `IsEgressSink` is kind-strict so a local file redirect can never be an exfiltration sink. Residual: a literal single-label remote alias in a strict dialect (`git fetch origin`, `apt-get install foo`) loses its egress effect. This is a *recall* loss — the report under-reports network access — **not** a deny-direction conservatism: a consumer that gates on the mere presence of egress must not rely on such operands being flagged. Accepted recall residuals also include the in-addr shorthand (`127.1`), a host whose final label is a common file extension (`example.sh`), and the rsync daemon form (`host::module`), none of which are modelled as egress. |
+| A modelled JavaScript filesystem call that takes a callback reports the outer filesystem effect **and** a canonical ⊤: `fs.writeFile(p, d, cb)` yields the `FSWrite` plus a conservative `CodeExec(⊤)` | Low | Accepted precision residual of the JavaScript filesystem slice ([ADR-0020](specs/decisions/0020-javascript-filesystem-models.md)): callback-body execution is deferred, so the body's own effects are unanalysed and the model degrades instead of claiming completeness. Every model style except `promise` and `pure` likewise retains a possible-throw path, and arbitrary thenables stay unsupported. The residual consumers must not misread: **a known outer API does not imply a non-conservative report** — `Report.Conservative` MUST be inspected even when the filesystem effect is precise ([specs/domains/javascript-filesystem.md](specs/domains/javascript-filesystem.md)). |
+| JavaScript effect targets are emitted verbatim, without the shell-side operand filtering or the PATH/basename/package-runner normalization the shell dialects apply | Medium | Deliberate contract difference ([specs/domains/javascript-filesystem.md](specs/domains/javascript-filesystem.md)): a JavaScript path argument is not a shell word, so `$`, `;`, a leading `-` and the empty string are legitimate evidence and are reported as written. Residual: JavaScript report targets therefore carry untrusted source text more directly than shell targets, so a consumer MUST treat them as data and apply contextual escaping before rendering or re-emitting them (see **Output Encoding & Injection Prevention**). Evidence strings are truncated at 4,096 bytes with a `js:<kind>` fallback for longer or non-string values. |
+| JavaScript path resolution uses an abstract context and never host state: home is the symbolic `/root` report context, and cwd stays unknown unless an absolute segment makes it unnecessary | Low | Accepted precision residual and a deliberate isolation property ([ADR-0020](specs/decisions/0020-javascript-filesystem-models.md)): no host filesystem, environment, working directory, or module code is consulted, so a verdict cannot be steered by the machine producing it. `path.resolve` therefore yields *unknown* for a relative path with no absolute segment, and an unknown required path becomes scope ⊤ with a diagnostic rather than a guessed name; no result fabricates file content, existence, stats, or a `mkdtemp` suffix. Residual: a relative-path program is less precise than the same paths spelled absolutely, and `path.win32` is unsupported and degrades conservatively. |
+| Host-assumed variable defaults (`$HOME`, `$USER`) are treated as unknown, so every `case` arm and both sides of a dependent test are analysed rather than pruned | Low | Accepted over-report (2026-11 recall fix). Pruning on a value the analyser only *assumes* would let `case $HOME in /root) ;; *) rm -rf … ;; esac` report nothing while the fall-through arm is the one that really runs — a false negative, the highest-severity class of defect this tool can produce. The assumed marker follows the value through a copy (`H=$HOME`), a `for` loop's items, a declaration and a `+=` append, and a pattern that is itself host-assumed makes the match unknown; three GuardFall `E` witnesses pin it. Residual: host-dependent branches report the union of their arms. **The rule generalises** — an assumed default MUST NEVER be used to prune analysis (see **The ⊤ / No-Silent-Miss Invariant**). |
 | No runtime sandbox is used | Low | Nothing is executed by the analyser, so there is no execution to sandbox; the whole safety model rests on that invariant being preserved. |
 | Single Go module with a minimal dependency set | Low | Trades breadth for a small, auditable trusted computing base (see [ADR-0008](specs/decisions/0008-single-go-module.md)); adds no cgo. |
 | A flag-only invocation of a privileged wrapper the doctrine cannot attribute (unmodelled `--version`/`-V`/`--help`/`-v`/`-K`/`-h`/`-k`, the modelled-but-inert `-l`/`--list`, or the with-command-inert `-U`/`--other-user`) degrades to ⊤: `sudo --version` reports ⊤ `CodeExec`/Critical | Low | Accepted false positive (precision direction, 2026-10 sudo wrapper-elevation work). A flag-only invocation of a privilege-elevating wrapper names no wrapped command to analyse, and guessing benign-ness on a privileged binary is the under-report risk the tool exists to prevent — ⊤ is the sound outcome, and consumers already treat ⊤ as DENY-or-INSPECT. Such a line fabricates no `PrivEsc` effect (it runs nothing), so the verdict carries no escalation claim. Pre-existing peel-shape exception: an interleaved assignment (`sudo FOO=1 -l cmd`) ends the option run, so `-l` becomes the inner command and a certain root `PrivEsc` is claimed for a listing line — over-report only. Residual: ordinary administrative queries over the wrapper surface (`sudo --version`, `sudo -l`) receive a Critical verdict and must be inspected or consumer-allow-listed. The ⊤/Critical verdict is covered by the corpus (`testdata/corpus/sudo_bash.json`, cases `des-sudo-version` and `des-sudo-l`); the claim that such a line fabricates no `PrivEsc` is pinned by the binder's doctrine tests (`bind.TestBindSudoElevationDoctrine`, its inert-spelling and flag-only cases), not by the corpus gate (which checks coverage and grade only). |
 | A privilege wrapper the frontend cannot peel (a path-qualified `/usr/bin/sudo …`, a package-runner operand naming one) degrades to ⊤ `CodeExec`/Critical instead of a refined elevation | Low | Accepted residual of the 2026-10 review hardening: only the bare literal name is peeled by the normalizer, so the path spelling reaches the binder as a resolved KB command whose entry models the wrapped argv as its `COMMAND` payload — unanalysable by construction. The call therefore degrades to the ⊤ it had before wrapper elevation existed (conservative, with an explanatory note) instead of the narrow PrivEsc-only report that would silently drop the payload's filesystem/network/credential effects. Commands whose PrivEsc declarations name their own operands (`install -m`, yarn's `global` positional, su's `USER`, chroot's `NEWROOT`) are unaffected and keep binding. Consumers must treat the verdict as DENY-or-INSPECT, as for any ⊤. The ⊤/Critical verdict is covered by the corpus (`des-sudo-path-curl-shadow`); the degradation shape — no narrow `PrivEsc` fabricated from the unpeeled payload — is pinned by the binder's doctrine tests (`bind.TestBindSudoElevationDoctrine`, the `unpeeled path-qualified sudo degrades to ⊤` case), not by the corpus gate. |
 | A bare numeric `sudo -u` value is read by its numeric value: `-u 0`/`-u 00` claim root; the root name is matched case-insensitively (`-u ROOT` also claims root) | Low | Accepted false positives (precision direction, 2026-10 review hardening). By man sudo a UID is spelled with the `#` prefix and a bare `0` is a username, so on any system without one sudo would reject the target and run nothing — claiming root for it over-reports, never under-reports, and the numeric reading is what makes `#0`/`00`/`0` agree. The case-folded root name is the same trade: correct on case-insensitive user databases (macOS local accounts, AD/LDAP), a harmless over-report where the name does not exist. Pinned by the elevation tests (`bind.TestBindSudoElevationMatrix`, the `-u 0` and `-u ROOT` cases, and `bind.TestBindSudoElevationDoctrine`, the `-u 00` case). |
 | Group escalation via sudo's `-g`/`--group` is not modelled | Low | Accepted recall residual (2026-10 review hardening). A bare `-g` runs the command as the invoking user (man sudo: only the primary group is replaced), so it elevates nothing and the report says so; but `-u <user> -g <privileged-group>` runs as that user with the group's membership — a real privilege gain the effect IR does not carry. The invocation reports the `-u`-decided elevation direction plus an explicit `group escalation is not modelled` note, never a silent miss; a consumer keying on PrivEsc alone must still read the notes. Pinned by the elevation doctrine tests (the group-note cases of `bind.TestBindSudoElevationDoctrine`); the corpus case `ben-sudo-u-nobody-g-root-touch` pins the benign coverage only, not the note. |
-| An inert wrapper line still reports the shell's own side effects beside the ⊤ verdict (wrapper-donated `sudo -l env FOO=1 cmd` → `EnvWrite{FOO}`, leading assignments `VAR=1 sudo -l cmd` → `EnvWrite{VAR}`, a redirect `sudo -l cmd > /etc/passwd` → `FSWrite{/etc/passwd}`, a pipeline sibling `curl … | sudo -l` → the sibling's own effects) | Low | Accepted precision residual (2026-10 review hardening). Nothing the wrapper names executes, but the shell still does its own work — the assignments, the truncating redirect, the sibling process — and the binder retracts only its own copy of the wrapped command's effects, not what the bash interpreter records at peel time (the resolver seam carries no inert signal). The inert note is `sudo:`-prefixed, scoping its claim to the wrapped command, and the verdict stays ⊤ `CodeExec`/Critical, so the safe direction is preserved — consumers must treat the note, not the shell-side effects, as the execution claim. Pinned by `TestSudoElevationInertEnvWriteResidual` (the env-write shapes; the redirect and sibling shapes share the mechanism). |
+| An inert wrapper line still reports the shell's own side effects beside the ⊤ verdict (wrapper-donated `sudo -l env FOO=1 cmd` → `EnvWrite{FOO}`, leading assignments `VAR=1 sudo -l cmd` → `EnvWrite{VAR}`, a redirect `sudo -l cmd > /etc/passwd` → `FSWrite{/etc/passwd}`, a pipeline sibling `curl … \| sudo -l` → the sibling's own effects) | Low | Accepted precision residual (2026-10 review hardening). Nothing the wrapper names executes, but the shell still does its own work — the assignments, the truncating redirect, the sibling process — and the binder retracts only its own copy of the wrapped command's effects, not what the bash interpreter records at peel time (the resolver seam carries no inert signal). The inert note is `sudo:`-prefixed, scoping its claim to the wrapped command, and the verdict stays ⊤ `CodeExec`/Critical, so the safe direction is preserved — consumers must treat the note, not the shell-side effects, as the execution claim. Pinned by `TestSudoElevationInertEnvWriteResidual` (the env-write shapes; the redirect and sibling shapes share the mechanism). |
 | sudo's `-D/--chdir` and `-R/--chroot` are absorbed for parsing, but their path context is not modelled: `sudo -D /tmp rm -rf data` reports the operand as written (`data`), not the relocated `/tmp/data` | Low | Accepted precision residual (2026-10 review hardening). Absorbing the value keeps the wrapped command bindable (the pre-absorption spelling degraded the whole line to an unknown command); the path relocation itself is outside the effect IR. The report names the consumption and the path-context gap in an explicit note, and the verdict direction is unchanged. Pinned by the elevation doctrine tests (`sudo -D /tmp …` and `sudo -R /tmp …` cases). |
 | A nested privilege wrapper whose outer wrapper de-elevates still claims the inner elevation: `sudo -u nobody sudo touch /x` reports a certain root `PrivEsc` beside the outer wrapper's `no privilege escalation` note | Low | Accepted over-report (2026-10 review hardening). `wrapperElevation` decides each wrapper independently, and the notes are per wrapper (`specs/domains/binding.md`); the inner `sudo`, running as `nobody`, can only reach root with a sudoers grant the analysis cannot see, so the claim is unachievable. It sits on the over-report (DENY) side; a consumer keying on `PrivEsc` alone must read the outer wrapper's note. Pinned by `TestBindSudoNestedWrapperResidual`. |
 | An inert spelling DEEPER in the chain suppresses a shallower privileged wrapper's real elevation: `sudo -i sudo -l cmd` and `sudo sudo -l touch /x` report ⊤ `CodeExec`/Critical with no `PrivEsc`, although the outer wrapper runs its inner command as root | Low | Accepted detail loss (2026-10 review hardening). The chain-wide inert decision (any inert spelling decides the whole line) drops the elevation a shallower wrapper really carries. The verdict stays ⊤/Critical (DENY-or-INSPECT) — no fail-open, as for the unpeeled-wrapper row — so only the refined elevation detail is lost and a consumer never sees a benign or effect-free verdict. Pinned by `TestBindSudoInnerInertSuppressionResidual`. |
@@ -193,7 +223,13 @@ each — framed as rules for contributors, not as an inventory of the code.
 
 ### Authentication & Authorization
 
-The optional `policy` library package is a pure report consumer above `api`. It accepts trusted, caller-owned Go configuration and returns Allow, Review, or Deny without executing input or changing analysis. It MUST preserve deny-or- inspect for unknown/conservative reports and deny missing, invalid, incompatible, or uncovered reports. It MUST NOT read configuration from analysed content or perform runtime I/O. Consumers retain responsibility for authorisation, review, and enforcement; Allow is not a proof of confinement or safety.
+The optional `policy` library package is a pure report consumer above `api`. It accepts trusted, caller-owned Go configuration and returns Allow, Review, or Deny without executing input or changing analysis. It MUST preserve deny-or-inspect for unknown/conservative reports and deny missing, invalid, incompatible, or uncovered reports. It MUST NOT read configuration from analysed content or perform runtime I/O. Consumers retain responsibility for authorisation, review, and enforcement; Allow is not a proof of confinement or safety.
+
+Three construction properties make that fail-closed and MUST be preserved:
+
+- `policy.New` **rejects `Allow` for the `unknown` and `conservative` actions** — an embedding application cannot configure its way into treating ⊤ as permitted. The remaining defaults are `exfiltration`→Deny, `cradle`→Review, `ingest`→Allow, and every rule map is validated against the closed `EffectKind`/grade sets.
+- `policy.New` **copies** the `Effects` and `Grades` maps, so a caller retaining a reference cannot mutate a live policy's rules behind its back; and a nil or zero policy denies with `invalid_policy` rather than allowing by default.
+- A `Decision` carries **only stable signal names** (`unknown`, `conservative`, `exfiltration`, `cradle`, `ingest`, `effect:<kind>`, `grade:<grade>`) and never analysed text, so a decision can be logged without laundering secret-bearing command text into an audit trail ([policy/policy.go](policy/policy.go), [specs/domains/policy.md](specs/domains/policy.md)).
 
 **Not applicable as a runtime concern** — the tool exposes no service, endpoint,
 or session, and runs with the privileges of the invoking user, so there is no
@@ -218,7 +254,29 @@ sensitive output (the report, which echoes that text). Requirements:
   shared or world-readable locations by default.
 - The analyser MUST NOT read environment variables, config files, or any file on
   disk at run time (the knowledge base is compiled in); doing so would extend the
-  sensitive-data surface for no functional need.
+  sensitive-data surface for no functional need. This is enforceable by
+  inspection and MUST stay so: outside `cmd/flowsh` (which touches only
+  `os.Args`, `os.Stdin`, `os.Stdout`, `os.Stderr` and `os.Exit`) and the
+  test-only corpus harness `internal/corpus`, **no package in the analysis path
+  imports `os` at all** — `engine`, `bind`, `kb`, `front/*`,
+  `internal/analysis`, `api` and `policy` are free of filesystem, environment and
+  process access, and `os/exec`, `syscall`, `unsafe`, `plugin` and `net/http` are
+  imported nowhere in the module.
+- Where a model genuinely needs a filesystem context, it MUST take that context
+  as an explicit, caller-supplied abstraction and never probe the host. The
+  JavaScript `fs`/`path` models resolve against `api.JavaScriptContext{Home,
+  Cwd}`, defaulting to a symbolic `/root` home and an *unknown* cwd. A supplied
+  context that is not an absolute, NUL-free path within the source-string limits
+  is **rejected and degraded to unknown** rather than trusted or repaired
+  (`validJSPath`), so a malformed context costs precision instead of fabricating
+  a target. Calling `os.Getenv`, `os.UserHomeDir`, `os.Getwd` or any equivalent
+  from the analysis path is forbidden: it would make a verdict depend on the
+  machine producing it, breaking both determinism and this rule
+  ([specs/domains/javascript-filesystem.md](specs/domains/javascript-filesystem.md)).
+- The single `net` import in the analysis path is [engine/hostshape.go](engine/hostshape.go),
+  which uses `net.ParseIP` purely as an address *grammar* — no sockets, no DNS
+  resolution, no I/O. Any resolving or dialling `net` API is a new network
+  surface and is forbidden under **Hard Constraints**.
 
 ### Secret Management
 
@@ -275,9 +333,28 @@ implementation detail:
   a two-second parser deadline in every build, and bounds normalization and
   evaluation with depth, node, step, value-size, and recording limits
   ([JavaScript frontend](specs/domains/javascript-frontend.md#configuration)).
+  The JavaScript filesystem models are bounded too, and the resolver call carries
+  a `Charge` callback so the caller-supplied context strings consume work
+  *before* a model is materialised: path-helper input is capped at 65,536 summed
+  bytes, report evidence at 4,096 bytes, each facade metadata collection at
+  1,024 items, a knowledge-base model name at 128 bytes, and a module constant
+  at an exact integer within ±2^53
+  ([JavaScript filesystem models](specs/domains/javascript-filesystem.md#configuration)).
 - Parsing and lowering MUST NOT panic on malformed input; every failure MUST
   degrade to ⊤ (CodeExec over the any-target scope) with a human-readable
   `reason` ([specs/architecture/conservatism.md](specs/architecture/conservatism.md)).
+- That panic-freedom and ⊤ contract is **fuzzed, not merely asserted**. Four
+  native Go fuzz targets — `FuzzBind` (`bind_test`), `bash.FuzzParse`,
+  `ps.FuzzParse` and `js.FuzzAnalyze` — drive arbitrary bytes through the binder
+  and each frontend and fail on a panic, a nil program, a conservative result
+  carrying no ⊤ effect, or an unresolved/function-typed resolution that did not
+  degrade to ⊤. Their seed corpora deliberately contain adversarial shapes
+  (unbalanced quotes, NUL and control bytes, 500-deep pipelines and nesting,
+  1,000 repeated quotes, 300 repeated alias records), so an ordinary
+  `go test ./...` run already exercises the bounds; a `-fuzz` campaign is
+  expected before any change to a parser, the normalizer, or the binder
+  ([bind/fuzz_test.go](bind/fuzz_test.go), [front/bash/normalize_test.go](front/bash/normalize_test.go),
+  [front/ps/fuzz_test.go](front/ps/fuzz_test.go), [front/js/analyze_test.go](front/js/analyze_test.go)).
 - No unbounded construct (unbounded loop, unbounded recursion, unbounded
   expansion) may be introduced into the analysis path.
 - The **no-silent-miss invariant** MUST hold for unanalysable source: it MUST
@@ -297,10 +374,16 @@ The report deliberately embeds attacker-controlled text. Requirements:
 
 - Reports MUST be serialised through `encoding/json` (which escapes output);
   reports MUST NEVER be assembled by string concatenation.
-- Consumers MUST treat every report field — especially `input`, `reason`, and
-  `notes` — as untrusted data and apply context-appropriate encoding (shell,
-  HTML, JSON, log) before rendering or re-emitting it. A report is data, never a
-  command.
+- Consumers MUST treat every report field — especially `input`, `reason`,
+  `notes`, the destructive findings, and the `why` trace's rule premises — as
+  untrusted data and apply context-appropriate encoding (shell, HTML, JSON, log)
+  before rendering or re-emitting it. A report is data, never a command.
+- JavaScript effect targets deserve particular care: unlike the shell dialects
+  they are **not** operand-filtered or PATH/basename-normalised, so a target may
+  legitimately be an empty string or contain `$`, `;` or a leading `-`. A
+  consumer that re-emits a target into a shell, a template, or an argument vector
+  MUST quote and escape it rather than assume it is a well-formed path
+  ([specs/domains/javascript-filesystem.md](specs/domains/javascript-filesystem.md)).
 - No code in the analysis path may `eval`, `exec`, or otherwise interpret the
   analysed text. Modelling a `CodeExec` effect is not the same as performing one
   — the analyser records that a command *could* execute data; it never does.
@@ -321,15 +404,26 @@ The report deliberately embeds attacker-controlled text. Requirements:
 
 - CI MUST run `gofmt`, `go build`, `go vet`, `go mod verify`, `govulncheck
   ./...`, the pinned linter (`golangci-lint` with `.golangci.yml`), the
-  dead-code gate (`deadcode -test ./...`), the documentation hygiene gate (no
-  unresolved placeholders in this policy; all relative Markdown links resolve),
-  the corpus + latency/recall gates (which include the CLI smoke test
-  `cmd/flowsh/smoke_test.go`), and `go test -race` on a three-OS matrix
-  (`ubuntu-latest`, `windows-latest`, `macos-15`; the `-race` step runs on
-  Linux only, while the vulnerability scan runs on every runner because
-  `govulncheck` resolves the call graph for the host `GOOS`/`GOARCH`), and MUST
-  operate with least privilege (the workflow pins `permissions: contents: read`)
+  dead-code gate (`deadcode -test ./...`), the documentation hygiene gate, the
+  corpus + latency/recall gates (which include the CLI smoke test
+  `cmd/flowsh/smoke_test.go`, and which run the four fuzz targets' adversarial
+  seed corpora as part of an ordinary `go test ./...`), and `go test -race` on a
+  three-OS matrix (`ubuntu-latest`, `windows-latest`, `macos-15`; the `-race`
+  step runs on Linux only, while the vulnerability scan runs on every runner
+  because `govulncheck` resolves the call graph for the host `GOOS`/`GOARCH`),
+  and MUST operate with least privilege (the workflow pins
+  `permissions: contents: read`)
   ([.github/workflows/ci.yml](.github/workflows/ci.yml)).
+- The documentation hygiene gate has three checks and MUST keep all three: no
+  unresolved placeholder marker may remain in this policy; every relative
+  Markdown link in every tracked `.md` file must resolve; and the frozen
+  report-contract tag must agree with the binary — the gate reads `ToolVersion`
+  out of `internal/analysis/analyze.go` and fails any live document (`README.md`,
+  `CONTRIBUTING.md`, this file, `docs/*.md`,
+  `specs/architecture/data-flow.md`) that mentions a `flowsh/vN` tag other than
+  that constant, so a contract bump cannot leave the docs advertising the
+  previous envelope. The ADRs are excluded deliberately: they are historical
+  records, not live contracts.
 - Edits to `kb/data/*.yaml` and `testdata/corpus/*.json` MUST be reviewed as
   **security-sensitive changes**: they directly change the guard's verdicts.
 - Releases MUST be tagged and, where the distribution channel supports it,
@@ -436,6 +530,17 @@ never perform it. Requirements:
   embed-loaded knowledge base memoised once per process; there MUST be no
   persistent store and no cache keyed on untrusted input that an attacker could
   poison to influence a later verdict.
+- Concretely, exactly two objects are memoised for the process lifetime — the
+  knowledge base (`kb.defaultOnce`, a `sync.Once`) and the default analyser
+  (`analysis.defaultAnalyzer`, a `sync.OnceValues`) — and an `Analyzer` holds
+  nothing but its `*bind.Binder`. Any new process-lifetime cache MUST be
+  reviewed against this rule and MUST NOT be keyed on analysed text or on
+  caller-supplied context.
+- The caller-supplied `api.JavaScriptContext` is **per-call** and MUST stay so:
+  it arrives through `Options`, is converted for the single call, and is never
+  cached, so one caller's home/cwd cannot leak into a later verdict. An embedding
+  service that analyses on behalf of several principals MUST NOT reuse one
+  context across them, and MUST NOT let an untrusted principal choose it.
 - The knowledge base MUST be **read-only at run time**; nothing in the analysis
   path may write to it or to any on-disk rule store.
 
@@ -472,6 +577,14 @@ verdict. Requirements:
   benign**; it is not a proof of safety, and consumers MUST communicate it as
   such. The analyser MUST NOT inflate confidence (confidence is reduced for ⊤
   and unbounded targets).
+- A **precise** verdict is not the same as a **complete** one, and consumers MUST
+  not read specificity as assurance. The JavaScript filesystem models report an
+  exact `FSWrite` target for a call whose callback body is deliberately
+  unanalysed, and pair it with a canonical ⊤ saying so; likewise a bounded,
+  non-⊤ report for a general-purpose remote/exec client is not proof of what that
+  client reached. Effect precision and verdict confidence are independent
+  signals, and `conservative` MUST be read even when the effect list looks
+  specific and well understood.
 - Machine-generated verdicts SHOULD be labelled as such, and any human-approval
   gate SHOULD show the raw command alongside the verdict rather than an
   agent-written summary of it.
@@ -526,6 +639,20 @@ They are tailored to this Go code base and its `flowsh` invariants.
 - Never set `conservative`/`top` without emitting the corresponding ⊤ effect.
 - Preserve `Report.Normalize` before comparison or serialisation so equal effect
   sets produce byte-identical reports.
+- Never prune analysis on a **host-assumed** value. A default the analyser
+  assumes rather than knows (`$HOME`, `$USER`) MUST NOT be treated as known where
+  it decides a branch: every `case` arm and both sides of a dependent test stay
+  reachable, a pattern that is itself host-assumed makes the match unknown, and
+  the assumed marker MUST follow the value through a copy (`H=$HOME`), a `for`
+  loop's items, a declaration and a `+=` append. Pruning on an assumption is how
+  a false negative is born.
+- Keep every canonical comparable key **injective**. `CommandCall.identity()` is
+  the deduplication gate for the report's call list, and it length-prefixes each
+  field (`len:value`) so field boundaries cannot be forged by content; a
+  redirection's `Known` flag is part of the key. Two distinct calls that collide
+  on this key are not a cosmetic merge — the second is silently dropped from the
+  report, which is an under-report. Do not add a field to a canonical key without
+  delimiting it ([internal/analysis/canonical.go](internal/analysis/canonical.go)).
 
 ### Output Encoding & Injection Prevention
 
@@ -533,12 +660,17 @@ They are tailored to this Go code base and its `flowsh` invariants.
   string concatenation ([internal/analysis/analyze.go](internal/analysis/analyze.go)).
 - Treat the report as data at every hop: no interpolation of report fields into
   shell commands, HTML, or any interpreter context without contextual escaping.
-- Keep the human-readable summary single-line per field so embedded newlines in
+- Keep the human-readable output single-line per field so embedded newlines in
   an analysed command cannot forge additional output lines: the echoed input
-  goes through `oneLine`, and every other rendered field through `sanitize`,
-  which drops the C0/DEL/C1 control characters (newlines included) and the
-  Unicode bidi embedding/override controls
-  ([cmd/flowsh/main.go](cmd/flowsh/main.go)).
+  goes through `oneLine`, and every other rendered field — including the
+  `--explain`/`--why` trace's effect names, rule names and premises — through
+  `sanitize`, which renders a tab as the two characters `\t` and drops the
+  C0/DEL/C1 control characters (newlines and ESC included) plus the Unicode bidi
+  embedding/override controls (U+202A–U+202E, U+2066–U+2069), so analysed text
+  can neither forge report lines nor drive the terminal
+  ([cmd/flowsh/main.go](cmd/flowsh/main.go)). The why-trace's one un-sanitised
+  fragment is its `@line:col` position, which is integer-formatted and so cannot
+  carry attacker text; keep it that way.
 
 ### Error Handling & the Fail-Closed Rule
 
@@ -558,12 +690,20 @@ They are tailored to this Go code base and its `flowsh` invariants.
   are a robustness contract. The named limits are the step budget
   (`defaultBudget` 50000, defined separately in `front/bash`, `front/js` and
   `front/ps`), the bash caps (`maxFuncDepth` 64, `maxAliasDepth` 32,
-  `maxFindDepth` 8, `maxRecorded` 1024), the JavaScript caps (`maxDepth` 256,
-  `maxRecorded` 1024, `maxValueBytes` 65536, `maxSourceBytes` 1 MiB), the
-  structural source-shape bounds a frontend refuses by construction rather than
-  parses (bash `maxNestingDepth` 4096 and `maxBraceDepth` 16; PowerShell
-  `maxSourceBytes` 64 KiB, `maxSourceLine` 4 KiB and `maxNestingDepth` 256), and
-  the parse clocks (`ps.DefaultTimeoutMicros` 250 ms, `js.parseTimeoutMicros` 2 s).
+  `maxFindDepth` 8, `maxRecorded` 1024), the binder's own independent
+  alias-expansion cap (`bind.maxAliasDepth` 32), the JavaScript evaluator caps
+  (`maxDepth` 256, `maxRecorded` 1024, `maxValueBytes` 65536, `maxSourceBytes`
+  1 MiB), the JavaScript filesystem-model caps (`bind.jsMaxPathBytes` 65536
+  summed path-helper bytes, the 4,096-byte report-evidence truncation in
+  `bind/js.go`, and `maxJSMetadata` 1024 items per facade metadata collection in
+  `internal/analysis/javascript.go`), the knowledge-base model limits enforced by
+  `kb/js.go` (`validJSName` ≤128 bytes with no whitespace or NUL; `maxJSConstant`
+  ±2^53, the integers exact in float64), the structural source-shape bounds a
+  frontend refuses by construction rather than parses (bash `maxNestingDepth`
+  4096; PowerShell `maxSourceBytes` 64 KiB, `maxSourceLine` 4 KiB and
+  `maxNestingDepth` 256), the bash brace-expansion estimator caps
+  (`maxBraceDepth` 16, `maxExpandedFields` 4096), and the parse clocks
+  (`ps.DefaultTimeoutMicros` 250 ms, `js.parseTimeoutMicros` 2 s).
   The one build-conditional budget is the race build's disabled PowerShell wall
   clock (see **Input Validation & Parsing Robustness**); it is not a licence to
   weaken any other bound.
@@ -612,11 +752,34 @@ operation and stores no key material. Consequently:
 - Stay within the documented YAML subset (no anchors, aliases, tags, multi-line
   scalars, or tab indentation); those are explicit errors by design.
 - Change the document shape only by **bumping `SchemaVersion`** and extending
-  `KnownVersions`, as the `fileRef` addition did for v2.
+  `KnownVersions`, as the `fileRef` addition did for v2 and the JavaScript model
+  keys did for `effect-kb/v4` (the loader still accepts `effect-kb/v2` and
+  `effect-kb/v3`).
+- The JavaScript model documents ([kb/data/js-filesystem.yaml](kb/data/js-filesystem.yaml),
+  [kb/data/js-path.yaml](kb/data/js-path.yaml)) are held to a **stricter** decoder
+  than the command documents and MUST stay so: [kb/js_decode.go](kb/js_decode.go)
+  rejects unknown keys, duplicate names and aliases, invalid
+  selectors/styles/operations/return models, and broken module references at
+  *load* time, while [kb/js.go](kb/js.go) enforces the name and constant limits
+  (`validJSName`, `maxJSConstant`). A malformed model MUST fail the build; it
+  must never be tolerated into a run-time analysis degradation.
+- A model MUST NOT invent evidence. No result may fabricate file content,
+  existence, stats, or a `mkdtemp` suffix; an unknown required path MUST become
+  scope ⊤ with a diagnostic rather than a guessed name; and an unsupported flag,
+  file descriptor, or effect-changing option MUST retain ⊤ instead of being
+  silently ignored. Adding an API family is a data edit, but each new row owes
+  specific effect, target and report evidence — `Covered()` alone is not
+  sufficient justification ([specs/domains/javascript-filesystem.md](specs/domains/javascript-filesystem.md)).
 - Add cases to `testdata/corpus/*.json` with a valid group — one of the seven
   `corpus.Group*` constants (`guardfall`, `destructive`, `benign`, `ps`,
   `resolution`, `external_malicious`, `external_benign`) — and a class `A`–`E`
-  for GuardFall; never weaken a case to make a gate pass.
+  for GuardFall; never weaken a case to make a gate pass. New analysis behaviour
+  ships with its own corpus document, as the JavaScript work did
+  ([testdata/corpus/guardfall_js.json](testdata/corpus/guardfall_js.json),
+  [testdata/corpus/filesystem_js.json](testdata/corpus/filesystem_js.json)), and
+  the latency baseline in `engine/testdata/latency_baseline.json` is re-pinned
+  when the corpus size changes — the gate fails on a size mismatch rather than
+  silently re-timing.
 
 ---
 
@@ -637,9 +800,13 @@ repository:
    *describes* effects, never performs them.
 
 2. **No new runtime I/O surface.** Do not add network access, runtime file
-   reads/writes, environment-variable reads, or dynamic/config-driven rule
-   loading to the analysis path. Inputs are the embedded knowledge base, argv,
-   and stdin; output is the report.
+   reads/writes, environment-variable reads, host-state probes (`os.Getwd`,
+   `os.UserHomeDir`, the process environment, the host locale), or
+   dynamic/config-driven rule loading to the analysis path. Inputs are the
+   embedded knowledge base, argv, stdin, and — for the JavaScript models only —
+   the caller-supplied `api.JavaScriptContext{Home, Cwd}`; output is the report.
+   The parse-budget wall clock is the one sanctioned host dependency, and it may
+   only push a result *toward* ⊤, never toward a benign verdict.
 
 3. **No weakening of the ⊤ / no-silent-miss invariant.** Do not make any stage
    return "no effect" for input it did not fully understand; unanalysable
@@ -655,9 +822,16 @@ repository:
    & Parsing Robustness**); it is not a precedent for weakening any other bound.
 
 5. **No disabling of the gates.** Do not weaken, skip, or suppress the corpus
-   (no-silent-miss), latency, recall, the `-race` step, `go vet`, `gofmt`, or
-   the CLI smoke test ([`cmd/flowsh/smoke_test.go`](cmd/flowsh/smoke_test.go));
-   never reclassify a real miss as benign to make CI green.
+   (no-silent-miss), latency, recall (`TestRecallNoRegression`), determinism
+   (`TestAnalyzeConcurrentMatchesSequential`, see
+   [ADR-0019](specs/decisions/0019-determinism-gate-parse-budget-trip.md)), the
+   `-race` step, `go vet`, `gofmt`, `go mod verify`, `govulncheck`, `deadcode`,
+   the documentation hygiene gate, the CLI smoke test
+   ([`cmd/flowsh/smoke_test.go`](cmd/flowsh/smoke_test.go)), or the fuzz targets
+   (`FuzzBind`, `bash.FuzzParse`, `ps.FuzzParse`, `js.FuzzAnalyze`) — including
+   their adversarial seed corpora, which run as part of an ordinary
+   `go test ./...`. Never reclassify a real miss as benign, delete a fuzz seed,
+   or narrow a fuzz assertion to make CI green.
 
 6. **No breakage of the one-way dependency graph.** Do not import a frontend or
    the knowledge base from `engine`, and do not fold `bind` into `engine`; the
@@ -731,16 +905,21 @@ repository:
 
 | File | Purpose |
 | ---- | ------- |
-| [.github/workflows/ci.yml](.github/workflows/ci.yml) | CI gate (matrix: `ubuntu-latest`, `windows-latest`, `macos-15`): `gofmt`, `go build`, `go vet`, `go mod verify`, `govulncheck` (every runner — the scanner resolves the call graph per `GOOS`/`GOARCH`), `golangci-lint`, `deadcode -test`, docs hygiene (no unresolved placeholders in [SECURITY.md](SECURITY.md); links resolve), corpus + latency/recall tests (incl. the CLI smoke test [`cmd/flowsh/smoke_test.go`](cmd/flowsh/smoke_test.go)), bench smoke, `go test -race` (Linux only); pins `permissions: contents: read`. |
+| [.github/workflows/ci.yml](.github/workflows/ci.yml) | CI gate (matrix: `ubuntu-latest`, `windows-latest`, `macos-15`; `timeout-minutes: 20`): `gofmt`, `go build`, `go vet`, `go mod verify`, `govulncheck` (every runner — the scanner resolves the call graph per `GOOS`/`GOARCH`), `golangci-lint`, `deadcode -test`, docs hygiene (no unresolved placeholder marker in [SECURITY.md](SECURITY.md); every relative link resolves; the `flowsh/vN` tag in the live docs matches `analysis.ToolVersion`), corpus + latency/recall/determinism tests (incl. the CLI smoke test [`cmd/flowsh/smoke_test.go`](cmd/flowsh/smoke_test.go) and the fuzz seed corpora), bench smoke, `go test -race` (Linux only); pins `permissions: contents: read`. |
 | [.github/workflows/release.yml](.github/workflows/release.yml) | Release pipeline, triggered by a `vX.Y.Z` tag: validates the tag shape, re-runs `go mod verify`, `govulncheck`, `go vet` and the test gates on the tagged commit, then GoReleaser publishes a GitHub Release (OS/arch archives + `checksums.txt`); a second job attests SLSA build provenance (`actions/attest-build-provenance`). Least privilege: the workflow pins `permissions: contents: read` and widens per job (`contents: write` to publish; `id-token`/`attestations` to attest). |
 | [.goreleaser.yaml](.goreleaser.yaml) | GoReleaser release configuration: the four-target cross-build matrix (linux/amd64, linux/arm64, darwin/arm64, windows/amd64) built with `CGO_ENABLED=0` and `-trimpath`, the `-ldflags` build stamp (`main.buildVersion`), archive naming, SHA-256 `checksums.txt` and changelog generation. The build is deliberately reproducible — no build date or commit hash is injected and `mod_timestamp` is pinned to the commit time — so one tag yields byte-identical archives and therefore stable checksums. |
 | [.golangci.yml](.golangci.yml) | The pinned `golangci-lint` (v2 schema) configuration the CI lint step enforces: `errcheck`, `govet`, `ineffassign`, `staticcheck`, `unused` and `misspell`, plus the `gofmt`/`goimports` formatters. `max-issues-per-linter` and `max-same-issues` are `0`, so no finding is hidden behind a per-linter reporting cap. |
 | [go.mod](go.mod) / [go.sum](go.sum) | Dependency graph and exact-version pinning (hash verification). |
 | [kb/data/](kb/data) (`kb/data/*.yaml` — 25 reviewed documents: `archive`, `bsd`, `build`, `builtins`, `cloud`, `codehost`, `containers`, `coreutils`, `datatools`, `destructive`, `findutils`, `gnu`, `linting`, `net`, `pkgmgr`, `plumbing`, `procps`, `remote`, `security`, `systemd`, `toolchain`, `util-linux`, `vcs`, `js-filesystem`, `js-path`) | Embedded, reviewed knowledge-base dataset — security-sensitive to change. |
-| [kb/schema.go](kb/schema.go) | Frozen, versioned knowledge-base document schema (`effect-kb/v4`). |
+| [kb/schema.go](kb/schema.go) | Frozen, versioned knowledge-base document schema (`effect-kb/v4`; `KnownVersions` still accepts `effect-kb/v2` and `effect-kb/v3`). |
+| [kb/js.go](kb/js.go) / [kb/js_decode.go](kb/js_decode.go) | The offline JavaScript builtin namespaces, and the strict decoder that validates the JavaScript model documents at **load** time (`validJSName` ≤128 bytes with no whitespace/NUL, `maxJSConstant` ±2^53, no unknown keys, duplicate names/aliases, invalid selectors/styles/operations/returns, or broken module references). |
+| [bind/js.go](bind/js.go), [bind/js_options.go](bind/js_options.go), [bind/js_path.go](bind/js_path.go) | The JavaScript model binder: evaluated-identity lookup, typed option selectors, and offline POSIX path computation — no host filesystem, environment, cwd, or module code is consulted. |
+| [internal/analysis/javascript.go](internal/analysis/javascript.go) | JavaScript report assembly, the `maxJSMetadata` 1,024-item cap per metadata collection, and the `Charge` hook that spends budget on caller-supplied context before a model materialises. |
+| Fuzz targets — [bind/fuzz_test.go](bind/fuzz_test.go), [front/bash/normalize_test.go](front/bash/normalize_test.go), [front/ps/fuzz_test.go](front/ps/fuzz_test.go), [front/js/analyze_test.go](front/js/analyze_test.go) | Panic-freedom and the ⊤/no-silent-miss contract over arbitrary input, with adversarial seed corpora (malformed trivia, NUL/control bytes, deep nesting, huge pipelines) that run under a plain `go test ./...`. |
+| [engine/testdata/latency_baseline.json](engine/testdata/latency_baseline.json) | The pinned per-host latency budget, recall-miss baseline and corpus size; the gate fails on a size mismatch, so the corpus can neither shrink nor grow silently. |
 | [testdata/corpus/](testdata/corpus) | Conformance corpus (GuardFall A–E, destructive, benign, PS, resolution, external malicious/benign — see [testdata/corpus/README.md](testdata/corpus/README.md)) — the no-silent-miss gate. |
 | [AGENTS.md](AGENTS.md) | Instructions for AI coding agents; points to this policy. |
-| [specs/](specs) | System specifications and ADRs that fix the invariants this policy protects. |
+| [specs/](specs) | System specifications and ADRs that fix the invariants this policy protects — notably [specs/architecture/conservatism.md](specs/architecture/conservatism.md) (the ⊤ contract), [specs/architecture/layers.md](specs/architecture/layers.md) (the one-way import graph), [specs/contracts/report-json.md](specs/contracts/report-json.md) (the frozen report envelope), the two most security-dense domain contracts ([specs/domains/javascript-filesystem.md](specs/domains/javascript-filesystem.md), [specs/domains/bash-frontend/wrappers.md](specs/domains/bash-frontend/wrappers.md)), and [specs/decisions/](specs/decisions) — ADR-0003 conservative ⊤, ADR-0006 bounded abstract execution, ADR-0012/0013 the parse budgets, ADR-0019 the determinism gate's parse-budget tolerance, ADR-0020 the JavaScript filesystem slice. |
 
 ---
 
@@ -761,3 +940,4 @@ repository:
 | 2026-11-01 | @v0lka  | CI macOS runner pin corrected from `macos-latest` to `macos-15` in both the CI prose and the configuration table (`eab2604`) |
 | 2026-11-02 | @lexdotdev | PR #42 (`fs-effects`) merge: refined filesystem-effect targets; the JavaScript-frontend paragraph and the knowledge-base row updated to 25 documents / `effect-kb/v4` (`411e4bb`, merged `2b2f716`) |
 | 2026-11-07 | @v0lka  | Repository-wide accuracy audit of this policy: supported-version table moved to `v0.7.0`; added the JavaScript parser to the attack surface and the analysis-zone diagram; documented `api.NewAnalyzer`/`api.ParseLang` and the `policy.New`/`Evaluate` entry points; corrected the CLI surface to include the `auto` dialect plus the `--windows` and `--batch` flags; documented the build-tagged PowerShell parse budget (`front/ps/budget_norace.go`, `front/ps/budget_race.go`) and the concrete named limits; enumerated all seven corpus groups; added the `.golangci.yml` row and the GoReleaser reproducibility detail; corrected the single-line-summary rule to cite `oneLine`/`sanitize` in `cmd/flowsh/main.go` |
+| 2026-11-08 | @v0lka  | Re-verified every claim in this policy against the working tree and brought it level with the post-`v0.7.0` work. **Attack surface:** recorded the `--explain`/`--why`, `--version` and `-h`/`--help` flags, flag-order independence, the four-code exit contract, and the deliberate absence of any `--file`/path flag (the CLI cannot become an arbitrary-file-read primitive); documented `api.JavaScriptContext{Home, Cwd}` / `Options.JavaScript` as a caller-supplied analysis input plus `api.Langs`/`api.Bool` and the remaining re-exported types; extended the JavaScript entry to the module-resolution seam and the YAML-backed model binder (`front/js/modules.go`, `bind/js.go`, `bind/js_options.go`, `bind/js_path.go`, `kb/js.go`, `kb/js_decode.go`). **Known risks:** four new accepted trade-offs — JavaScript callback models report the outer filesystem effect *plus* canonical ⊤; JavaScript effect targets are emitted verbatim without shell operand filtering or PATH/basename normalisation; JavaScript path resolution uses an abstract home (`/root`) and unknown cwd rather than host state; host-assumed `$HOME`/`$USER` defaults are treated as unknown so a `case` arm is never pruned. **Enforceability:** the no-runtime-I/O rule is now stated as a checkable import property (no analysis-path package imports `os`; `os/exec`, `syscall`, `unsafe`, `plugin` and `net/http` are imported nowhere; the single `net` import is `net.ParseIP` used as an address grammar). **Bounds:** added the JavaScript filesystem-model caps (`bind.jsMaxPathBytes` 65536, the 4,096-byte evidence truncation, `maxJSMetadata` 1024, `validJSName` ≤128 bytes, `maxJSConstant` ±2^53) and `bind.maxAliasDepth` 32 to the named-limits list. **Gates:** documented the four fuzz targets (`FuzzBind`, `bash.FuzzParse`, `ps.FuzzParse`, `js.FuzzAnalyze`) and their adversarial seed corpora as part of an ordinary `go test ./...`, named the recall/determinism gates, and recorded the docs-hygiene gate's third check (the `flowsh/vN` tag in the live docs must match `analysis.ToolVersion`). **Rules:** two new ⊤/no-silent-miss constraints — never prune analysis on a host-assumed value, and keep canonical comparable keys injective (`CommandCall.identity()` is a dedup gate, so a collision silently drops a report entry); output-encoding rules extended to the why-trace and to verbatim JavaScript targets; `policy.New`'s fail-closed construction recorded (rejects `Allow` for `unknown`/`conservative`, copies its rule maps, nil/zero denies) alongside the redacted `Decision` codes. **Agentic:** ASI06 now names the exactly-two memoised objects and requires the JavaScript context to stay per-call; ASI09 separates precision from completeness. **Reference data:** new configuration-table rows for `kb/js.go`/`kb/js_decode.go`, `bind/js*.go`, `internal/analysis/javascript.go`, the fuzz targets and `engine/testdata/latency_baseline.json`, an expanded `specs/` row, and a Supported-Versions note that the frozen contract tags did not move for the unreleased work |
