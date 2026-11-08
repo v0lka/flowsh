@@ -36,7 +36,7 @@ this policy is strict about direction rather than about features:
 ## Supported Versions
 
 The module is released as `vX.Y.Z` tags (see `CHANGELOG.md`). The most recent
-release is **v0.7.0** (2026-10-24); it and any later patch of the same minor
+release is **v0.8.0** (2026-11-08); it and any later patch of the same minor
 line receive security fixes. Before 1.0, a minor release may change behaviour,
 and the frozen wire contracts move only on a breaking shape change: pin
 consumers to the report `schemaVersion` / `toolVersion` (`flowsh/v3`) as well as
@@ -44,23 +44,26 @@ to a module version.
 
 | Version | Supported          |
 | ------- | ------------------ |
-| `v0.7.x` | :white_check_mark: |
-| `< v0.7.0` | :x: |
+| `v0.8.x` | :white_check_mark: |
+| `< v0.8.0` | :x: |
 
 When releases are cut, replace this table with the maintained minor lines and
 mark older lines unsupported.
 
-This policy describes the **repository as it stands**, which is ahead of the last
-tag: the working tree carries unreleased work beyond `v0.7.0` — chiefly the
-YAML-backed JavaScript filesystem and path models
+This policy describes the **repository as it stands**, which is the `v0.8.0`
+release. Its delta from `v0.7.0` is chiefly the YAML-backed JavaScript
+filesystem and path models
 ([ADR-0020](specs/decisions/0020-javascript-filesystem-models.md)) and the
-recall fix that stops a host-assumed `$HOME`/`$USER` from pruning a `case` arm.
-A consumer pinning a `v0.7.x` binary should read the `[Unreleased]` section of
-[CHANGELOG.md](CHANGELOG.md) for the delta, and must pin the report
-`schemaVersion`/`toolVersion` as well as the module version: the frozen contract
-tags (`effect-ir/v2`, `flowsh/v3`) did **not** move for that work, so a report
-from either build is shape-identical and a consumer cannot distinguish them by
-the envelope alone.
+recall fix that stops a host-assumed `$HOME`/`$USER` from pruning a `case` arm;
+the `v0.8.0` section of [CHANGELOG.md](CHANGELOG.md) is the complete list.
+
+A consumer must pin the report `schemaVersion`/`toolVersion` **as well as** the
+module version. The frozen contract tags (`effect-ir/v2`, `flowsh/v3`) did
+**not** move for that work, so a report from a `v0.7.x` and from a `v0.8.x`
+build is shape-identical and the two cannot be told apart by the envelope
+alone — even though they can report different effects for the same input. The
+envelope identifies the *shape* of a report, never the analysis behaviour that
+produced it.
 
 ## Reporting a Vulnerability
 
@@ -941,3 +944,4 @@ repository:
 | 2026-11-02 | @lexdotdev | PR #42 (`fs-effects`) merge: refined filesystem-effect targets; the JavaScript-frontend paragraph and the knowledge-base row updated to 25 documents / `effect-kb/v4` (`411e4bb`, merged `2b2f716`) |
 | 2026-11-07 | @v0lka  | Repository-wide accuracy audit of this policy: supported-version table moved to `v0.7.0`; added the JavaScript parser to the attack surface and the analysis-zone diagram; documented `api.NewAnalyzer`/`api.ParseLang` and the `policy.New`/`Evaluate` entry points; corrected the CLI surface to include the `auto` dialect plus the `--windows` and `--batch` flags; documented the build-tagged PowerShell parse budget (`front/ps/budget_norace.go`, `front/ps/budget_race.go`) and the concrete named limits; enumerated all seven corpus groups; added the `.golangci.yml` row and the GoReleaser reproducibility detail; corrected the single-line-summary rule to cite `oneLine`/`sanitize` in `cmd/flowsh/main.go` |
 | 2026-11-08 | @v0lka  | Re-verified every claim in this policy against the working tree and brought it level with the post-`v0.7.0` work. **Attack surface:** recorded the `--explain`/`--why`, `--version` and `-h`/`--help` flags, flag-order independence, the four-code exit contract, and the deliberate absence of any `--file`/path flag (the CLI cannot become an arbitrary-file-read primitive); documented `api.JavaScriptContext{Home, Cwd}` / `Options.JavaScript` as a caller-supplied analysis input plus `api.Langs`/`api.Bool` and the remaining re-exported types; extended the JavaScript entry to the module-resolution seam and the YAML-backed model binder (`front/js/modules.go`, `bind/js.go`, `bind/js_options.go`, `bind/js_path.go`, `kb/js.go`, `kb/js_decode.go`). **Known risks:** four new accepted trade-offs — JavaScript callback models report the outer filesystem effect *plus* canonical ⊤; JavaScript effect targets are emitted verbatim without shell operand filtering or PATH/basename normalisation; JavaScript path resolution uses an abstract home (`/root`) and unknown cwd rather than host state; host-assumed `$HOME`/`$USER` defaults are treated as unknown so a `case` arm is never pruned. **Enforceability:** the no-runtime-I/O rule is now stated as a checkable import property (no analysis-path package imports `os`; `os/exec`, `syscall`, `unsafe`, `plugin` and `net/http` are imported nowhere; the single `net` import is `net.ParseIP` used as an address grammar). **Bounds:** added the JavaScript filesystem-model caps (`bind.jsMaxPathBytes` 65536, the 4,096-byte evidence truncation, `maxJSMetadata` 1024, `validJSName` ≤128 bytes, `maxJSConstant` ±2^53) and `bind.maxAliasDepth` 32 to the named-limits list. **Gates:** documented the four fuzz targets (`FuzzBind`, `bash.FuzzParse`, `ps.FuzzParse`, `js.FuzzAnalyze`) and their adversarial seed corpora as part of an ordinary `go test ./...`, named the recall/determinism gates, and recorded the docs-hygiene gate's third check (the `flowsh/vN` tag in the live docs must match `analysis.ToolVersion`). **Rules:** two new ⊤/no-silent-miss constraints — never prune analysis on a host-assumed value, and keep canonical comparable keys injective (`CommandCall.identity()` is a dedup gate, so a collision silently drops a report entry); output-encoding rules extended to the why-trace and to verbatim JavaScript targets; `policy.New`'s fail-closed construction recorded (rejects `Allow` for `unknown`/`conservative`, copies its rule maps, nil/zero denies) alongside the redacted `Decision` codes. **Agentic:** ASI06 now names the exactly-two memoised objects and requires the JavaScript context to stay per-call; ASI09 separates precision from completeness. **Reference data:** new configuration-table rows for `kb/js.go`/`kb/js_decode.go`, `bind/js*.go`, `internal/analysis/javascript.go`, the fuzz targets and `engine/testdata/latency_baseline.json`, an expanded `specs/` row, and a Supported-Versions note that the frozen contract tags did not move for the unreleased work |
+| 2026-11-08 | @v0lka  | `v0.8.0` release cut: supported-version table moved to `v0.8.x`, with `v0.7.x` marked unsupported per this policy's own rule that only the most recent minor line receives security fixes; the "ahead of the last tag" caveat replaced by a statement that the policy now describes the `v0.8.0` release, while keeping the warning that the frozen contract tags did not move between `v0.7.0` and `v0.8.0`, so a report envelope cannot distinguish the two builds even though they can report different effects for the same input |

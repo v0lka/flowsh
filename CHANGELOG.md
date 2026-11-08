@@ -11,7 +11,13 @@ the two *frozen* wire-contract tags that the analyser emits — `effect-ir/v2`
 frozen contract is called out in the entry that makes it; the contract tags move
 only on a breaking shape change, not on every module release.
 
-## [Unreleased]
+## [v0.8.0] - 2026-11-08
+
+A JavaScript-precision release. The bounded JavaScript frontend stops treating
+every modelled Node `fs` and `path` call as opaque code execution and reports
+its real effect through a new JavaScript knowledge base, and a separate bash
+fix stops a host-assumed variable from pruning a `case` arm. The frozen
+contract tags stay at `effect-ir/v2` and `flowsh/v3`.
 
 ### Added
 
@@ -24,11 +30,28 @@ only on a breaking shape change, not on every module release.
   the module-resolution seam in `front/js/modules.go`, and the report assembly
   in `internal/analysis/javascript.go`; `api.JavaScriptContext` supplies the
   offline POSIX home/cwd paths the models resolve against. A new
-  `specs/domains/javascript-filesystem.md` records the contract, the
-  knowledge-base schema moves to `effect-kb/v4` (the loader still accepts
-  `effect-kb/v2` and `effect-kb/v3`), a new corpus document
-  (`testdata/corpus/filesystem_js.json`) pins the models, and the latency
+  `specs/domains/javascript-filesystem.md` records the contract, and the latency
   baseline is re-pinned at 460 cases.
+- **The JavaScript knowledge base.** Two new documents carry the models —
+  `kb/data/js-filesystem.yaml` (Node `fs`, `fs/promises` and the frozen
+  `fs.constants` namespace) and `kb/data/js-path.yaml` (`path` and `os`) — and
+  `kb/js.go` / `kb/js_decode.go` add the offline builtin namespace types
+  (`JSModule`, `JSCall`) they decode into, beside the YAML command namespace the
+  other dialects already use. An `internal` namespace is reachable only through
+  another module's property and never through `require`, so the models mirror
+  Node's own resolution rules: `fs.constants` is a property namespace, not a
+  requireable module, and its platform-dependent members (`O_CREAT` and friends)
+  deliberately stay unknown.
+- **Knowledge-base schema `effect-kb/v4`.** The schema moves to `effect-kb/v4`
+  and all 25 embedded documents now declare it. The loader still accepts
+  `effect-kb/v2` and `effect-kb/v3` (`kb/schema.go`), so an out-of-tree document
+  written against an older schema is not broken by the move.
+- **Corpus coverage for the models.** A new corpus document
+  (`testdata/corpus/filesystem_js.json`, 51 cases) pins the filesystem and path
+  models, and the JavaScript GuardFall bundle grows by 12 core-module cases:
+  `import` and the `export`/re-export forms under `if`, `else` and `do`, plus
+  `os.homedir()` compared in an `if` and in a `switch`. Each must stay covered
+  rather than resolve to the single branch the host appears to take.
 
 ### Changed
 
@@ -41,7 +64,20 @@ only on a breaking shape change, not on every module release.
   floor (`.github/workflows/ci.yml`).
 - **Documentation.** The specification set is refreshed across the index, the
   architecture and contract documents and the domain specs, which gain a
-  dedicated `specs/domains/bash-frontend/wrappers.md`.
+  dedicated `specs/domains/bash-frontend/wrappers.md`; the user-facing guides
+  (`README.md`, `docs/cli.md`, `docs/report-json.md`, `docs/kb-howto.md`,
+  `docs/embedding.md`, `docs/development/roadmap.md`), `CONTRIBUTING.md` and
+  `AGENTS.md` are brought in line with the released behaviour.
+- **Security policy.** `SECURITY.md` is rewritten around the boundaries the
+  current tree actually has rather than the ones it used to have: it names the
+  JavaScript knowledge base and its models, records the caller-supplied
+  `api.JavaScriptContext` as a trusted input surface, documents the complete CLI
+  flag and exit-code contract (including why `--file` is deliberately absent),
+  and describes `policy.New`'s fail-closed construction. Four accepted precision
+  trade-offs are added to Known Risks, the "no runtime I/O on the analysis path"
+  invariant is stated as a checkable import boundary, and the four fuzz targets
+  (`bind.FuzzBind`, `bash.FuzzParse`, `ps.FuzzParse`, `js.FuzzAnalyze`) are named
+  as part of the gate.
 
 ### Fixed
 

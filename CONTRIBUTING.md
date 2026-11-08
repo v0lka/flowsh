@@ -230,7 +230,7 @@ Run all of these locally before opening a pull request.
 ## Releasing
 
 Module releases follow Semantic Versioning and are tagged `vX.Y.Z`
-(`v0.1.0` … `v0.7.0` so far). These are *release* tags and are independent of
+(`v0.1.0` … `v0.8.0` so far). These are *release* tags and are independent of
 the two frozen wire-contract tags the analyser emits (`effect-ir/v2`,
 `flowsh/v3`), which move only on a breaking shape change.
 
@@ -244,8 +244,8 @@ regenerates it.
 Then cut the release by pushing the tag:
 
 ```sh
-git tag -a v0.7.0 -m "v0.7.0"
-git push origin v0.7.0
+git tag -a v0.8.0 -m "v0.8.0"
+git push origin v0.8.0
 ```
 
 The push triggers [`.github/workflows/release.yml`](.github/workflows/release.yml)
@@ -287,7 +287,7 @@ The tag *is* stamped into the binary (`main.buildVersion`, injected with
 $ flowsh --version
 flowsh/v3
 effect-ir/v2
-flowsh 0.7.0
+flowsh 0.8.0
 ```
 
 A build from source carries no stamp and prints only the two contract lines.
@@ -298,7 +298,7 @@ Verify a downloaded release:
 
 ```sh
 shasum -a 256 -c checksums.txt   # sha256sum -c on Linux
-gh attestation verify flowsh_0.7.0_linux_amd64.tar.gz --repo v0lka/flowsh
+gh attestation verify flowsh_0.8.0_linux_amd64.tar.gz --repo v0lka/flowsh
 ```
 
 To build the release artifacts locally without publishing anything (this needs
