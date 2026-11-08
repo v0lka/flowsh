@@ -22,7 +22,7 @@ JavaScript source is also accepted through the bounded `front/js` evaluator. Unm
 ## Supported Versions
 
 The module is released as `vX.Y.Z` tags (see `CHANGELOG.md`). The most recent
-release is **v0.6.0** (2026-10-15); it and any later patch of the same minor
+release is **v0.7.0** (2026-10-24); it and any later patch of the same minor
 line receive security fixes. Before 1.0, a minor release may change behaviour,
 and the frozen wire contracts move only on a breaking shape change: pin
 consumers to the report `schemaVersion` / `toolVersion` (`flowsh/v3`) as well as
@@ -30,8 +30,8 @@ to a module version.
 
 | Version | Supported          |
 | ------- | ------------------ |
-| `v0.6.x` | :white_check_mark: |
-| `< v0.6.0` | :x: |
+| `v0.7.x` | :white_check_mark: |
+| `< v0.7.0` | :x: |
 
 When releases are cut, replace this table with the maintained minor lines and
 mark older lines unsupported.
@@ -76,7 +76,7 @@ control** and the data it unavoidably touches.
 | Effect-report integrity | **Critical** | The report is the control surface. An under-report (a dangerous command reported as benign) is a false negative that can lead a consumer to execute a destructive or exfiltrating command. |
 | Knowledge-base integrity | **Critical** | `kb/data/*.yaml` is the authoritative command/parameter→effect dataset ([kb/schema.go](kb/schema.go)). Poisoning it (e.g. marking `rm -rf` benign) silently blinds every consumer. |
 | Destructive-flags table integrity | **High** | The `(command, spec)`→class table (`kb/data/destructive.yaml`) drives severity; corrupting it distorts the score. |
-| Conformance-corpus integrity | **High** | `testdata/corpus/*.json` (GuardFall classes A–E, destructive, benign, PS) is the no-silent-miss gate; weakening it lets regressions ship. |
+| Conformance-corpus integrity | **High** | `testdata/corpus/*.json` (the seven `corpus.Group*` groups: GuardFall classes A–E, destructive, benign, PS, name-resolution, and the external malicious/benign samples) is the no-silent-miss gate; weakening it lets regressions ship. |
 | Analysed command text (input) | **High** | The command under analysis is attacker-influenced and may embed secrets (e.g. an inline bearer token). |
 | Emitted reports | **High** | A report echoes the analysed command verbatim and carries the verdict; it may therefore contain secret-bearing text and is sensitive data. |
 | Build & release pipeline integrity | **High** | A compromised build produces a doctored analyser that still looks trustworthy. |
@@ -95,11 +95,12 @@ control** and the data it unavoidably touches.
 
 ### Attack Surface
 
-- **CLI argv** — `flowsh [--lang bash|posix|posh|js] [--json] '<command>'`; the positional command, the `--lang` value, and flags ([cmd/flowsh/main.go](cmd/flowsh/main.go)).
+- **CLI argv** — `flowsh [--lang bash|posix|posh|js|auto] [--json] [--windows] [--batch] '<command>'`; the positional command, the `--lang` value (including `auto`, which sniffs the dialect from the source text itself), and flags ([cmd/flowsh/main.go](cmd/flowsh/main.go)).
 - **stdin** — the entire command text when no positional argument is given or `-` is passed ([cmd/flowsh/main.go](cmd/flowsh/main.go)).
-- **Library API** — the public embedding package `github.com/v0lka/flowsh/api` (`api.Analyze(lang, src)`, `api.AnalyzeWith`, and the re-exported `Report`/`Options` types), consumed by other Go programs that embed the analyser. The optional `policy` package evaluates its reports with trusted caller configuration; `internal/analysis` and other `internal/` packages remain private ([api/api.go](api/api.go), [ADR-0010](specs/decisions/0010-public-embedding-api.md), [policy specification](specs/domains/policy.md)).
+- **Library API** — the public embedding package `github.com/v0lka/flowsh/api` (`api.Analyze(lang, src)`, `api.AnalyzeWith`, `api.NewAnalyzer` for a reusable analyser over the embedded knowledge base, `api.ParseLang` for the caller-supplied dialect name, and the re-exported `Report`/`Options`/`Lang`/`Analyzer` types), consumed by other Go programs that embed the analyser. The optional `policy` package evaluates its reports with trusted caller configuration (`policy.New(Config)` builds a `*Policy`; `(*Policy).Evaluate` returns the `Decision`); `internal/analysis` and other `internal/` packages remain private ([api/api.go](api/api.go), [policy/policy.go](policy/policy.go), [ADR-0010](specs/decisions/0010-public-embedding-api.md), [policy specification](specs/domains/policy.md)).
 - **Bash parser** — `mvdan.cc/sh/v3` over untrusted source ([front/bash/parse.go](front/bash/parse.go)).
 - **PowerShell parser** — the pure-Go tree-sitter runtime over untrusted source ([front/ps/parse.go](front/ps/parse.go)).
+- **JavaScript parser** — the same pure-Go tree-sitter runtime over untrusted source, ahead of the bounded abstract evaluator ([front/js/parse.go](front/js/parse.go), [front/js/analyze.go](front/js/analyze.go)).
 - **Embedded knowledge base** — `kb/data/*.yaml`, a build-time input reached through pull requests ([kb/loader.go](kb/loader.go)).
 - **Conformance corpus** — `testdata/corpus/*.json`, a test-time input.
 - **CI/CD** — `.github/workflows/ci.yml` (push to `main`/`master` and every pull request, including from forks).
@@ -123,12 +124,14 @@ The load-bearing boundary is between the **untrusted command text** and the
                             │ instructions; parsed, never executed
 ┌───────────────────────────▼──────────────────────────────────┐
 │  Analysis zone (semi-trusted, bounded, deterministic)         │
-│  front/bash (mvdan) · front/ps (gotreesitter)                 │
+│  front/bash (mvdan) · front/ps + front/js (gotreesitter)      │
 │  bind → embedded KB · engine (IR · lattices · score)          │
-│  bounds: 50000 steps · func 64 · alias 32 · ps parse 250 ms   │
+│  bounds: 50000 steps · func 64 · alias 32 · record 1024       │
+│  parse clocks: ps 250 ms (0 under -race) · js 2 s always      │
 │  any unanalysable construct ⇒ ⊤ (CodeExec/any), never "none"  │
 └───────────────────────────┬──────────────────────────────────┘
                             │ canonical Report (JSON / text)
+                            │ optional policy.Evaluate → Allow/Review/Deny
 ┌───────────────────────────▼──────────────────────────────────┐
 │  Decision zone (human operator · agent runtime · CI gate)     │
 │  trusts: top · conservative · reason · score.grade · confidence│
@@ -255,6 +258,19 @@ implementation detail:
   interpreter by its step budget and function/alias/record caps, and the
   PowerShell parser by its wall-clock timeout
   ([front/bash/exec.go](front/bash/exec.go), [front/ps/parse.go](front/ps/parse.go)).
+  That PowerShell budget is build-tagged, and both halves are part of the
+  contract: an ordinary build parses against `ps.DefaultTimeoutMicros`
+  (250 ms), while a `-race` build sets the wall-clock budget to `0` because the
+  race detector's instrumentation makes wall clock meaningless — a deadline
+  there would fire on scheduling and GC stalls, so a benign source would flip
+  to ⊤ non-deterministically. Termination under `-race` rests instead on the
+  tree-sitter runtime's deterministic, source-length-scaled limits (maximum
+  iterations, nodes and stack depth), which do not depend on host speed or
+  load. Deleting either budget file, or replacing the race build's
+  deterministic limits with a host-speed-dependent clock, is a bound removal
+  under **Hard Constraints**
+  ([front/ps/budget_norace.go](front/ps/budget_norace.go),
+  [front/ps/budget_race.go](front/ps/budget_race.go)).
   JavaScript checks source size and raw delimiter depth before parsing, keeps
   a two-second parser deadline in every build, and bounds normalization and
   evaluation with depth, node, step, value-size, and recording limits
@@ -517,8 +533,12 @@ They are tailored to this Go code base and its `flowsh` invariants.
   string concatenation ([internal/analysis/analyze.go](internal/analysis/analyze.go)).
 - Treat the report as data at every hop: no interpolation of report fields into
   shell commands, HTML, or any interpreter context without contextual escaping.
-- Keep the human-readable summary single-line per field (`oneLine`) so embedded
-  newlines in an analysed command cannot forge additional output lines.
+- Keep the human-readable summary single-line per field so embedded newlines in
+  an analysed command cannot forge additional output lines: the echoed input
+  goes through `oneLine`, and every other rendered field through `sanitize`,
+  which drops the C0/DEL/C1 control characters (newlines included) and the
+  Unicode bidi embedding/override controls
+  ([cmd/flowsh/main.go](cmd/flowsh/main.go)).
 
 ### Error Handling & the Fail-Closed Rule
 
@@ -534,8 +554,19 @@ They are tailored to this Go code base and its `flowsh` invariants.
 
 - The memoised knowledge base is shared and MUST stay immutable after load; do
   not add mutable shared state to the analysis path ([kb/loader.go](kb/loader.go)).
-- Never remove, raise, or bypass the analysis bounds (step budget, function/alias
-  caps, parse timeout) to gain precision; bounds are a robustness contract.
+- Never remove, raise, or bypass the analysis bounds to gain precision; bounds
+  are a robustness contract. The named limits are the step budget
+  (`defaultBudget` 50000, defined separately in `front/bash`, `front/js` and
+  `front/ps`), the bash caps (`maxFuncDepth` 64, `maxAliasDepth` 32,
+  `maxFindDepth` 8, `maxRecorded` 1024), the JavaScript caps (`maxDepth` 256,
+  `maxRecorded` 1024, `maxValueBytes` 65536, `maxSourceBytes` 1 MiB), the
+  structural source-shape bounds a frontend refuses by construction rather than
+  parses (bash `maxNestingDepth` 4096 and `maxBraceDepth` 16; PowerShell
+  `maxSourceBytes` 64 KiB, `maxSourceLine` 4 KiB and `maxNestingDepth` 256), and
+  the parse clocks (`ps.DefaultTimeoutMicros` 250 ms, `js.parseTimeoutMicros` 2 s).
+  The one build-conditional budget is the race build's disabled PowerShell wall
+  clock (see **Input Validation & Parsing Robustness**); it is not a licence to
+  weaken any other bound.
 - Guard against Go-specific pitfalls: check integer arithmetic in budget/limit
   math for overflow, avoid leaking goroutines in any new timed path, and keep
   the build free of cgo and the `unsafe` package.
@@ -582,9 +613,10 @@ operation and stores no key material. Consequently:
   scalars, or tab indentation); those are explicit errors by design.
 - Change the document shape only by **bumping `SchemaVersion`** and extending
   `KnownVersions`, as the `fileRef` addition did for v2.
-- Add GuardFall/destructive/benign/PS cases to `testdata/corpus/*.json` with a
-  valid group (and a class `A`–`E` for GuardFall); never weaken a case to make a
-  gate pass.
+- Add cases to `testdata/corpus/*.json` with a valid group — one of the seven
+  `corpus.Group*` constants (`guardfall`, `destructive`, `benign`, `ps`,
+  `resolution`, `external_malicious`, `external_benign`) — and a class `A`–`E`
+  for GuardFall; never weaken a case to make a gate pass.
 
 ---
 
@@ -616,7 +648,11 @@ repository:
 
 4. **No removal or bypass of resource bounds.** Do not delete, raise, or route
    around the step budget, function/alias/record caps, or the parse timeout, and
-   do not introduce an unbounded loop, recursion, or expansion.
+   do not introduce an unbounded loop, recursion, or expansion. The one
+   sanctioned build-conditional budget is the race build's disabled PowerShell
+   wall clock, which trades a host-speed-dependent deadline for the tree-sitter
+   runtime's deterministic, source-length-scaled limits (see **Input Validation
+   & Parsing Robustness**); it is not a precedent for weakening any other bound.
 
 5. **No disabling of the gates.** Do not weaken, skip, or suppress the corpus
    (no-silent-miss), latency, recall, the `-race` step, `go vet`, `gofmt`, or
@@ -697,11 +733,12 @@ repository:
 | ---- | ------- |
 | [.github/workflows/ci.yml](.github/workflows/ci.yml) | CI gate (matrix: `ubuntu-latest`, `windows-latest`, `macos-15`): `gofmt`, `go build`, `go vet`, `go mod verify`, `govulncheck` (every runner — the scanner resolves the call graph per `GOOS`/`GOARCH`), `golangci-lint`, `deadcode -test`, docs hygiene (no unresolved placeholders in [SECURITY.md](SECURITY.md); links resolve), corpus + latency/recall tests (incl. the CLI smoke test [`cmd/flowsh/smoke_test.go`](cmd/flowsh/smoke_test.go)), bench smoke, `go test -race` (Linux only); pins `permissions: contents: read`. |
 | [.github/workflows/release.yml](.github/workflows/release.yml) | Release pipeline, triggered by a `vX.Y.Z` tag: validates the tag shape, re-runs `go mod verify`, `govulncheck`, `go vet` and the test gates on the tagged commit, then GoReleaser publishes a GitHub Release (OS/arch archives + `checksums.txt`); a second job attests SLSA build provenance (`actions/attest-build-provenance`). Least privilege: the workflow pins `permissions: contents: read` and widens per job (`contents: write` to publish; `id-token`/`attestations` to attest). |
-| [.goreleaser.yaml](.goreleaser.yaml) | GoReleaser release configuration: cross-build matrix, `-ldflags` build stamp, archive naming, SHA-256 checksums and changelog generation. |
+| [.goreleaser.yaml](.goreleaser.yaml) | GoReleaser release configuration: the four-target cross-build matrix (linux/amd64, linux/arm64, darwin/arm64, windows/amd64) built with `CGO_ENABLED=0` and `-trimpath`, the `-ldflags` build stamp (`main.buildVersion`), archive naming, SHA-256 `checksums.txt` and changelog generation. The build is deliberately reproducible — no build date or commit hash is injected and `mod_timestamp` is pinned to the commit time — so one tag yields byte-identical archives and therefore stable checksums. |
+| [.golangci.yml](.golangci.yml) | The pinned `golangci-lint` (v2 schema) configuration the CI lint step enforces: `errcheck`, `govet`, `ineffassign`, `staticcheck`, `unused` and `misspell`, plus the `gofmt`/`goimports` formatters. `max-issues-per-linter` and `max-same-issues` are `0`, so no finding is hidden behind a per-linter reporting cap. |
 | [go.mod](go.mod) / [go.sum](go.sum) | Dependency graph and exact-version pinning (hash verification). |
 | [kb/data/](kb/data) (`kb/data/*.yaml` — 25 reviewed documents: `archive`, `bsd`, `build`, `builtins`, `cloud`, `codehost`, `containers`, `coreutils`, `datatools`, `destructive`, `findutils`, `gnu`, `linting`, `net`, `pkgmgr`, `plumbing`, `procps`, `remote`, `security`, `systemd`, `toolchain`, `util-linux`, `vcs`, `js-filesystem`, `js-path`) | Embedded, reviewed knowledge-base dataset — security-sensitive to change. |
 | [kb/schema.go](kb/schema.go) | Frozen, versioned knowledge-base document schema (`effect-kb/v4`). |
-| [testdata/corpus/](testdata/corpus) | Conformance corpus (GuardFall A–E, destructive, benign, PS) — the no-silent-miss gate. |
+| [testdata/corpus/](testdata/corpus) | Conformance corpus (GuardFall A–E, destructive, benign, PS, resolution, external malicious/benign — see [testdata/corpus/README.md](testdata/corpus/README.md)) — the no-silent-miss gate. |
 | [AGENTS.md](AGENTS.md) | Instructions for AI coding agents; points to this policy. |
 | [specs/](specs) | System specifications and ADRs that fix the invariants this policy protects. |
 
@@ -711,4 +748,16 @@ repository:
 
 | Date       | Author  | Change          |
 | ---------- | ------- | --------------- |
-| 2026-09-15 | @v0lka  | Initial version |
+| 2026-09-15 | @v0lka  | Initial version (`8f78053`) |
+| 2026-09-15 | @v0lka  | Recorded the `golangci-lint` and dead-code gates in the CI gate list (`faf103a`) |
+| 2026-09-16 | @v0lka  | Documented the tag-triggered release pipeline: `release.yml`, the GoReleaser OS/arch matrix, `checksums.txt` and SLSA build-provenance attestation (`3ea6f25`) |
+| 2026-09-19 | @v0lka  | Recorded the host-shaped egress grammar and canonical effect form as an accepted recall trade-off (`2bfeff5`) |
+| 2026-09-20 | @v0lka  | Report-contract tags moved to `flowsh/v3` / `effect-ir/v2` with the network data-flow fields; code-review findings addressed (`e2e8faa`, `577ca4f`) |
+| 2026-09-21 | @v0lka  | Code-review findings in `kb`, `bind` and the frontends; unified resolved-binary identity recorded as a trade-off (`0eb8ed6`, `9d90271`) |
+| 2026-10-12 | @lexdotdev | Added the optional `policy` package (report evaluation for embedding applications) to the attack surface and the authorization requirements (`07f7a02`) |
+| 2026-10-14 | @v0lka  | Recorded the sudo wrapper-elevation doctrine and its accepted residuals (`186f5e7`) |
+| 2026-10-15 | @v0lka  | Hardened sudo wrapper elevation against sudo's target grammar; added the corresponding accepted over-report/recall residuals (`ac9e77e`) |
+| 2026-10-22 | @v0lka, @lexdotdev | Security-review remediation across the binder, engine and frontends (merged as PR #41, `ba83b6b`): trade-off table and coding constraints updated (`27b8b95`, `9ff4d78`, `b206263`, `8b600cb`) |
+| 2026-11-01 | @v0lka  | CI macOS runner pin corrected from `macos-latest` to `macos-15` in both the CI prose and the configuration table (`eab2604`) |
+| 2026-11-02 | @lexdotdev | PR #42 (`fs-effects`) merge: refined filesystem-effect targets; the JavaScript-frontend paragraph and the knowledge-base row updated to 25 documents / `effect-kb/v4` (`411e4bb`, merged `2b2f716`) |
+| 2026-11-07 | @v0lka  | Repository-wide accuracy audit of this policy: supported-version table moved to `v0.7.0`; added the JavaScript parser to the attack surface and the analysis-zone diagram; documented `api.NewAnalyzer`/`api.ParseLang` and the `policy.New`/`Evaluate` entry points; corrected the CLI surface to include the `auto` dialect plus the `--windows` and `--batch` flags; documented the build-tagged PowerShell parse budget (`front/ps/budget_norace.go`, `front/ps/budget_race.go`) and the concrete named limits; enumerated all seven corpus groups; added the `.golangci.yml` row and the GoReleaser reproducibility detail; corrected the single-line-summary rule to cite `oneLine`/`sanitize` in `cmd/flowsh/main.go` |

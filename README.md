@@ -227,7 +227,7 @@ flowsh effect report
   input:           #!/usr/bin/env bash set -euo pipefail  C2=https://c2.evil.example/ingest … dd if=/dev/zero of=/dev/sda
   root:            <stdin>
   commands:        30
-  effects:         14
+  effects:         15
   destructiveness: Critical
   irreversibility: Critical
   breadth:         Critical
@@ -244,22 +244,23 @@ flowsh effect report
   destructive:     nc -e (class D): runs a program on connect, the classic reverse shell
   destructive:     rm -f (class E): forced removal that suppresses prompts and hides errors on missing files
   destructive:     rm -r (class E): recursively removes a whole directory tree, with no confirmation by default
+    - CodeExec|Direct|[/bin/sh]
     - CredAccess|Direct|*
     - EnvRead|Direct|[HOME,PATH,USER]
     - EnvWrite|Direct|[C2,CREDS,KEYS,STAGE,pipefail]
-    - FSMeta|Direct|[/usr/bin/svc]
+    - FSMeta|Direct|[4755]
     - FSRead|Direct|[/dev/zero,/root/.aws/credentials,/root/.ssh/id_ed25519,/root/.ssh/id_rsa,/tmp/.cache.dat,PRIVATE]
-    - FSWrite|Direct|[/dev/null,/dev/sda,/root/.bash_history,/tmp/.env.recon,/var/log/auth.log]
+    - FSWrite|Direct|[/dev/null,/dev/sda,/root/.bash_history,/tmp/.env.recon,/usr/bin/svc,/var/log/auth.log]
     - IPC|Ambient|[]
-    - NetEgress|Direct|[10.13.37.1,10.13.37.1:4444,10.13.37.2,4444,POST,https://c2.evil.example/ingest]
+    - NetEgress|Direct|[10.13.37.1,10.13.37.1:4444,10.13.37.2,POST,https://c2.evil.example/ingest]
     - NetIngress|Direct|[10.13.37.1:4444]
     - Persist|Direct|[-]
-    - PrivEsc|Conditional|[4755]
+    - PrivEsc|Conditional|[/usr/bin/svc]
     - ProcSignal|Direct|[-9,31337]
-    - ProcSpawn|Direct|[/bin/sh,base64,exec]
+    - ProcSpawn|Direct|[base64,exec]
     - Stdio|Direct|[@reboot /root/.cache/updater,beacon]
-  exfil: CredAccess|Direct|* → NetEgress|Direct|[10.13.37.1,10.13.37.1:4444,10.13.37.2,4444,POST,https://c2.evil.example/ingest]
-  exfil: FSRead|Direct|[/dev/zero,/root/.aws/credentials,/root/.ssh/id_ed25519,/root/.ssh/id_rsa,/tmp/.cache.dat,PRIVATE] → NetEgress|Direct|[10.13.37.1,10.13.37.1:4444,10.13.37.2,4444,POST,https://c2.evil.example/ingest]
+  exfil: CredAccess|Direct|* → NetEgress|Direct|[10.13.37.1,10.13.37.1:4444,10.13.37.2,POST,https://c2.evil.example/ingest]
+  exfil: FSRead|Direct|[/dev/zero,/root/.aws/credentials,/root/.ssh/id_ed25519,/root/.ssh/id_rsa,/tmp/.cache.dat,PRIVATE] → NetEgress|Direct|[10.13.37.1,10.13.37.1:4444,10.13.37.2,POST,https://c2.evil.example/ingest]
   note: unrecognized flag(s): -S -s
   note: unrecognized flag(s): -q
 ```
@@ -270,8 +271,8 @@ for width. Everything else is verbatim tool output.)*
 The two `exfil:` lines are the point. `flowsh` joined a secret read (the SSH key
 vault, the cloud-credential store, or the `curl -u` credential) to the tainted
 `NetEgress` through a real per-command data flow, and raised the exfiltration
-risk to `Critical`. Fourteen of the fifteen effect kinds are reported — only
-`CodeExec` is absent, and only `CredAccess` carries the ⊤ target `*`. The
+risk to `Critical`. All fifteen effect kinds are reported, and only
+`CredAccess` carries the ⊤ target `*`. The
 `conservative: false` flag, mirrored by `top: false` in the JSON report,
 confirms the analysis never had to degrade the report to ⊤. Passing `--json`
 emits the same finding structurally, as `score.exfilPairs`.

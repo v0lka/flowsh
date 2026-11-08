@@ -9,9 +9,9 @@ User-facing guides for `flowsh`. For an introduction to the tool, start at the
 | ----- | ------ |
 | [CLI user-guide](cli.md) | Running the `flowsh` binary: flags, input sources, exit codes and output framing. |
 | [JSON report reference](report-json.md) | The `flowsh --json` wire contract, field by field, and its version tags. |
-| [Embedding the analyser (Go library)](embedding.md) | Using `github.com/v0lka/flowsh/api` to analyse a command in-process. |
+| [Embedding the analyser (Go library)](embedding.md) | Using `github.com/v0lka/flowsh/api` to analyse a command in-process, and the optional `policy` package to gate the report. |
 | [Adding a command to the knowledge base](kb-howto.md) | The author workflow for the effect dataset under `kb/data/`. |
-| [Development roadmap](development/roadmap.md) | The work taxonomy (`A`/`B`/`C`/`D`) and the status of each item. |
+| [Development roadmap](development/roadmap.md) | The work taxonomy (`A`/`B`/`C`/`D`/`J`) and the status of each item. |
 
 These guides are descriptive. Where they and
 [`specs/`](../specs/INDEX.md) disagree, the specification is authoritative.

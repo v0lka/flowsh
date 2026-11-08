@@ -7,13 +7,17 @@
 ## Layout
 
 - `engine/` — frozen, frontend-agnostic core: effect IR, value lattices, scoring, report format
-- `front/bash/`, `front/ps/`, `front/js/` — bash, PowerShell, and the bounded JavaScript value/control-flow frontend
-- `kb/` — the embedded YAML knowledge base (`kb/data/*.yaml`)
+- `front/bash/`, `front/ps/`, `front/js/` — bash, PowerShell, and the bounded JavaScript frontend (values, control flow, and modelled Node filesystem/path effects; anything unmodelled degrades to ⊤)
+- `kb/` — the embedded YAML knowledge base (`kb/data/*.yaml`) plus the offline JavaScript builtin namespaces (`kb/js.go`)
 - `bind/` — command resolution and flag/operand binding
 - `internal/analysis/` — the composition facade (frontends + binder + core → `Report`)
 - `internal/corpus/` — the test-only regression-corpus harness (loader + group selectors)
 - `cmd/flowsh/` — the CLI
-- `testdata/corpus/` — the GuardFall / destructive / benign / ps conformance corpus
+- `api/` — the public embeddable Go library: type aliases over `internal/analysis`, so an external module can embed the analyser without importing anything under `internal/`
+- `policy/` — optional report evaluation for an embedding application: turns an `api.Report` into an `Allow`, `Review` or `Deny` decision under trusted, caller-owned rules
+- `testdata/corpus/` — the conformance corpus: bash, POSIX, PowerShell and JavaScript cases across the `guardfall` / `destructive` / `benign` / `ps` / `resolution` / `external_malicious` / `external_benign` groups
+- `docs/` — the user-facing guides (CLI, JSON report reference, embedding, knowledge-base how-to, roadmap); descriptive only — where they and `specs/` disagree, the specification is authoritative
+- `specs/` — the normative system specification (see Specifications below)
 
 ## Build & Test
 

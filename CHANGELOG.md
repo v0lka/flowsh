@@ -11,6 +11,158 @@ the two *frozen* wire-contract tags that the analyser emits — `effect-ir/v2`
 frozen contract is called out in the entry that makes it; the contract tags move
 only on a breaking shape change, not on every module release.
 
+## [Unreleased]
+
+### Added
+
+- **JavaScript filesystem and path effect models.** Modelled Node `fs` and
+  `path` APIs now report precise effects through a JavaScript knowledge base
+  instead of degrading to ⊤: `require('fs').writeFileSync('/tmp/out', …)`
+  reports `FSWrite|Direct|[/tmp/out]`, where v0.7.0 reported `CodeExec|Direct|*`
+  ([ADR-0020](specs/decisions/0020-javascript-filesystem-models.md)). The
+  binding lives in `bind/js.go`, `bind/js_options.go` and `bind/js_path.go`,
+  the module-resolution seam in `front/js/modules.go`, and the report assembly
+  in `internal/analysis/javascript.go`; `api.JavaScriptContext` supplies the
+  offline POSIX home/cwd paths the models resolve against. A new
+  `specs/domains/javascript-filesystem.md` records the contract, the
+  knowledge-base schema moves to `effect-kb/v4` (the loader still accepts
+  `effect-kb/v2` and `effect-kb/v3`), a new corpus document
+  (`testdata/corpus/filesystem_js.json`) pins the models, and the latency
+  baseline is re-pinned at 460 cases.
+
+### Changed
+
+- **Comparable form.** `CommandCall.identity()` length-prefixes every field, so
+  the boundaries of the call key are injective, and a redirection's `Known`
+  flag now takes part in it (`internal/analysis/canonical.go`).
+- **CI.** The macOS runner is pinned to `macos-15` rather than the floating
+  `macos-latest` label, which migrated to macOS 26 and would silently re-time
+  the latency gates; the `macos-14` images were retired, so `macos-15` is the
+  floor (`.github/workflows/ci.yml`).
+- **Documentation.** The specification set is refreshed across the index, the
+  architecture and contract documents and the domain specs, which gain a
+  dedicated `specs/domains/bash-frontend/wrappers.md`.
+
+### Fixed
+
+- **A host-assumed variable no longer prunes a `case` arm.** A `case` subject
+  whose value is a host-assumed default (`$HOME`, `$USER`) is no longer treated
+  as known, so every arm is executed instead of only the one the assumed value
+  appears to match — and a pattern that is itself host-assumed makes the match
+  unknown. The assumed marker follows the value through a copy (`H=$HOME`), a
+  `for` loop's items, a declaration and a `+=` append, so
+  `case $HOME in /root) ;; *) … ;; esac` reports the fall-through arm's effects
+  rather than nothing (three GuardFall `E` witnesses pin it).
+
+## [v0.7.0] - 2026-10-24
+
+A dialect-and-hardening release. A third frontend joins the analyser — a
+bounded JavaScript value and control-flow evaluator — and a wide security
+review closes findings across the binder, the engine and both existing
+frontends. The frozen contract tags stay at `effect-ir/v2` and `flowsh/v3`.
+
+### Added
+
+- **JavaScript dialect (`front/js`).** `flowsh --lang js` analyses a JavaScript
+  program through a new bounded frontend: tree-sitter parsing with
+  position-preserving normalization (`front/js/parse.go`), typed values and
+  immutable container snapshots over a case-sensitive lexical state
+  (`front/js/value.go`), expressions, literals and destructuring inputs
+  (`front/js/expr.go`), and statements, scope, hoisting, completion states,
+  loops, `switch` and exceptions (`front/js/exec.go`). It evaluates a bounded
+  statement/expression subset and produces values and control flow; function
+  invocation, module resolution and Node API effect knowledge remain later
+  milestones, and unsupported execution degrades to the shared ⊤
+  ([ADR-0018](specs/decisions/0018-javascript-semantic-kernel.md),
+  `specs/domains/javascript-frontend.md`). The dialect's canonical spelling is
+  `js`, with the aliases `javascript`, `node` and `nodejs`
+  (`api.LangJavaScript`, `api.ParseLang`, trimmed and case-insensitive);
+  `--lang auto` still selects bash or PowerShell only. Evaluation stays bounded
+  on every host: source size and raw delimiter depth are checked before
+  parsing, a two-second parser deadline is kept in every build including
+  `-race`, and normalization and evaluation carry depth, node, step, value-size
+  and recording limits. The conformance corpus gains a JavaScript bundle
+  (`testdata/corpus/guardfall_js.json`, GuardFall A–E conservative coverage)
+  and the latency baseline is re-pinned at 394 cases. `policy.Evaluate` accepts
+  a `js` report language instead of denying it as `invalid_report`, and
+  SECURITY.md names the new frontend's degradation and bounds.
+- **Supply-chain gates.** CI verifies the module graph against `go.sum`
+  (`go mod verify`) and runs `govulncheck@v1.9.0`, which exits non-zero on a
+  vulnerability reachable from this module and so blocks the merge. The scan
+  deliberately runs on every runner rather than on Linux only, because the
+  scanner resolves the call graph for the host `GOOS`/`GOARCH` and the release
+  matrix ships more than one platform; the release workflow runs the same
+  pinned scan before GoReleaser, so a reachable vulnerability blocks a release
+  and not only a merge (`.github/workflows/ci.yml`,
+  `.github/workflows/release.yml`).
+
+### Changed
+
+- **The CLI reads no caller-named file: `--file` is removed.** The input
+  surface is the positional argument and stdin only, so the CLI cannot be
+  turned into an arbitrary-file-read primitive; `--batch` reads its lines from
+  stdin. The exit-code descriptions narrow with it — exit 2 is now "unknown
+  flag or unknown `--lang`", exit 3 "stdin could not be read, or the command
+  was empty" — while the exit-code numbers themselves and the report contract
+  are unchanged.
+- **`--lang auto` falls back across dialects.** The sniffed dialect is analysed
+  first and, when its report is not `Covered()`, the other one is analysed too;
+  when neither dialect can bound the input the report is forced to ⊤ and
+  conservative with the reason "no dialect could bound the input", instead of
+  returning the first dialect's uncovered report (`cmd/flowsh/main.go`).
+- **Knowledge-base schema `effect-kb/v3`.** Per-parameter `also` effects and
+  value-gated destructive rows let one parameter contribute a second effect and
+  a destructive row fire only on a matching value; the loader still accepts
+  `effect-kb/v2` (`kb/schema.go`).
+
+### Fixed
+
+- **Security-review findings closed across the binder, the engine and both
+  frontends.** The binder gains mode-dependent operation handling for
+  single-file compressors and for tar's old-style option bundle, and
+  chmod/install SUID escalation detection, plus corrections for the `sed`
+  script sub-language, `ssh -o` exec directives, attached short options,
+  long-option prefixes, curl's file grammars, option/script/response files,
+  upload source reads, whole-environment dumps, subcommand remote egress and
+  exec-bearing `git config` keys. The engine gains UNC/host-path remote-write
+  sinks, secret staging across commands, environment credential sources,
+  block-device breadth, normalized secret-path matching and linear
+  canonicalisation. The bash frontend is hardened (wrapper peeling, alias
+  expansion, the hash table, `PATH` rebinding, xargs placeholders, credential
+  reads, stdin command languages, the brace estimator) and so is the PowerShell
+  frontend (alias state, drive mappings, session channels, launchers, parse
+  bounds, host-agnostic registry persistence). Regression tests pin each
+  finding.
+- **Refined effect targets for a SUID install and for `nc -e`.**
+  `install -m 4755 "$STAGE" /usr/bin/svc` now reports the mode on `FSMeta`
+  (`FSMeta|Direct|[4755]`) and the installed path on `PrivEsc`
+  (`PrivEsc|Conditional|[/usr/bin/svc]`) — v0.6.0 reported the two the other
+  way round — and gains the `FSWrite|Direct|[/usr/bin/svc]` the install
+  performs; and `nc -e /bin/sh HOST PORT` reports `CodeExec|Direct|[/bin/sh]`
+  rather than a bare `ProcSpawn|Direct|[/bin/sh]`.
+- **A direct `Bind` call reports the `env` exec channel.** The binder's copy of
+  the shell's environment-assignment channels lowers exec-bearing assignments
+  (`LD_PRELOAD`, `JAVA_TOOL_OPTIONS`, `TAR_OPTIONS`, `GIT_CONFIG_*`) to
+  `CodeExec` through the exported `bash.ExecEnvVar`/`bash.ExecEnvEffect`, so a
+  `Call` handed directly to `Bind`/`BindBash` reports the same sink the
+  interpreter emits. A normalized assignment with no value is treated as
+  known-empty, so clearing the variable runs nothing.
+- **One wording for both parse-budget clocks (PowerShell).** An exhausted
+  budget that the parser's own clock observed (`SetTimeoutMicros` →
+  `ParseStoppedEarly` with `ParseStopTimeout`) now carries the same canonical
+  "µs budget" reason as the wall-clock wrapper `parseWithBudget`, instead of
+  "parse stopped early (timeout)"; other stop reasons keep the generic wording.
+  Which clock observes the budget first is a scheduling race, so the split
+  wording let the timeout wording pin and the determinism gate's classifier
+  disagree about the same run on a loaded host.
+- **The determinism gate tolerates a host-load parse-budget trip.** The
+  concurrent gate asserted byte-identity for every result, but a PowerShell
+  parse runs under a wall-clock budget, so a loaded host can turn a benign
+  source into a ⊤ result. Such a mismatch is now classified as a host-load trip
+  and tolerated only when a sequential re-analysis reproduces the reference; a
+  concrete difference, a failure, or a ⊤ for any other reason still fails
+  ([ADR-0019](specs/decisions/0019-determinism-gate-parse-budget-trip.md)).
+
 ## [v0.6.0] - 2026-10-15
 
 A policy-and-privilege release. A new optional public policy package turns a
@@ -492,6 +644,7 @@ below.
   too coarse to observe the deadline, and widened the repeated-statement source
   so the timeout-to-⊤ path stays covered everywhere (ADR-0013).
 
+[v0.7.0]: https://github.com/v0lka/flowsh/compare/v0.6.0...v0.7.0
 [v0.6.0]: https://github.com/v0lka/flowsh/compare/v0.5.0...v0.6.0
 [v0.5.0]: https://github.com/v0lka/flowsh/compare/v0.4.0...v0.5.0
 [v0.4.0]: https://github.com/v0lka/flowsh/compare/v0.3.2...v0.4.0

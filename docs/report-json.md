@@ -17,7 +17,7 @@ Every report carries three identity fields:
 | --- | ----- | ------- |
 | `schemaVersion` | `effect-ir/v2` | Tags the **effect payload** (`effects[]` and its atoms). Equal to `engine.SchemaVersion`. |
 | `tool` | `flowsh` | The tool name (`analysis.ToolName`). |
-| `toolVersion` | `flowsh/v3` | Tags the **CLI report shape**: the envelope plus the additive `why`, `resolution`, `destructive`, `commandCalls`, `canonical` and the `score.cradleFlows`/`score.ingestFlows` network-flow fields over v1. Equal to `analysis.ToolVersion`. |
+| `toolVersion` | `flowsh/v3` | Tags the **CLI report shape**: the envelope plus the fields added over v1 — `commandCalls` and `canonical` in v2, and the `score.cradleFlows`/`score.ingestFlows` network-flow fields in v3; v1 already carried `why`, `resolution` and `destructive`. Equal to `analysis.ToolVersion`. |
 
 A consumer that parses the effect set pins to `effect-ir/v2`; a consumer that
 reads the CLI-specific fields pins to `flowsh/v3`. Any change to the shape of an
@@ -37,14 +37,22 @@ $ flowsh --json 'rm -rf $HOME'
   "toolVersion": "flowsh/v3",
   "lang": "bash",
   "input": "rm -rf $HOME",
-  "root": "<argument>",
+  "root": "\u003cargument\u003e",
   "effects": [
     {
       "kind": "FSWrite",
-      "target": { "targets": ["/root"], "arbitrary": false },
+      "target": {
+        "targets": [
+          "/root"
+        ],
+        "arbitrary": false
+      },
       "mode": "Direct",
       "certainty": "Certain",
-      "taint": { "labels": [], "arbitrary": false },
+      "taint": {
+        "labels": [],
+        "arbitrary": false
+      },
       "reversible": false
     }
   ],
@@ -63,44 +71,122 @@ $ flowsh --json 'rm -rf $HOME'
     {
       "effect": "FSWrite|Direct|[/root]",
       "because": [
-        { "rule": "fs.write", "premises": ["command:rm"], "note": "derived from command",
-          "loc": { "file": "<argument>", "line": 1, "col": 1 } },
-        { "rule": "fs.write", "premises": ["flag:-f"], "note": "derived from flag",
-          "loc": { "file": "<argument>", "line": 1, "col": 6 } }
+        {
+          "rule": "fs.write",
+          "premises": [
+            "command:rm"
+          ],
+          "note": "derived from command",
+          "loc": {
+            "file": "\u003cargument\u003e",
+            "line": 1,
+            "col": 1
+          }
+        },
+        {
+          "rule": "fs.write",
+          "premises": [
+            "flag:-r"
+          ],
+          "note": "derived from flag",
+          "loc": {
+            "file": "\u003cargument\u003e",
+            "line": 1,
+            "col": 5
+          }
+        },
+        {
+          "rule": "fs.write",
+          "premises": [
+            "flag:-f"
+          ],
+          "note": "derived from flag",
+          "loc": {
+            "file": "\u003cargument\u003e",
+            "line": 1,
+            "col": 6
+          }
+        },
+        {
+          "rule": "fs.write",
+          "premises": [
+            "operand:/root"
+          ],
+          "note": "derived from operand",
+          "loc": {
+            "file": "\u003cargument\u003e",
+            "line": 1,
+            "col": 8
+          }
+        }
       ]
     }
   ],
   "conservative": false,
   "top": false,
   "commands": 1,
-  "resolution": { "invoked": "rm", "kind": "command", "name": "rm" },
-  "commandCalls": [ { "invoked": "rm", "resolved": "rm", "args": [ "-rf", "/root" ] } ],
+  "resolution": {
+    "invoked": "rm",
+    "kind": "command",
+    "name": "rm"
+  },
+  "commandCalls": [
+    {
+      "invoked": "rm",
+      "resolved": "rm",
+      "args": [
+        "-rf",
+        "/root"
+      ]
+    }
+  ],
   "canonical": {
     "effects": [
       {
         "kind": "FSWrite",
-        "target": { "targets": ["/root"], "arbitrary": false },
+        "target": {
+          "targets": [
+            "/root"
+          ],
+          "arbitrary": false
+        },
         "mode": "Direct",
         "certainty": "Certain",
-        "taint": { "labels": [], "arbitrary": false },
+        "taint": {
+          "labels": [],
+          "arbitrary": false
+        },
         "reversible": false
       }
     ],
     "key": "FSWrite|Direct|[/root]"
   },
   "destructive": [
-    { "command": "rm", "spec": "-f", "class": "E",
-      "reason": "forced removal that suppresses prompts and hides errors on missing files" },
-    { "command": "rm", "spec": "-r", "class": "E",
-      "reason": "recursively removes a whole directory tree, with no confirmation by default" }
+    {
+      "command": "rm",
+      "spec": "-f",
+      "class": "E",
+      "reason": "forced removal that suppresses prompts and hides errors on missing files"
+    },
+    {
+      "command": "rm",
+      "spec": "-r",
+      "class": "E",
+      "reason": "recursively removes a whole directory tree, with no confirmation by default"
+    }
   ]
 }
 ```
 
-(The `why` trace is shortened here for width; a real trace carries one step per
-supporting flag/operand/source/sink. Keys are emitted in the struct's declaration
-order, and the encoding is indent-frozen; the golden fixtures under
-[`engine/testdata/`](../engine/testdata/) pin the exact bytes.)
+(That document is reproduced verbatim: `Encode` writes two-space-indented JSON
+with the keys in the struct's declaration order, and the golden fixtures under
+[`engine/testdata/`](../engine/testdata/) pin the exact bytes. The `\u003c` and
+`\u003e` escapes are `encoding/json`'s HTML escaping of `<` and `>`, so the value
+of `root` — and of every `loc.file` naming the same source — is the literal
+string `<argument>`. The output is host-independent: the bash frontend seeds its
+abstract state with a fixed `HOME=/root`, which is what `$HOME` expands to here.
+The `why` trace carries one step per supporting atom — the command, each matched
+flag, and the operand.)
 
 ## Envelope fields
 
@@ -111,19 +197,19 @@ Present on every report:
 | `schemaVersion` | string | Frozen effect-schema tag (`effect-ir/v2`). |
 | `tool` | string | `flowsh`. |
 | `toolVersion` | string | CLI report-contract tag (`flowsh/v3`). |
-| `lang` | string | Selected dialect: `bash`, `posix`, `posh`, or `js` (bounded values/control flow; unmodelled calls remain top). |
+| `lang` | string | Selected dialect: `bash`, `posix`, `posh`, or `js`. The CLI's `--lang auto` is resolved to one of these before analysis, so the field never reads `auto`. The `js` dialect evaluates a bounded statement/expression subset; an unmodelled call there degrades to a ⊤ `CodeExec` effect and sets `conservative`. |
 | `input` | string | The command source text that was analysed. |
 
 | Key | Type | Present when | Meaning |
 | --- | ---- | ------------ | ------- |
-| `root` | string | the CLI set it | Name of the source: a file path, or the marker `<argument>` / `<stdin>`. Omitted only when unset (library use). |
+| `root` | string | the caller named a source | Name of the source the input was read from: the marker `<argument>` / `<stdin>`, which is what the CLI always stamps (it takes its input from a positional argument or stdin, never from a named file), or a caller-supplied string such as a path when the analysis is driven through `api.Options.Root`. Omitted when unset, which is the library default. It is also the `file` the why-trace positions are reported against; when it is unset that falls back to the dialect's own source name (`script` for bash/POSIX and JavaScript, `flowsh` for PowerShell). |
 
 ## Analysis fields
 
 | Key | Type | Present when | Meaning |
 | --- | ---- | ------------ | ------- |
-| `effects` | array of effect | always (never `null`) | The implied effects, merged by (kind, mode). May be empty. |
-| `destructiveness` | string | always | Worst-case severity of the effects: `None` \| `Low` \| `Medium` \| `High` \| `Critical`. |
+| `effects` | array of effect | always (never `null`) | The implied effects, merged by (kind, mode, `netFlow`). May be empty. |
+| `destructiveness` | string | always | Worst-case severity of the effects, raised by any matched destructive-flags class: `None` \| `Low` \| `Medium` \| `High` \| `Critical`. |
 | `score` | object | always | Composite, orderable risk — see [score](#score). |
 | `conservative` | bool | always | The analysis could not bound the input but did not fully degrade to ⊤. |
 | `top` | bool | always | The analysis degraded to the top element ⊤ (unknown/unbounded). |
@@ -134,7 +220,7 @@ Present on every report:
 | `canonical` | object | the report has effects | Effect-based canonical form — see [canonical](#canonical). |
 | `why` | array of trace | trace non-empty | Per-effect derivation — see [why](#why). |
 | `destructive` | array of finding | matches non-empty | Matched destructive-flags entries — see [destructive](#destructive). |
-| `notes` | array of string | notes non-empty | Frontend diagnostics. |
+| `notes` | array of string | notes non-empty | Frontend and binder diagnostics, de-duplicated and emitted frontend-first. |
 
 ### effects
 
@@ -143,14 +229,14 @@ Each element of `effects[]` is one implied effect:
 | Key | Type | Meaning |
 | --- | ---- | ------- |
 | `kind` | string | The effect kind, from the closed set (see [Effect kinds](../README.md#effect-kinds)). |
-| `target` | object | `{ "targets": [string], "arbitrary": bool }` — the concrete targets; `arbitrary: true` marks the any-target (⊤) scope. |
+| `target` | object | `{ "targets": [string], "arbitrary": bool }` — the concrete targets, always an array and never `null` (empty for the ⊤ and ⊥ scopes); `arbitrary: true` marks the any-target (⊤) scope. |
 | `mode` | string | How the effect happens: `Direct` \| `Transitive` \| `Ambient` \| `Conditional` (see [Effect modes](../README.md#effect-modes)). |
 | `certainty` | string | Confidence it occurs: `Unknown` \| `Unlikely` \| `Possible` \| `Likely` \| `Certain`. |
-| `taint` | object | `{ "labels": [string], "arbitrary": bool }` — provenance labels; `arbitrary: true` marks ⊤ provenance. |
+| `taint` | object | `{ "labels": [string], "arbitrary": bool }` — provenance labels, always an array and never `null`; `arbitrary: true` marks ⊤ provenance. |
 | `reversible` | bool | Whether the effect can be undone. |
 | `netFlow` | string | Present only when the effect is the sink of a network data flow: `cradle` (a `CodeExec` reached by network content) or `ingest` (an `FSWrite` of downloaded content). Absent otherwise. |
 
-An effect's stable identity, used as the key in `why[].effect`, `score.exfilPairs`, `score.cradleFlows` and `score.ingestFlows`, is `kind|mode|[targets]`. The `[targets]` part is the target set with each target's `\`, `,` and `]` backslash-escaped, so a target containing them cannot forge a set boundary and the key stays injective: a Windows target `C:\Windows` renders as `C:\\Windows`, and a single target `a,b` renders as `[a\,b]` (distinct from the two-target set `[a,b]`). For targets containing none of those three bytes (ordinary POSIX text), the spelling is unchanged (e.g. `FSWrite|Direct|[/root]`).
+An effect's stable identity is `kind|mode|[targets]`: it is the `why[].effect` key, and `canonical.key` is the canonical effects' keys sorted and joined by `;`. (`score.exfilPairs`, `score.cradleFlows` and `score.ingestFlows` carry whole effect objects, not keys.) The `[targets]` part is the target set with each target's `\`, `,` and `]` backslash-escaped, so a target containing them cannot forge a set boundary and the key stays injective: a Windows target `C:\Windows` renders as `C:\\Windows`, and a single target `a,b` renders as `[a\,b]` (distinct from the two-target set `[a,b]`). For targets containing none of those three bytes (ordinary POSIX text), the spelling is unchanged (e.g. `FSWrite|Direct|[/root]`). The two non-concrete scopes have spellings of their own: the any-target (⊤) scope renders as `*`, so a fully unbounded code execution keys as `CodeExec|Direct|*`, and the empty (⊥) set renders as `[]`.
 
 ### score
 
@@ -169,9 +255,10 @@ An effect's stable identity, used as the key in `why[].effect`, `score.exfilPair
 | `ingestFlows` | array | Detected network-to-filesystem flows (omitted when none; see below). |
 
 Each `exfilPairs[]` element is `{ "source": effect, "sink": effect }`, where
-`source` is the secret read (a `CredAccess`, or an `FSRead`/`FSMeta` of a
-secret-bearing path) and `sink` is the tainted egress carrying it out. Both are
-full effect objects in the shape of [effects](#effects).
+`source` is the secret read (a `CredAccess`, an `FSRead`/`FSMeta` of a
+secret-bearing path, or an `EnvRead` of a credential-shaped variable name) and
+`sink` is the tainted egress carrying it out. Both are full effect objects in
+the shape of [effects](#effects).
 
 `cradleFlows[]` and `ingestFlows[]` elements have the same `{ "source": effect,
 "sink": effect }` shape. A `cradleFlows[]` `source` is a `NetEgress` and its
@@ -184,7 +271,11 @@ and its `sink` is an `FSWrite` marked `netFlow: "ingest"` — a download client
 writing the fetched body to a file (`curl -o`/`-O`, wget default/`-O`); a VCS
 sync (`git clone`/`fetch`/`pull`) is not an ingest. A flow is asserted only
 where the analysis established that the network content reached the sink, so a
-`NetEgress` and a sink that merely co-occur in one program yield no flow. Both fields are
+`NetEgress` and a sink that merely co-occur in one program yield no flow. In all
+three arrays the pairing is a cross product: the IR records the flow evidence per
+sink, not a link from a sink to the particular egress that fed it, so `source` is
+one of the program's egresses rather than an identified connection, and a program
+with several egresses yields one element per (source, sink) pair. Both fields are
 **JSON-only**: the CLI's human summary does not render them, so a text-mode
 consumer must read the JSON (see the [CLI guide](cli.md#human-summary)).
 
@@ -213,7 +304,9 @@ knowledge base, a dynamic (`$PKG`) operand, a runner that names no operand,
 command).
 
 The object always carries the *most informative* resolution observed across the
-program's calls. It is the zero value `{ "kind": "" }` whenever no call reached
+program's calls. Only `kind` is always emitted; `invoked`, `name` and
+`aliasChain` are omitted when empty, so the object is the bare zero value
+`{ "kind": "" }` whenever no call reached
 the binder: on the PowerShell path (which resolves through its own alias/cmdlet
 tables), and on the bash path for a program whose statements are not command
 invocations (a bare assignment, a redirection, or a pure shell-state builtin
@@ -235,6 +328,12 @@ omitted when no call reached the binder (the same condition as a zero-value
 | `args` | array of string | The invocation's argument values after normalization (the runner's own words consumed; empty values dropped). |
 | `redirs` | array of redirect | The statement's resolved redirections (`{ "op": string, "target": string, "known": bool }`), the ordering witness the canonical staging fold reads. |
 
+Every one of these fields is optional in the encoding: `invoked`, `resolved`,
+`args` and `redirs` are each omitted when empty, so the usual shape is
+`{ "invoked", "resolved", "args" }` and `redirs` appears only for a statement
+that carries a redirection. Within a redirect, `target` is omitted when the
+expanded target text is empty (a heredoc); `op` and `known` are always emitted.
+
 ### canonical
 
 The effect-based canonical form: the report's effect set normalized for
@@ -242,7 +341,10 @@ signature comparison, plus the deterministic key derived from it. It is present
 whenever the report has effects. Two invocations that differ in form but not in
 effect — a blocked command retried through an equivalent form — carry the same
 key. The normalizations are deliberately coarse (staged temp files fold onto the
-destination the trailing `mv` names; non-path operand targets drop out).
+destination the trailing `mv` names; non-path operand targets drop out). Both are
+bash/POSIX-only: the PowerShell path has no binder to supply the redirection
+ordering witness, so only the target-shape normalization runs there, and the
+JavaScript path applies neither filter, carrying its bounded targets verbatim.
 
 | Key | Type | Meaning |
 | --- | ---- | ------- |
@@ -261,8 +363,8 @@ Each element is one matched entry of the knowledge base's destructive-flags tabl
 | `reason` | string | Why the entry is destructive. |
 
 The entries are de-duplicated by `(command, spec)` and sorted. A matched class
-joins (raises) the report's `destructiveness` and `score.grade`; it never lowers
-them.
+joins (raises) the report's `destructiveness`, `score.destructiveness` and
+`score.grade`; it never lowers them.
 
 ### why
 
@@ -278,7 +380,7 @@ Each step:
 | Key | Type | Present when | Meaning |
 | --- | ---- | ------------ | ------- |
 | `rule` | string | always | The rule that fired (e.g. `fs.write`). |
-| `premises` | array of string | premises non-empty | The tokens it consumed (`command:rm`, `flag:-f`, `operand:/root`, `source:File`, `sink:NetEgress`, …). |
+| `premises` | array of string | premises non-empty | The tokens it consumed, each spelled `kind:text` for one of the atom kinds `command`, `flag`, `operand`, `redirect`, `source`, `sink` and `literal` (`command:rm`, `flag:-f`, `operand:/root`, `redirect:/tmp/x`, `source:File`, `sink:NetEgress`, `literal:js-opaque`). |
 | `note` | string | note non-empty | A human hint about the atom. |
 | `loc` | object | position known | `{ "file": string, "line": int, "col": int }` — the 1-based source position. |
 
@@ -303,7 +405,9 @@ The document is frozen. The effect payload is pinned by the golden fixtures
 the envelope is pinned by the CLI smoke test
 [`cmd/flowsh/smoke_test.go`](../cmd/flowsh/smoke_test.go). Changing the shape of an emitted
 field is a breaking change: bump the relevant tag (`effect-ir/v2` or
-`flowsh/v3`), regenerate the fixtures, and update the consumer. The full
+`flowsh/v3`), regenerate the fixtures, and update the consumer. So is changing
+`Encode`'s two-space indentation or its key order (the struct's declaration
+order), which the fixtures pin byte for byte. The full
 checklist is in the
 [report contract](../specs/contracts/report-json.md#breaking-change-checklist).
 
