@@ -176,7 +176,7 @@ timeout) across a three-OS matrix (`ubuntu-latest`, `windows-latest`, and
 `macos-15`). macOS is pinned to the `macos-15` image rather than the floating
 `macos-latest` label, which drifts and would silently re-time the latency gates
 (see `specs/decisions/0019`). The Go toolchain comes from `go-version-file:
-go.mod` (`go 1.27`) with `check-latest: true`, and every step runs under an
+go.mod` (`go 1.27.4`) with `check-latest: true`, and every step runs under an
 explicitly selected POSIX `bash`, so the same steps run verbatim on all three
 runners — the `-race` step excepted, which runs on Linux only for the reason
 given in step 11:

@@ -1,6 +1,6 @@
 module github.com/v0lka/flowsh
 
-go 1.27
+go 1.27.4
 
 require (
 	github.com/odvcencio/gotreesitter v0.52.0
